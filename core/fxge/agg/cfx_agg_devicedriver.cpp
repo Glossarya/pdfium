@@ -10,6 +10,7 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <bit>
 #include <utility>
 
 #include "build/build_config.h"
@@ -272,8 +273,11 @@ void RgbByteOrderTransferBitmap(RetainPtr<CFX_DIBitmap> pBitmap,
   }
 }
 
+// `solid_stroke` must stroke `path_data`; it is used unless the dash pattern
+// applies.
 void RasterizeStroke(agg::rasterizer_scanline_aa* rasterizer,
                      agg::path_storage* path_data,
+                     agg::conv_stroke<agg::path_storage>& solid_stroke,
                      const CFX_Matrix* pObject2Device,
                      const CFX_GraphStateData* pGraphState,
                      float scale,
@@ -360,7 +364,7 @@ void RasterizeStroke(agg::rasterizer_scanline_aa* rasterizer,
     rasterizer->add_path_transformed(stroke, pObject2Device);
     return;
   }
-  agg::conv_stroke<agg::path_storage> stroke(*path_data);
+  agg::conv_stroke<agg::path_storage>& stroke = solid_stroke;
   stroke.line_join(join);
   stroke.line_cap(cap);
   stroke.miter_limit(pGraphState->miter_limit());
@@ -914,9 +918,10 @@ class RendererScanLineAaOffset {
   unsigned top_;
 };
 
-agg::path_storage BuildAggPath(const CFX_Path& path,
-                               const CFX_Matrix* pObject2Device) {
-  agg::path_storage agg_path;
+// Appends `path` to `agg_path`, which the caller passes empty.
+void BuildAggPath(const CFX_Path& path,
+                  const CFX_Matrix* pObject2Device,
+                  agg::path_storage& agg_path) {
   pdfium::span<const CFX_Path::Point> points = path.GetPoints();
   for (size_t i = 0; i < points.size(); ++i) {
     CFX_PointF pos = points[i].point_;
@@ -959,10 +964,297 @@ agg::path_storage BuildAggPath(const CFX_Path& path,
       agg_path.end_poly();
     }
   }
-  return agg_path;
 }
 
+bool g_path_memo_enabled = true;
+
+// Paths with more points are not memoized, which keeps a miss cheap.
+constexpr size_t kMemoMaxPoints = 64;
+// A pass with more coverage bytes is not memoized.
+constexpr size_t kMemoMaxCovers = 4096;
+
+bool SameBits(float a, float b) {
+  return std::bit_cast<uint32_t>(a) == std::bit_cast<uint32_t>(b);
+}
+
+bool SameMatrix(const CFX_Matrix& a, const CFX_Matrix& b) {
+  return SameBits(a.a, b.a) && SameBits(a.b, b.b) && SameBits(a.c, b.c) &&
+         SameBits(a.d, b.d) && SameBits(a.e, b.e) && SameBits(a.f, b.f);
+}
+
+bool SameGraphState(const CFX_GraphStateData& a, const CFX_GraphStateData& b) {
+  if (a.line_cap() != b.line_cap() || a.line_join() != b.line_join() ||
+      !SameBits(a.miter_limit(), b.miter_limit()) ||
+      !SameBits(a.line_width(), b.line_width()) ||
+      !SameBits(a.dash_phase(), b.dash_phase()) ||
+      a.dash_array().size() != b.dash_array().size()) {
+    return false;
+  }
+  for (size_t i = 0; i < a.dash_array().size(); ++i) {
+    if (!SameBits(a.dash_array()[i], b.dash_array()[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool SamePoints(pdfium::span<const CFX_Path::Point> a,
+                pdfium::span<const CFX_Path::Point> b) {
+  if (a.size() != b.size()) {
+    return false;
+  }
+  for (size_t i = 0; i < a.size(); ++i) {
+    if (a[i].type_ != b[i].type_ || a[i].close_figure_ != b[i].close_figure_ ||
+        !SameBits(a[i].point_.x, b[i].point_.x) ||
+        !SameBits(a[i].point_.y, b[i].point_.y)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Passes every scanline to `inner` and to `record`.
+template <class Renderer, class Record>
+class RecordingRenderer {
+ public:
+  RecordingRenderer(Renderer& inner, Record& record)
+      : inner_(inner), record_(record) {}
+
+  void prepare(unsigned width) { inner_.prepare(width); }
+
+  template <class Scanline>
+  void render(const Scanline& sl) {
+    record_.Add(sl);
+    inner_.render(sl);
+  }
+
+ private:
+  Renderer& inner_;
+  Record& record_;
+};
+
 }  // namespace
+
+class CFX_AggDeviceDriver::Workspace {
+ public:
+  Workspace() : solid_stroke_(path_) {}
+
+  // Each accessor returns its object in the state a new one has, keeping the
+  // memory it allocated for earlier paths.
+  agg::path_storage& EmptyPath() {
+    path_.remove_all();
+    return path_;
+  }
+  agg::rasterizer_scanline_aa& InitialRasterizer(float width, float height) {
+    rasterizer_.reset_to_initial();
+    rasterizer_.clip_box(0.0f, 0.0f, width, height);
+    return rasterizer_;
+  }
+  agg::scanline_u8& scanline() { return scanline_; }
+  // Strokes the path returned by EmptyPath(). The adaptor restarts its stroke
+  // generator for every polygon; RasterizeStroke() sets each parameter.
+  agg::conv_stroke<agg::path_storage>& solid_stroke() { return solid_stroke_; }
+
+  bool HoldsLargeBuffers() const {
+    // 16 cell blocks are 1 MiB; the paths this reuse is for need one.
+    return rasterizer_.allocated_cell_blocks() > 16;
+  }
+
+ private:
+  agg::path_storage path_;
+  agg::rasterizer_scanline_aa rasterizer_;
+  agg::scanline_u8 scanline_;
+  agg::conv_stroke<agg::path_storage> solid_stroke_;
+};
+
+class CFX_AggDeviceDriver::RecordedPass {
+ public:
+  struct Span {
+    int16_t x;
+    int16_t len;
+    const uint8_t* covers;
+  };
+
+  // The scanline interface CFX_AggRenderer::render() reads.
+  class Scanline {
+   public:
+    using const_iterator = const Span*;
+
+    Scanline(int y, const Span* spans, unsigned num_spans)
+        : y_(y), spans_(spans), num_spans_(num_spans) {}
+
+    int y() const { return y_; }
+    unsigned num_spans() const { return num_spans_; }
+    const_iterator begin() const { return spans_; }
+
+   private:
+    const int y_;
+    const Span* const spans_;
+    const unsigned num_spans_;
+  };
+
+  void Clear() {
+    lines_.clear();
+    spans_.clear();
+    offsets_.clear();
+    covers_.clear();
+    too_large_ = false;
+  }
+
+  template <class AggScanline>
+  void Add(const AggScanline& sl) {
+    if (too_large_) {
+      return;
+    }
+    lines_.push_back({sl.y(), spans_.size(), sl.num_spans()});
+    // SAFETY: an AGG scanline has `num_spans()` spans, and an unpacked span
+    // has `len` coverage bytes.
+    UNSAFE_BUFFERS({
+      auto span = sl.begin();
+      for (unsigned i = 0; i < sl.num_spans(); ++i, ++span) {
+        const size_t len = span->len > 0 ? span->len : 0;
+        offsets_.push_back(covers_.size());
+        covers_.insert(covers_.end(), span->covers, span->covers + len);
+        spans_.push_back({span->x, span->len, nullptr});
+      }
+    });
+    too_large_ = covers_.size() > kMemoMaxCovers;
+  }
+
+  // Points the spans at their coverage bytes, which no longer move.
+  void Seal() {
+    for (size_t i = 0; i < spans_.size(); ++i) {
+      spans_[i].covers =
+          pdfium::span<const uint8_t>(covers_).subspan(offsets_[i]).data();
+    }
+  }
+
+  bool too_large() const { return too_large_; }
+
+  template <class Renderer>
+  void Replay(Renderer& renderer) const {
+    for (const Line& line : lines_) {
+      renderer.render(Scanline(
+          line.y, pdfium::span<const Span>(spans_).subspan(line.first_span).data(),
+          line.num_spans));
+    }
+  }
+
+ private:
+  struct Line {
+    int y;
+    size_t first_span;
+    unsigned num_spans;
+  };
+
+  std::vector<Line> lines_;
+  std::vector<Span> spans_;
+  std::vector<size_t> offsets_;
+  std::vector<uint8_t> covers_;
+  bool too_large_ = false;
+};
+
+class CFX_AggDeviceDriver::PathMemo {
+ public:
+  struct Inputs {
+    const CFX_Path& path;
+    const CFX_Matrix* matrix;
+    const CFX_GraphStateData* graph_state;
+    const CFX_FillRenderOptions& fill_options;
+    bool fill_pass;
+    bool stroke_pass;
+    int width;
+    int height;
+  };
+
+  // Whether `path` is the same object as the last call's. Paths repeated in a
+  // content stream share one object (see CPDF_StreamContentParser), so this
+  // address comparison finds the likely repeats without reading any inputs.
+  // The address is only compared, never used.
+  bool SameObjectAsLast(const CFX_Path& path) const {
+    return reinterpret_cast<uintptr_t>(&path) == last_path_;
+  }
+
+  // Starts over at `path`, with no inputs kept.
+  void Restart(const CFX_Path& path) {
+    last_path_ = reinterpret_cast<uintptr_t>(&path);
+    has_inputs_ = false;
+    recorded_ = false;
+  }
+
+  // Whether `in` equals the kept inputs.
+  bool SameInputs(const Inputs& in) const {
+    return has_inputs_ && fill_pass_ == in.fill_pass &&
+           stroke_pass_ == in.stroke_pass && width_ == in.width &&
+           height_ == in.height && fill_options_ == in.fill_options &&
+           has_matrix_ == !!in.matrix &&
+           (!in.matrix || SameMatrix(matrix_, *in.matrix)) &&
+           has_graph_state_ == !!in.graph_state &&
+           (!in.graph_state || SameGraphState(graph_state_, *in.graph_state)) &&
+           SamePoints(points_, in.path.GetPoints());
+  }
+
+  // Keeps `in` as the inputs to compare with, with nothing recorded for them.
+  void Remember(const Inputs& in) {
+    has_inputs_ = true;
+    recorded_ = false;
+    fill_pass_ = in.fill_pass;
+    stroke_pass_ = in.stroke_pass;
+    width_ = in.width;
+    height_ = in.height;
+    fill_options_ = in.fill_options;
+    has_matrix_ = !!in.matrix;
+    if (in.matrix) {
+      matrix_ = *in.matrix;
+    }
+    has_graph_state_ = !!in.graph_state;
+    if (in.graph_state) {
+      graph_state_ = *in.graph_state;
+    }
+    const std::vector<CFX_Path::Point>& points = in.path.GetPoints();
+    points_.assign(points.begin(), points.end());
+  }
+
+  void BeginRecording() {
+    fill_.Clear();
+    stroke_.Clear();
+  }
+
+  void FinishRecording() {
+    recorded_ = !fill_.too_large() && !stroke_.too_large();
+    fill_.Seal();
+    stroke_.Seal();
+  }
+
+  // Whether the passes of the kept inputs are recorded; when not, they were
+  // too large to record.
+  bool recorded() const { return recorded_; }
+
+  RecordedPass& fill() { return fill_; }
+  RecordedPass& stroke() { return stroke_; }
+
+ private:
+  uintptr_t last_path_ = 0;
+  bool has_inputs_ = false;
+  bool recorded_ = false;
+  bool fill_pass_ = false;
+  bool stroke_pass_ = false;
+  int width_ = 0;
+  int height_ = 0;
+  CFX_FillRenderOptions fill_options_;
+  bool has_matrix_ = false;
+  CFX_Matrix matrix_;
+  bool has_graph_state_ = false;
+  CFX_GraphStateData graph_state_;
+  std::vector<CFX_Path::Point> points_;
+  RecordedPass fill_;
+  RecordedPass stroke_;
+};
+
+// static
+void CFX_AggDeviceDriver::SetPathMemoEnabledForTesting(bool enabled) {
+  g_path_memo_enabled = enabled;
+}
 
 CFX_AggDeviceDriver::CFX_AggDeviceDriver(
     RetainPtr<CFX_DIBitmap> pBitmap,
@@ -981,6 +1273,19 @@ CFX_AggDeviceDriver::CFX_AggDeviceDriver(
 
 CFX_AggDeviceDriver::~CFX_AggDeviceDriver() {
   DestroyPlatform();
+}
+
+CFX_AggDeviceDriver::Workspace& CFX_AggDeviceDriver::GetWorkspace() {
+  if (!workspace_) {
+    workspace_ = std::make_unique<Workspace>();
+  }
+  return *workspace_;
+}
+
+void CFX_AggDeviceDriver::ReleaseLargeWorkspace() {
+  if (workspace_ && workspace_->HoldsLargeBuffers()) {
+    workspace_.reset();
+  }
 }
 
 #if !BUILDFLAG(IS_APPLE)
@@ -1071,8 +1376,7 @@ void CFX_AggDeviceDriver::SetClipMask(agg::rasterizer_scanline_aa& rasterizer) {
     RendererScanLineAaOffset<agg::renderer_base<agg::pixfmt_gray8>>
         final_render(base_buf, path_rect.left, path_rect.top);
     final_render.color(agg::gray8(255));
-    agg::scanline_u8 scanline;
-    agg::render_scanlines(rasterizer, scanline, final_render,
+    agg::render_scanlines(rasterizer, GetWorkspace().scanline(), final_render,
                           fill_options_.aliased_path);
   }
   clip_rgn_->IntersectMaskF(path_rect.left, path_rect.top,
@@ -1100,15 +1404,17 @@ bool CFX_AggDeviceDriver::SetClip_PathFill(
     clip_rgn_->IntersectRect(rect);
     return true;
   }
-  agg::path_storage path_data = BuildAggPath(path, pObject2Device);
+  Workspace& workspace = GetWorkspace();
+  agg::path_storage& path_data = workspace.EmptyPath();
+  BuildAggPath(path, pObject2Device, path_data);
   path_data.end_poly();
-  agg::rasterizer_scanline_aa rasterizer;
-  rasterizer.clip_box(0.0f, 0.0f,
-                      static_cast<float>(GetDeviceCaps(FXDC_PIXEL_WIDTH)),
-                      static_cast<float>(GetDeviceCaps(FXDC_PIXEL_HEIGHT)));
+  agg::rasterizer_scanline_aa& rasterizer = workspace.InitialRasterizer(
+      static_cast<float>(GetDeviceCaps(FXDC_PIXEL_WIDTH)),
+      static_cast<float>(GetDeviceCaps(FXDC_PIXEL_HEIGHT)));
   rasterizer.add_path(path_data);
   rasterizer.filling_rule(GetAlternateOrWindingFillType(fill_options));
   SetClipMask(rasterizer);
+  ReleaseLargeWorkspace();
   return true;
 }
 
@@ -1120,15 +1426,17 @@ bool CFX_AggDeviceDriver::SetClip_PathStroke(
     clip_rgn_ = std::make_unique<CFX_AggClipRgn>(
         GetDeviceCaps(FXDC_PIXEL_WIDTH), GetDeviceCaps(FXDC_PIXEL_HEIGHT));
   }
-  agg::path_storage path_data = BuildAggPath(path, nullptr);
-  agg::rasterizer_scanline_aa rasterizer;
-  rasterizer.clip_box(0.0f, 0.0f,
-                      static_cast<float>(GetDeviceCaps(FXDC_PIXEL_WIDTH)),
-                      static_cast<float>(GetDeviceCaps(FXDC_PIXEL_HEIGHT)));
-  RasterizeStroke(&rasterizer, &path_data, pObject2Device, pGraphState, 1.0f,
-                  false);
+  Workspace& workspace = GetWorkspace();
+  agg::path_storage& path_data = workspace.EmptyPath();
+  BuildAggPath(path, nullptr, path_data);
+  agg::rasterizer_scanline_aa& rasterizer = workspace.InitialRasterizer(
+      static_cast<float>(GetDeviceCaps(FXDC_PIXEL_WIDTH)),
+      static_cast<float>(GetDeviceCaps(FXDC_PIXEL_HEIGHT)));
+  RasterizeStroke(&rasterizer, &path_data, workspace.solid_stroke(),
+                  pObject2Device, pGraphState, 1.0f, false);
   rasterizer.filling_rule(agg::fill_non_zero);
   SetClipMask(rasterizer);
+  ReleaseLargeWorkspace();
   return true;
 }
 
@@ -1153,13 +1461,29 @@ void CFX_AggDeviceDriver::RenderRasterizer(
     agg::rasterizer_scanline_aa& rasterizer,
     uint32_t color,
     bool bFullCover,
-    bool bGroupKnockout) {
+    bool bGroupKnockout,
+    RecordedPass* record) {
   RetainPtr<CFX_DIBitmap> pt = bGroupKnockout ? backdrop_bitmap_ : nullptr;
   CFX_AggRenderer render(bitmap_, pt, clip_rgn_.get(), color, bFullCover,
                          rgb_byte_order_);
-  agg::scanline_u8 scanline;
-  agg::render_scanlines(rasterizer, scanline, render,
+  if (record) {
+    RecordingRenderer<CFX_AggRenderer, RecordedPass> recording(render, *record);
+    agg::render_scanlines(rasterizer, GetWorkspace().scanline(), recording,
+                          fill_options_.aliased_path);
+    return;
+  }
+  agg::render_scanlines(rasterizer, GetWorkspace().scanline(), render,
                         fill_options_.aliased_path);
+}
+
+void CFX_AggDeviceDriver::ReplayPass(const RecordedPass& pass,
+                                     uint32_t color,
+                                     bool bFullCover,
+                                     bool bGroupKnockout) {
+  RetainPtr<CFX_DIBitmap> pt = bGroupKnockout ? backdrop_bitmap_ : nullptr;
+  CFX_AggRenderer render(bitmap_, pt, clip_rgn_.get(), color, bFullCover,
+                         rgb_byte_order_);
+  pass.Replay(render);
 }
 
 bool CFX_AggDeviceDriver::DrawPath(const CFX_Path& path,
@@ -1173,34 +1497,105 @@ bool CFX_AggDeviceDriver::DrawPath(const CFX_Path& path,
   }
 
   fill_options_ = fill_options;
-  if (fill_options.fill_type != CFX_FillRenderOptions::FillType::kNoFill &&
-      fill_color) {
-    agg::path_storage path_data = BuildAggPath(path, pObject2Device);
-    agg::rasterizer_scanline_aa rasterizer;
-    rasterizer.clip_box(0.0f, 0.0f,
-                        static_cast<float>(GetDeviceCaps(FXDC_PIXEL_WIDTH)),
-                        static_cast<float>(GetDeviceCaps(FXDC_PIXEL_HEIGHT)));
-    rasterizer.add_path(path_data);
-    rasterizer.filling_rule(GetAlternateOrWindingFillType(fill_options));
-    RenderRasterizer(rasterizer, fill_color, fill_options.full_cover,
-                     /*bGroupKnockout=*/false);
-  }
-  int stroke_alpha = FXARGB_A(stroke_color);
-  if (!pGraphState || !stroke_alpha) {
+  if (!g_path_memo_enabled || path.GetPoints().size() > kMemoMaxPoints) {
+    DrawPathPasses(path, pObject2Device, pGraphState, fill_color, stroke_color,
+                   fill_options, nullptr);
     return true;
   }
 
-  if (fill_options.zero_area) {
-    agg::path_storage path_data = BuildAggPath(path, pObject2Device);
-    agg::rasterizer_scanline_aa rasterizer;
-    rasterizer.clip_box(0.0f, 0.0f,
-                        static_cast<float>(GetDeviceCaps(FXDC_PIXEL_WIDTH)),
-                        static_cast<float>(GetDeviceCaps(FXDC_PIXEL_HEIGHT)));
-    RasterizeStroke(&rasterizer, &path_data, nullptr, pGraphState, 1,
-                    fill_options.stroke_text_mode);
-    RenderRasterizer(rasterizer, stroke_color, fill_options.full_cover,
-                     group_knockout_);
+  if (!path_memo_) {
+    path_memo_ = std::make_unique<PathMemo>();
+  }
+  if (!path_memo_->SameObjectAsLast(path)) {
+    path_memo_->Restart(path);
+    DrawPathPasses(path, pObject2Device, pGraphState, fill_color, stroke_color,
+                   fill_options, nullptr);
     return true;
+  }
+  const bool fill_pass =
+      fill_options.fill_type != CFX_FillRenderOptions::FillType::kNoFill &&
+      fill_color;
+  const bool stroke_pass = pGraphState && FXARGB_A(stroke_color);
+  const PathMemo::Inputs inputs{path,
+                                pObject2Device,
+                                pGraphState,
+                                fill_options,
+                                fill_pass,
+                                stroke_pass,
+                                GetDeviceCaps(FXDC_PIXEL_WIDTH),
+                                GetDeviceCaps(FXDC_PIXEL_HEIGHT)};
+  if (!path_memo_->SameInputs(inputs)) {
+    // The object repeats with new inputs: keep them and record this call for
+    // the calls that repeat them. Only objects the content stream repeats get
+    // here, so paths drawn once pay nothing for the recording.
+    path_memo_->Remember(inputs);
+    path_memo_->BeginRecording();
+    DrawPathPasses(path, pObject2Device, pGraphState, fill_color, stroke_color,
+                   fill_options, path_memo_.get());
+    path_memo_->FinishRecording();
+    return true;
+  }
+  if (path_memo_->recorded()) {
+    // Each object still composites once, in order; only the rasterization,
+    // which depends on nothing but the inputs compared above, is shared.
+    if (fill_pass) {
+      ReplayPass(path_memo_->fill(), fill_color, fill_options.full_cover,
+                 /*bGroupKnockout=*/false);
+    }
+    if (stroke_pass) {
+      ReplayPass(path_memo_->stroke(), stroke_color, fill_options.full_cover,
+                 group_knockout_);
+    }
+    return true;
+  }
+  // Its passes were too large to record.
+  DrawPathPasses(path, pObject2Device, pGraphState, fill_color, stroke_color,
+                 fill_options, nullptr);
+  return true;
+}
+
+void CFX_AggDeviceDriver::DrawPathPasses(
+    const CFX_Path& path,
+    const CFX_Matrix* pObject2Device,
+    const CFX_GraphStateData* pGraphState,
+    uint32_t fill_color,
+    uint32_t stroke_color,
+    const CFX_FillRenderOptions& fill_options,
+    PathMemo* record) {
+  const float device_width = static_cast<float>(GetDeviceCaps(FXDC_PIXEL_WIDTH));
+  const float device_height =
+      static_cast<float>(GetDeviceCaps(FXDC_PIXEL_HEIGHT));
+  if (fill_options.fill_type != CFX_FillRenderOptions::FillType::kNoFill &&
+      fill_color) {
+    Workspace& workspace = GetWorkspace();
+    agg::path_storage& path_data = workspace.EmptyPath();
+    BuildAggPath(path, pObject2Device, path_data);
+    agg::rasterizer_scanline_aa& rasterizer =
+        workspace.InitialRasterizer(device_width, device_height);
+    rasterizer.add_path(path_data);
+    rasterizer.filling_rule(GetAlternateOrWindingFillType(fill_options));
+    RenderRasterizer(rasterizer, fill_color, fill_options.full_cover,
+                     /*bGroupKnockout=*/false,
+                     record ? &record->fill() : nullptr);
+  }
+  int stroke_alpha = FXARGB_A(stroke_color);
+  if (!pGraphState || !stroke_alpha) {
+    ReleaseLargeWorkspace();
+    return;
+  }
+
+  if (fill_options.zero_area) {
+    Workspace& workspace = GetWorkspace();
+    agg::path_storage& path_data = workspace.EmptyPath();
+    BuildAggPath(path, pObject2Device, path_data);
+    agg::rasterizer_scanline_aa& rasterizer =
+        workspace.InitialRasterizer(device_width, device_height);
+    RasterizeStroke(&rasterizer, &path_data, workspace.solid_stroke(), nullptr,
+                    pGraphState, 1, fill_options.stroke_text_mode);
+    RenderRasterizer(rasterizer, stroke_color, fill_options.full_cover,
+                     group_knockout_, record ? &record->stroke() : nullptr);
+    ReleaseLargeWorkspace();
+    return;
   }
   CFX_Matrix matrix1;
   CFX_Matrix matrix2;
@@ -1214,16 +1609,17 @@ bool CFX_AggDeviceDriver::DrawPath(const CFX_Path& path,
     matrix1 = *pObject2Device * matrix2.GetInverse();
   }
 
-  agg::path_storage path_data = BuildAggPath(path, &matrix1);
-  agg::rasterizer_scanline_aa rasterizer;
-  rasterizer.clip_box(0.0f, 0.0f,
-                      static_cast<float>(GetDeviceCaps(FXDC_PIXEL_WIDTH)),
-                      static_cast<float>(GetDeviceCaps(FXDC_PIXEL_HEIGHT)));
-  RasterizeStroke(&rasterizer, &path_data, &matrix2, pGraphState, matrix1.a,
-                  fill_options.stroke_text_mode);
+  Workspace& workspace = GetWorkspace();
+  agg::path_storage& path_data = workspace.EmptyPath();
+  BuildAggPath(path, &matrix1, path_data);
+  agg::rasterizer_scanline_aa& rasterizer =
+      workspace.InitialRasterizer(device_width, device_height);
+  RasterizeStroke(&rasterizer, &path_data, workspace.solid_stroke(), &matrix2,
+                  pGraphState, matrix1.a, fill_options.stroke_text_mode);
   RenderRasterizer(rasterizer, stroke_color, fill_options.full_cover,
-                   group_knockout_);
-  return true;
+                   group_knockout_, record ? &record->stroke() : nullptr);
+  ReleaseLargeWorkspace();
+  return;
 }
 
 bool CFX_AggDeviceDriver::FillRect(const FX_RECT& rect, uint32_t fill_color) {

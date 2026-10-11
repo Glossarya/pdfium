@@ -16,6 +16,8 @@
 #include "build/build_config.h"
 #include "constants/page_object.h"
 #include "core/fpdfapi/page/cpdf_annotcontext.h"
+#include "core/fpdfapi/page/cpdf_contentparser.h"
+#include "core/fpdfapi/page/cpdf_decodedimagestore.h"
 #include "core/fpdfapi/page/cpdf_docpagedata.h"
 #include "core/fpdfapi/page/cpdf_form.h"
 #include "core/fpdfapi/page/cpdf_occontext.h"
@@ -39,6 +41,7 @@
 #include "core/fpdfapi/render/cpdf_rendercontext.h"
 #include "core/fpdfapi/render/cpdf_renderoptions.h"
 #include "core/fpdfdoc/cpdf_annot.h"
+#include "core/fpdfdoc/cpdf_annot_rotation.h"
 #include "core/fpdfdoc/cpdf_nametree.h"
 #include "core/fpdfdoc/cpdf_viewerpreferences.h"
 #include "core/fxcrt/cfx_fileaccess_stream.h"
@@ -68,7 +71,7 @@
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "fpdfsdk/cpdfsdk_pageview.h"
 #include "fpdfsdk/cpdfsdk_renderpage.h"
-#include "fpdfsdk/epdf_wrapped_appearance.h"
+#include "fpdfsdk/epdf_budget_pause.h"
 #include "fxjs/ijs_runtime.h"
 #include "public/epdf_named_pages.h"
 #include "public/fpdf_formfill.h"
@@ -734,7 +737,23 @@ namespace {
 // a leaked page handle. When `normalize` is true, the page's rotation is
 // overridden to 0 so all subsequent operations use normalized 0-degree
 // coordinates (the intrinsic rotation is surfaced separately via
-// EPDF_GetPageRotationByIndex). Returns nullptr on any failure.
+// EPDF_GetPageRotateByIndex). Returns nullptr on any failure.
+// EmbedPDF: the page at `page_index`, which the caller checked, not parsed
+// yet.
+RetainPtr<CPDF_Page> NewPage(CPDF_Document* doc, int page_index) {
+  RetainPtr<const CPDF_Dictionary> const_dict =
+      doc->GetPageDictionary(page_index);
+  RetainPtr<CPDF_Dictionary> dict =
+      pdfium::WrapRetain(const_cast<CPDF_Dictionary*>(const_dict.Get()));
+  if (!dict) {
+    return nullptr;
+  }
+
+  auto pPage = pdfium::MakeRetain<CPDF_Page>(doc, std::move(dict));
+  pPage->AddPageImageCache();
+  return pPage;
+}
+
 FPDF_PAGE LoadPageByValidatedIndex(FPDF_DOCUMENT document,
                                    CPDF_Document* doc,
                                    int page_index,
@@ -750,16 +769,10 @@ FPDF_PAGE LoadPageByValidatedIndex(FPDF_DOCUMENT document,
   }
 #endif  // PDF_ENABLE_XFA
 
-  RetainPtr<const CPDF_Dictionary> const_dict =
-      doc->GetPageDictionary(page_index);
-  RetainPtr<CPDF_Dictionary> dict =
-      pdfium::WrapRetain(const_cast<CPDF_Dictionary*>(const_dict.Get()));
-  if (!dict) {
+  RetainPtr<CPDF_Page> pPage = NewPage(doc, page_index);
+  if (!pPage) {
     return nullptr;
   }
-
-  auto pPage = pdfium::MakeRetain<CPDF_Page>(doc, std::move(dict));
-  pPage->AddPageImageCache();
   pPage->ParseContent();
 
   // Force rotation to 0 - this re-runs UpdateDimensions() so page_size_ and
@@ -891,11 +904,61 @@ EPDFDoc_SetPageRotationByObjectNumber(FPDF_DOCUMENT document,
   return true;
 }
 
+FPDF_EXPORT FPDF_PAGE FPDF_CALLCONV
+EPDFDoc_StartLoadPageByObjectNumber(FPDF_DOCUMENT document,
+                                    unsigned int obj_num,
+                                    FPDF_BOOL normalized) {
+  auto* doc = CPDFDocumentFromFPDFDocument(document);
+  if (!doc || obj_num == 0) {
+    return nullptr;
+  }
+  const int page_index = doc->GetPageIndex(obj_num);
+  if (page_index < 0 || page_index >= FPDF_GetPageCount(document)) {
+    return nullptr;
+  }
+#ifdef PDF_ENABLE_XFA
+  if (doc->GetExtension()) {
+    return nullptr;
+  }
+#endif  // PDF_ENABLE_XFA
+
+  RetainPtr<CPDF_Page> page = NewPage(doc, page_index);
+  if (!page) {
+    return nullptr;
+  }
+  // The parser reads the page's box, which rotation doesn't change, so the
+  // rotation can be normalized before the parse as well as after it.
+  if (normalized) {
+    page->SetRotationOverride(0);
+  }
+  CPDF_DocumentViewScope document_view(doc);
+  page->StartParse(std::make_unique<CPDF_ContentParser>(page.Get()));
+  return FPDFPageFromIPDFPage(page.Leak());
+}
+
+FPDF_EXPORT int FPDF_CALLCONV EPDFPage_ContinueLoad(FPDF_PAGE page,
+                                                    int budget_ms) {
+  CPDF_Page* pdf_page = CPDFPageFromFPDFPageAsIs(page);
+  if (!pdf_page || pdf_page->GetParseState() ==
+                       CPDF_PageObjectHolder::ParseState::kNotParsed) {
+    return -1;
+  }
+  if (pdf_page->GetParseState() ==
+      CPDF_PageObjectHolder::ParseState::kParsing) {
+    CPDF_DocumentViewScope document_view(pdf_page->GetDocument());
+    EPDF_BudgetPause pause(budget_ms);
+    pdf_page->ContinueParse(&pause);
+  }
+  return pdf_page->GetParseState() == CPDF_PageObjectHolder::ParseState::kParsed
+             ? 1
+             : 0;
+}
+
 FPDF_EXPORT unsigned int FPDF_CALLCONV
 EPDFPage_GetObjectNumber(FPDF_PAGE page) {
   // Note: CPDFPageFromFPDFPage() returns null for XFA pages, so this function
   // returns 0 for XFA pages (documented in the header).
-  CPDF_Page* pPage = CPDFPageFromFPDFPage(page);
+  CPDF_Page* pPage = CPDFPageFromFPDFPageAsIs(page);
   if (!pPage) {
     return 0;
   }
@@ -1244,6 +1307,7 @@ EPDF_RenderAnnotBitmap(FPDF_BITMAP bitmap,
                        FPDF_PAGE page,
                        FPDF_ANNOTATION annot,
                        FPDF_ANNOT_APPEARANCEMODE appearanceMode,
+                       FPDF_BYTESTRING state,
                        const FS_MATRIX* matrix,
                        int flags) {
   // Guards
@@ -1271,9 +1335,20 @@ EPDF_RenderAnnotBitmap(FPDF_BITMAP bitmap,
     return false;
   }
 
-  // Instantiate CPDF_Annot using its public constructor.
+  // Instantiate CPDF_Annot using its public constructor. A render never
+  // writes: an annotation with no appearance that PDFium can't draw in
+  // memory draws nothing, rather than getting one generated into the file.
   auto pAnnot = std::make_unique<CPDF_Annot>(
-      pdfium::WrapRetain(const_cast<CPDF_Dictionary*>(pAnnotDict)), pDoc);
+      pdfium::WrapRetain(const_cast<CPDF_Dictionary*>(pAnnotDict)), pDoc,
+      CPDF_Annot::MissingAppearance::kGenerateWhenDrawn);
+  // NULL or empty: the state /AS selects (a binding may pass "" for none).
+  if (state && state[0]) {
+    pAnnot->SetAppearanceState(ByteString(state));
+  }
+  if (!pAnnot->GetDrawingRect(
+          static_cast<CPDF_Annot::AppearanceMode>(appearanceMode))) {
+    return false;
+  }
 
   // ---------------------------------------------------------------- bitmaps
   RetainPtr<CFX_DIBitmap> pBitmap(CFXDIBitmapFromFPDFBitmap(bitmap));
@@ -1309,6 +1384,9 @@ EPDF_RenderAnnotBitmapUnrotated(FPDF_BITMAP bitmap,
                                 FPDF_PAGE page,
                                 FPDF_ANNOTATION annot,
                                 FPDF_ANNOT_APPEARANCEMODE appearanceMode,
+                                FPDF_BYTESTRING state,
+                                float degrees,
+                                const FS_RECTF* box,
                                 const FS_MATRIX* matrix,
                                 int flags) {
   // Guards (same as EPDF_RenderAnnotBitmap)
@@ -1333,8 +1411,18 @@ EPDF_RenderAnnotBitmapUnrotated(FPDF_BITMAP bitmap,
     return false;
   }
 
+  // A render never writes (as EPDF_RenderAnnotBitmap).
   auto pAnnot = std::make_unique<CPDF_Annot>(
-      pdfium::WrapRetain(const_cast<CPDF_Dictionary*>(pAnnotDict)), pDoc);
+      pdfium::WrapRetain(const_cast<CPDF_Dictionary*>(pAnnotDict)), pDoc,
+      CPDF_Annot::MissingAppearance::kGenerateWhenDrawn);
+  // NULL or empty: the state /AS selects (a binding may pass "" for none).
+  if (state && state[0]) {
+    pAnnot->SetAppearanceState(ByteString(state));
+  }
+  if (!pAnnot->GetDrawingRect(
+          static_cast<CPDF_Annot::AppearanceMode>(appearanceMode))) {
+    return false;
+  }
 
   // Get the AP form for the requested mode.
   // Note: we skip ShouldDrawAnnotation/GenerateAPIfNeeded (private) because
@@ -1345,35 +1433,24 @@ EPDF_RenderAnnotBitmapUnrotated(FPDF_BITMAP bitmap,
     return false;
   }
 
-  // Read the raw BBox WITHOUT applying the AP Matrix. For our wrapper the
-  // rotation lives on the wrapper, which an opacity layer or another editor's
-  // forms may hold further down: then its box and matrix are the ones to undo.
-  CFX_FloatRect form_bbox = pForm->GetDict()->GetRectFor("BBox");
-  CFX_Matrix form_matrix = pForm->GetDict()->GetMatrixFor("Matrix");
-  if (std::optional<EpdfWrappedAppearance> ours = EpdfFindWrappedAppearance(
-          pForm->GetStream().Get(), /*opacity=*/std::nullopt)) {
-    form_bbox = ours->wrapper->GetDict()->GetRectFor("BBox");
-    form_matrix = ours->wrapper_to_appearance;
+  // The appearance as the page shows it: its BBox through its Matrix,
+  // stretched onto /Rect (the Matrix is already in the parsed content).
+  const CPDF_Dictionary* form_dict = pForm->GetDict().Get();
+  CFX_FloatRect shown_bbox = form_dict->GetMatrixFor("Matrix").TransformRect(
+      form_dict->GetRectFor("BBox"));
+  shown_bbox.Normalize();
+  CFX_Matrix mtForm2Page;
+  mtForm2Page.MatchRect(pAnnot->GetRect(), shown_bbox);
+
+  // Then turned back about the middle of its own box, so the box is upright
+  // whether the turn is in the Matrix or drawn in the stream (Acrobat's
+  // quarter-turned text box).
+  if (degrees != 0 && box) {
+    CFX_FloatRect turned_box = CFXFloatRectFromFSRectF(*box);
+    turned_box.Normalize();
+    mtForm2Page.Concat(
+        fpdfdoc::TurnAbout(fpdfdoc::BoxCenter(turned_box), -degrees));
   }
-
-  // Use /EMBD_Metadata /UnrotatedRect as the target rect for MatchRect.
-  // Falls back to /Rect if EmbedPDF metadata is not set.
-  RetainPtr<const CPDF_Dictionary> metadata =
-      pAnnot->GetAnnotDict()->GetDictFor("EMBD_Metadata");
-  CFX_FloatRect target =
-      metadata ? metadata->GetRectFor("UnrotatedRect") : CFX_FloatRect();
-  if (target.IsEmpty()) {
-    target = pAnnot->GetRect();
-  }
-
-  // The form's Matrix (rotation) was baked into the content objects during
-  // parsing by CPDF_ContentParser.  We must undo it so the bitmap is unrotated.
-  CFX_Matrix mtForm2Page = form_matrix.GetInverse();
-
-  // Then map raw BBox -> target rect (identity when BBox == unrotatedRect).
-  CFX_Matrix matchRect;
-  matchRect.MatchRect(target, form_bbox);
-  mtForm2Page.Concat(matchRect);
 
   // Build CTM = displayMatrix * userMatrix
   CFX_Matrix ctm = pPage->GetDisplayMatrix();
@@ -1406,6 +1483,29 @@ EPDF_RenderAnnotBitmapUnrotated(FPDF_BITMAP bitmap,
                              pPage->GetPageImageCache());
   context.AppendLayer(pForm, mtForm2Page);
   context.Render(device.get(), nullptr, nullptr, nullptr);
+  return true;
+}
+
+FPDF_EXPORT void FPDF_CALLCONV EPDF_SetDecodedImageBudget(unsigned long bytes) {
+  if (CPDF_DecodedImageStore* store = CPDF_DecodedImageStore::Get()) {
+    store->SetBudget(bytes);
+  }
+}
+
+FPDF_EXPORT unsigned long FPDF_CALLCONV EPDF_GetDecodedImageBytes() {
+  CPDF_DecodedImageStore* store = CPDF_DecodedImageStore::Get();
+  return store ? pdfium::checked_cast<unsigned long>(store->bytes()) : 0;
+}
+
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFPage_ResetRenderCache(FPDF_PAGE page) {
+  CPDF_Page* pPage = CPDFPageFromFPDFPage(page);
+  // A progressive render holds loaders that point into the cache.
+  if (!pPage || pPage->GetRenderContext()) {
+    return false;
+  }
+  if (pPage->GetPageImageCache()) {
+    pPage->AddPageImageCache();
+  }
   return true;
 }
 
@@ -1462,8 +1562,13 @@ FPDF_EXPORT void FPDF_CALLCONV FPDF_ClosePage(FPDF_PAGE page) {
 }
 
 FPDF_EXPORT void FPDF_CALLCONV FPDF_CloseDocument(FPDF_DOCUMENT document) {
+  CPDF_Document* doc = CPDFDocumentFromFPDFDocument(document);
+  // Its decoded images hold its streams, which must not outlive it.
+  if (doc && CPDF_DecodedImageStore::Get()) {
+    CPDF_DecodedImageStore::Get()->DropDocument(doc);
+  }
   // Take it back across the API and throw it away,
-  std::unique_ptr<CPDF_Document>(CPDFDocumentFromFPDFDocument(document));
+  std::unique_ptr<CPDF_Document> discarded(doc);
 }
 
 FPDF_EXPORT unsigned long FPDF_CALLCONV FPDF_GetLastError() {
@@ -1736,21 +1841,26 @@ static RetainPtr<const CPDF_Dictionary> GetPageDictionaryByIndex(
     FPDF_DOCUMENT document,
     CPDF_Document* doc,
     int page_index);
-static int GetInheritedPageRotation(const CPDF_Dictionary* page_dict);
+static int GetInheritedPageRotate(const CPDF_Dictionary* page_dict);
 
-FPDF_EXPORT int FPDF_CALLCONV
-EPDF_GetPageRotationByIndex(FPDF_DOCUMENT document, int page_index) {
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDF_GetPageRotateByIndex(FPDF_DOCUMENT document, int page_index, int* rotate) {
+  if (!rotate) {
+    return false;
+  }
+
   auto* pDoc = CPDFDocumentFromFPDFDocument(document);
   if (!pDoc) {
-    return -1;
+    return false;
   }
 
   RetainPtr<const CPDF_Dictionary> dict =
       GetPageDictionaryByIndex(document, pDoc, page_index);
   if (!dict) {
-    return -1;
+    return false;
   }
-  return GetInheritedPageRotation(dict.Get());
+  *rotate = GetInheritedPageRotate(dict.Get());
+  return true;
 }
 
 static RetainPtr<const CPDF_Dictionary> GetPageDictionaryByIndex(
@@ -1761,6 +1871,26 @@ static RetainPtr<const CPDF_Dictionary> GetPageDictionaryByIndex(
     return nullptr;
   }
   return doc->GetPageDictionary(page_index);
+}
+
+FPDF_EXPORT unsigned long FPDF_CALLCONV
+EPDF_GetPageTabOrderByIndex(FPDF_DOCUMENT document,
+                            int page_index,
+                            void* buffer,
+                            unsigned long buflen) {
+  auto* pDoc = CPDFDocumentFromFPDFDocument(document);
+  if (!pDoc) {
+    return 0;
+  }
+  RetainPtr<const CPDF_Dictionary> dict =
+      GetPageDictionaryByIndex(document, pDoc, page_index);
+  if (!dict || !dict->KeyExist("Tabs")) {
+    return 0;
+  }
+  // SAFETY: required from caller.
+  return NulTerminateMaybeCopyAndReturnLength(
+      dict->GetNameFor("Tabs"),
+      UNSAFE_BUFFERS(SpanFromFPDFApiArgs(buffer, buflen)));
 }
 
 static ByteStringView GetPageBoxKey(EPDF_PAGE_BOX_TYPE box_type) {
@@ -1802,60 +1932,19 @@ static CFX_FloatRect GetInheritedRect(const CPDF_Dictionary* page_dict,
   return CFX_FloatRect();
 }
 
-static int GetInheritedPageRotation(const CPDF_Dictionary* page_dict) {
+// The page's /Rotate as written, resolved through the page tree (ISO 32000-1
+// Table 30 makes it inheritable); 0 when no node sets it.
+static int GetInheritedPageRotate(const CPDF_Dictionary* page_dict) {
   std::set<const CPDF_Dictionary*> visited;
   const CPDF_Dictionary* dict = page_dict;
   while (dict && !visited.contains(dict)) {
     if (dict->KeyExist(pdfium::page_object::kRotate)) {
-      int rotation =
-          (dict->GetIntegerFor(pdfium::page_object::kRotate) / 90) % 4;
-      return rotation < 0 ? rotation + 4 : rotation;
+      return dict->GetIntegerFor(pdfium::page_object::kRotate);
     }
     visited.insert(dict);
     dict = dict->GetDictFor(pdfium::page_object::kParent).Get();
   }
   return 0;
-}
-
-static CFX_FloatRect GetEffectiveMediaBox(const CPDF_Dictionary* page_dict) {
-  CFX_FloatRect media_box =
-      GetInheritedRect(page_dict, pdfium::page_object::kMediaBox);
-  if (media_box.IsEmpty()) {
-    media_box = CFX_FloatRect(0, 0, 612, 792);
-  }
-  return media_box;
-}
-
-FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
-EPDF_GetPageSizeByIndexNormalized(FPDF_DOCUMENT document,
-                                  int page_index,
-                                  FS_SIZEF* size) {
-  if (!size) {
-    return false;
-  }
-
-  auto* pDoc = CPDFDocumentFromFPDFDocument(document);
-  if (!pDoc) {
-    return false;
-  }
-
-  RetainPtr<const CPDF_Dictionary> dict =
-      GetPageDictionaryByIndex(document, pDoc, page_index);
-  if (!dict) {
-    return false;
-  }
-
-  // Resolve MediaBox/CropBox via page tree inheritance (not just the page dict)
-  CFX_FloatRect mediabox = GetEffectiveMediaBox(dict.Get());
-  CFX_FloatRect cropbox =
-      GetInheritedRect(dict.Get(), pdfium::page_object::kCropBox);
-  CFX_FloatRect bbox = cropbox.IsEmpty() ? mediabox : cropbox;
-  bbox.Intersect(mediabox);
-
-  // Return original dimensions - NO swap for rotation
-  size->width = bbox.Width();
-  size->height = bbox.Height();
-  return true;
 }
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
@@ -1878,25 +1967,25 @@ EPDF_GetPageBoxByIndex(FPDF_DOCUMENT document,
     return false;
   }
 
+  // ISO 32000 lets a page inherit its media and crop boxes from the page
+  // tree, never its bleed, trim or art boxes.
   CFX_FloatRect rect;
   switch (box_type) {
     case EPDF_PAGE_BOX_MEDIA:
-      rect = GetEffectiveMediaBox(dict.Get());
-      break;
     case EPDF_PAGE_BOX_CROP:
-      rect = GetInheritedRect(dict.Get(), pdfium::page_object::kCropBox);
-      if (rect.IsEmpty()) {
-        rect = GetEffectiveMediaBox(dict.Get());
-      }
+      rect = GetInheritedRect(dict.Get(), GetPageBoxKey(box_type));
       break;
     case EPDF_PAGE_BOX_BLEED:
     case EPDF_PAGE_BOX_TRIM:
-    case EPDF_PAGE_BOX_ART:
-      rect = GetInheritedRect(dict.Get(), GetPageBoxKey(box_type));
-      if (rect.IsEmpty()) {
-        return false;
+    case EPDF_PAGE_BOX_ART: {
+      RetainPtr<const CPDF_Array> array =
+          dict->GetArrayFor(GetPageBoxKey(box_type));
+      if (array) {
+        rect = array->GetRect();
+        rect.Normalize();
       }
       break;
+    }
   }
 
   if (rect.IsEmpty()) {

@@ -6,6 +6,7 @@
 
 #include "core/fpdfapi/edit/cpdf_pagecontentgenerator.h"
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <optional>
@@ -205,7 +206,19 @@ void RestoreUsedResources(
   for (const ByteString& key : keys_to_restore) {
     auto node = saved_resource_map.extract(key);
     CHECK(!node.empty());
-    resource_dict->SetFor(node.key(), std::move(node.mapped()));
+    RetainPtr<CPDF_Object> value = std::move(node.mapped());
+    // EmbedPDF: a value saved during a layer transaction that was aborted
+    // since may name an object the abort dropped (numbers aren't reused, so
+    // it resolves to nothing), and belongs to that transaction's dropped
+    // copy: skip the first, and attach a fresh copy of the second.
+    if (const CPDF_Reference* ref = value->AsReference();
+        ref && !ref->GetDirect()) {
+      continue;
+    }
+    if (!value->IsWritable()) {
+      value = value->Clone();
+    }
+    resource_dict->SetFor(node.key(), std::move(value));
   }
 }
 
@@ -376,6 +389,11 @@ void CPDF_PageContentGenerator::GenerateContent() {
   // Resource/reference traversal must see this layer's promoted page-tree
   // objects, including ancestors changed by redaction resource cleanup.
   CPDF_DocumentViewScope document_view(document_);
+  // EmbedPDF: a page that matches the document now matches what this writes.
+  CPDF_Page* page = obj_holder_->IsPage()
+                        ? static_cast<CPDF_Page*>(obj_holder_.get())
+                        : nullptr;
+  const bool page_was_current = page && page->IsContentCurrent();
   std::map<int32_t, fxcrt::ostringstream> new_stream_data =
       GenerateModifiedStreams();
   // If no streams were regenerated or removed, nothing to do here.
@@ -398,6 +416,9 @@ void CPDF_PageContentGenerator::GenerateContent() {
 
   UpdateContentStreams(std::move(new_stream_data));
   UpdateResourcesDict(regenerated_all_streams);
+  if (page) {
+    page->ContentGenerated(page_was_current);
+  }
 }
 
 int32_t CPDF_PageContentGenerator::CountExistingContentStreams() {
@@ -776,10 +797,15 @@ ByteString CPDF_PageContentGenerator::RealizeResource(
     ByteStringView type) const {
   DCHECK(pResource);
   if (!obj_holder_->GetResources()) {
-    obj_holder_->SetResources(document_->NewIndirect<CPDF_Dictionary>());
+    // EmbedPDF: name the new dictionary in /Resources before the holder holds
+    // it, and never read it back through GetResources(). On a layer document
+    // creating the dictionary is a write, and a page re-reads /Resources from
+    // its dictionary after every write: read back first, it finds none.
+    RetainPtr<CPDF_Dictionary> resources =
+        document_->NewIndirect<CPDF_Dictionary>();
     obj_holder_->GetMutableDict()->SetNewFor<CPDF_Reference>(
-        pdfium::page_object::kResources, document_,
-        obj_holder_->GetResources()->GetObjNum());
+        pdfium::page_object::kResources, document_, resources->GetObjNum());
+    obj_holder_->SetResources(std::move(resources));
   }
 
   RetainPtr<CPDF_Dictionary> resource_dict =
@@ -1173,6 +1199,16 @@ void CPDF_PageContentGenerator::ProcessGraphics(fxcrt::ostringstream* buf,
   // properties beyond alpha/blend like soft masks, overprint modes, etc.)
   pdfium::span<const ByteString> existing_gs_names =
       pPageObj->GetGraphicsResourceNames();
+  // EmbedPDF: names the resources no longer define are forgotten, and the
+  // state below is made again: an aborted layer transaction drops the
+  // graphics state this generator made for the object, while the object
+  // keeps its name.
+  if (!std::ranges::all_of(existing_gs_names, [this](const ByteString& name) {
+        return obj_holder_->ResourcesDefine("ExtGState", name);
+      })) {
+    pPageObj->mutable_general_state().SetGraphicsResourceNames({});
+    existing_gs_names = pPageObj->GetGraphicsResourceNames();
+  }
   if (!existing_gs_names.empty()) {
     // Emit all existing ExtGState resources with their original names
     for (const ByteString& gs_name : existing_gs_names) {

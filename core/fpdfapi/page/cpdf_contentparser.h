@@ -51,14 +51,16 @@ class CPDF_ContentParser {
     kGetContent = 1,
     kPrepareContent,
     kParse,
+    kParseForms,
     kCheckClip,
     kComplete,
   };
 
-  Stage GetContent();
-  Stage PrepareContent();
+  Stage GetContent(PauseIndicatorIface* pPause);
+  Stage PrepareContent(PauseIndicatorIface* pPause);
   Stage Parse();
-  Stage CheckClip();
+  Stage ParseForms(PauseIndicatorIface* pPause);
+  Stage CheckClip(PauseIndicatorIface* pPause);
 
   void HandlePageContentStream(const CPDF_Stream* pStream);
   bool HandlePageContentArray(const CPDF_Array* pArray);
@@ -79,6 +81,11 @@ class CPDF_ContentParser {
       data_;
   uint32_t streams_ = 0;
   uint32_t current_offset_ = 0;
+  // EmbedPDF: how far joining the page's content streams has got, and the
+  // next object clip checking looks at.
+  size_t joined_streams_ = 0;
+  size_t joined_bytes_ = 0;
+  size_t check_clip_index_ = 0;
   // Only used when parsing pages.
   CPDF_Form::RecursionState recursion_state_;
 

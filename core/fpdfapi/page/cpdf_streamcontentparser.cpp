@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <map>
 #include <memory>
 #include <utility>
@@ -16,6 +17,7 @@
 #include "core/fpdfapi/font/cpdf_font.h"
 #include "core/fpdfapi/font/cpdf_type3font.h"
 #include "core/fpdfapi/page/cpdf_allstates.h"
+#include "core/fpdfapi/page/cpdf_contentversions.h"
 #include "core/fpdfapi/page/cpdf_docpagedata.h"
 #include "core/fpdfapi/page/cpdf_form.h"
 #include "core/fpdfapi/page/cpdf_formobject.h"
@@ -44,6 +46,7 @@
 #include "core/fxcrt/containers/contains.h"
 #include "core/fxcrt/epdf_tls.h"
 #include "core/fxcrt/fx_safe_types.h"
+#include "core/fxcrt/pauseindicator_iface.h"
 #include "core/fxcrt/scoped_set_insertion.h"
 #include "core/fxcrt/span.h"
 #include "core/fxcrt/stl_util.h"
@@ -51,6 +54,25 @@
 #include "core/fxge/cfx_graphstatedata.h"
 
 namespace {
+
+// Bit-identical points: the same types, close flags and coordinate bits, so
+// 0 and -0 differ.
+bool HaveSamePoints(pdfium::span<const CFX_Path::Point> a,
+                    pdfium::span<const CFX_Path::Point> b) {
+  if (a.size() != b.size()) {
+    return false;
+  }
+  for (size_t i = 0; i < a.size(); ++i) {
+    if (a[i].type_ != b[i].type_ || a[i].close_figure_ != b[i].close_figure_ ||
+        std::bit_cast<uint32_t>(a[i].point_.x) !=
+            std::bit_cast<uint32_t>(b[i].point_.x) ||
+        std::bit_cast<uint32_t>(a[i].point_.y) !=
+            std::bit_cast<uint32_t>(b[i].point_.y)) {
+      return false;
+    }
+  }
+  return true;
+}
 
 constexpr int kMaxFormLevel = 40;
 
@@ -410,6 +432,7 @@ CPDF_StreamContentParser::CPDF_StreamContentParser(
                                          pPageResources.Get())))),
       object_holder_(pObjHolder),
       recursion_state_(recursion_state),
+      parsed_size_counter_(recursion_state->parsed_size),
       bbox_(rcBBox),
       cur_states_(std::make_unique<CPDF_AllStates>()) {
   if (pmtContentToUser) {
@@ -821,28 +844,76 @@ void CPDF_StreamContentParser::Handle_ExecuteXObject() {
 
 void CPDF_StreamContentParser::AddForm(RetainPtr<CPDF_Stream> pStream,
                                        const ByteString& name) {
-  CPDF_AllStates status;
-  status.mutable_general_state() = cur_states_->general_state();
-  status.mutable_graph_state() = cur_states_->graph_state();
-  status.mutable_color_state() = cur_states_->color_state();
-  status.mutable_text_state() = cur_states_->text_state();
+  auto status = std::make_unique<CPDF_AllStates>();
+  status->mutable_general_state() = cur_states_->general_state();
+  status->mutable_graph_state() = cur_states_->graph_state();
+  status->mutable_color_state() = cur_states_->color_state();
+  status->mutable_text_state() = cur_states_->text_state();
   auto form = std::make_unique<CPDF_Form>(document_, page_resources_,
                                           std::move(pStream), resources_.Get());
-  form->ParseContent(&status, nullptr, recursion_state_);
+  if (recursion_state_->content_versions) {
+    recursion_state_->content_versions->AddFormStream(form->GetParsedStream());
+  }
 
   CFX_Matrix matrix =
       cur_states_->current_transformation_matrix() * mt_content_to_user_;
   auto pFormObj = std::make_unique<CPDF_FormObject>(GetCurrentStreamIndex(),
                                                     std::move(form), matrix);
   pFormObj->SetResourceName(name);
+  deferred_forms_.emplace_back(pFormObj.get(), std::move(status),
+                               recursion_state_->parsed_set);
+  SetGraphicStates(pFormObj.get(), true, true, true);
+  AppendObject(std::move(pFormObj));
+}
+
+void CPDF_StreamContentParser::FinishForm(CPDF_FormObject* form_object) {
   if (!object_holder_->BackgroundAlphaNeeded() &&
-      pFormObj->form()->BackgroundAlphaNeeded()) {
+      form_object->form()->BackgroundAlphaNeeded()) {
     object_holder_->SetBackgroundAlphaNeeded(true);
   }
-  pFormObj->CalcBoundingBox();
-  SetGraphicStates(pFormObj.get(), true, true, true);
-  object_holder_->AppendPageObject(std::move(pFormObj));
+  form_object->CalcBoundingBox();
 }
+
+bool CPDF_StreamContentParser::ParseDeferredForms(PauseIndicatorIface* pause) {
+  while (!deferred_forms_.empty()) {
+    DeferredForm& next = deferred_forms_.front();
+    CPDF_Form* form = next.object->form();
+    // The form parses inside the content that was around it where it was
+    // met, so the recursion guard sees what it would have seen then.
+    std::swap(recursion_state_->parsed_set, next.enclosing);
+    if (form->GetParseState() ==
+        CPDF_PageObjectHolder::ParseState::kNotParsed) {
+      form->StartParseContent(next.states.get(), recursion_state_);
+    }
+    form->ContinueParse(pause);
+    std::swap(recursion_state_->parsed_set, next.enclosing);
+    if (form->GetParseState() != CPDF_PageObjectHolder::ParseState::kParsed) {
+      return false;
+    }
+    FinishForm(next.object);
+    deferred_forms_.pop_front();
+    if (!deferred_forms_.empty() && pause && pause->NeedToPauseNow()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void CPDF_StreamContentParser::AppendObject(
+    std::unique_ptr<CPDF_PageObject> object) {
+  parsed_size_counter_.Add(*object);
+  object_holder_->AppendPageObject(std::move(object));
+}
+
+CPDF_StreamContentParser::DeferredForm::DeferredForm(
+    CPDF_FormObject* object,
+    std::unique_ptr<CPDF_AllStates> states,
+    std::set<const uint8_t*> enclosing)
+    : object(object),
+      states(std::move(states)),
+      enclosing(std::move(enclosing)) {}
+
+CPDF_StreamContentParser::DeferredForm::~DeferredForm() = default;
 
 CPDF_ImageObject* CPDF_StreamContentParser::AddImageFromStream(
     RetainPtr<CPDF_Stream> pStream,
@@ -890,7 +961,7 @@ CPDF_ImageObject* CPDF_StreamContentParser::AddImageObject(
       cur_states_->current_transformation_matrix() * mt_content_to_user_);
 
   CPDF_ImageObject* pRet = pImageObj.get();
-  object_holder_->AppendPageObject(std::move(pImageObj));
+  AppendObject(std::move(pImageObj));
   return pRet;
 }
 
@@ -1187,7 +1258,7 @@ void CPDF_StreamContentParser::Handle_ShadeFill() {
     bbox.Intersect(GetShadingBBox(pShading.Get(), pObj->matrix()));
   }
   pObj->SetRect(bbox);
-  object_holder_->AppendPageObject(std::move(pObj));
+  AppendObject(std::move(pObj));
 }
 
 void CPDF_StreamContentParser::Handle_SetCharSpace() {
@@ -1369,7 +1440,7 @@ void CPDF_StreamContentParser::AddTextObject(
     if (TextRenderingModeIsClipMode(text_mode)) {
       clip_text_list_.push_back(pText->Clone());
     }
-    object_holder_->AppendPageObject(std::move(pText));
+    AppendObject(std::move(pText));
   }
   if (!kernings.empty() && kernings.back() != 0) {
     if (font->IsVertWriting()) {
@@ -1581,11 +1652,20 @@ void CPDF_StreamContentParser::AddPathPointAndClose(
 void CPDF_StreamContentParser::AddPathObject(
     CFX_FillRenderOptions::FillType fill_type,
     RenderType render_type) {
-  std::vector<CFX_Path::Point> path_points;
-  path_points.swap(path_points_);
   CFX_FillRenderOptions::FillType path_clip_type = path_clip_type_;
   path_clip_type_ = CFX_FillRenderOptions::FillType::kNoFill;
+  // `path_points_` is cleared, not released, so the next path reuses its
+  // capacity instead of growing a new vector.
+  AddPathObjectFromPoints(path_points_, path_clip_type, fill_type,
+                          render_type);
+  path_points_.clear();
+}
 
+void CPDF_StreamContentParser::AddPathObjectFromPoints(
+    std::vector<CFX_Path::Point>& path_points,
+    CFX_FillRenderOptions::FillType path_clip_type,
+    CFX_FillRenderOptions::FillType fill_type,
+    RenderType render_type) {
   if (path_points.empty()) {
     return;
   }
@@ -1619,26 +1699,35 @@ void CPDF_StreamContentParser::AddPathObject(
     path_points.pop_back();
   }
 
-  CPDF_Path path;
-  for (const auto& point : path_points) {
-    if (point.close_figure_) {
-      path.AppendPointAndClose(point.point_, point.type_);
-    } else {
-      path.AppendPoint(point.point_, point.type_);
-    }
-  }
-
   CFX_Matrix matrix =
       cur_states_->current_transformation_matrix() * mt_content_to_user_;
   bool bStroke = render_type == RenderType::kStroke;
-  if (bStroke || fill_type != CFX_FillRenderOptions::FillType::kNoFill) {
+  const bool painted =
+      bStroke || fill_type != CFX_FillRenderOptions::FillType::kNoFill;
+
+  // Only painted paths share geometry: a clip-only path is transformed below,
+  // which a second reference would turn into a copy.
+  CPDF_Path path;
+  if (painted && last_path_.HasRef() &&
+      HaveSamePoints(last_path_.GetPoints(), path_points)) {
+    path = last_path_;
+  } else {
+    path.AppendPoints(path_points);
+    if (painted) {
+      last_path_ = path;
+    }
+  }
+
+  if (painted) {
     auto pPathObj = std::make_unique<CPDF_PathObject>(GetCurrentStreamIndex());
     pPathObj->set_stroke(bStroke);
     pPathObj->set_filltype(fill_type);
     pPathObj->path() = path;
     SetGraphicStates(pPathObj.get(), true, false, true);
-    pPathObj->SetPathMatrix(matrix);
-    object_holder_->AppendPageObject(std::move(pPathObj));
+    last_path_matrix_ = CPDF_PathObject::ShareMatrix(
+        matrix, std::move(last_path_matrix_));
+    pPathObj->SetSharedPathMatrix(last_path_matrix_);
+    AppendObject(std::move(pPathObj));
   }
   if (path_clip_type != CFX_FillRenderOptions::FillType::kNoFill) {
     if (!matrix.IsIdentity()) {

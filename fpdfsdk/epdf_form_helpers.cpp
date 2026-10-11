@@ -94,6 +94,7 @@ std::unique_ptr<CPDF_InteractiveForm> BuildReconciledForm(CPDF_Document* doc) {
 }
 
 uint32_t PageObjNumForWidget(
+    CPDF_Document* doc,
     const std::map<const CPDF_Dictionary*, uint32_t>& widget_pages,
     const CPDF_Dictionary* widget_dict) {
   const auto it = widget_pages.find(widget_dict);
@@ -101,9 +102,14 @@ uint32_t PageObjNumForWidget(
     return it->second;
   }
   // Fall back to the widget's /P entry for widgets that no swept page
-  // references (e.g. pages outside a layer's page list).
+  // references, but only to a page of the document: a /P left naming a
+  // deleted page shows the widget nowhere.
   RetainPtr<const CPDF_Dictionary> page = widget_dict->GetDictFor("P");
-  return page ? page->GetObjNum() : 0;
+  const uint32_t page_objnum = page ? page->GetObjNum() : 0;
+  if (page_objnum == 0 || !doc || doc->GetPageIndex(page_objnum) < 0) {
+    return 0;
+  }
+  return page_objnum;
 }
 
 // GetOrParseIndirectObject parses on demand on plain documents (the const
@@ -115,6 +121,32 @@ RetainPtr<const CPDF_Dictionary> ResolveFieldDict(CPDF_Document* doc,
     return nullptr;
   }
   return ToDictionary(doc->GetOrParseIndirectObject(field_objnum));
+}
+
+RetainPtr<CPDF_Dictionary> GetMutableAcroForm(CPDF_Document* doc,
+                                              bool create_if_missing,
+                                              bool* out_created) {
+  const CPDF_Dictionary* root = doc->GetRoot();
+  if (!root) {
+    return nullptr;
+  }
+  RetainPtr<const CPDF_Object> entry = root->GetObjectFor("AcroForm");
+  if (!entry) {
+    if (!create_if_missing) {
+      return nullptr;
+    }
+    RetainPtr<CPDF_Dictionary> acro_form =
+        CPDF_InteractiveForm::InitAcroFormDict(doc);
+    if (acro_form && out_created) {
+      *out_created = true;
+    }
+    return acro_form;
+  }
+  if (const CPDF_Reference* ref = entry->AsReference()) {
+    return ToDictionary(doc->GetMutableIndirectObject(ref->GetRefObjNum()));
+  }
+  RetainPtr<CPDF_Dictionary> mutable_root = doc->GetMutableRoot();
+  return mutable_root ? mutable_root->GetMutableDictFor("AcroForm") : nullptr;
 }
 
 }  // namespace epdf

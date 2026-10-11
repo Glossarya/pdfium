@@ -68,7 +68,6 @@ typedef struct fpdf_bookmark_t__* FPDF_BOOKMARK;
 typedef struct fpdf_clippath_t__* FPDF_CLIPPATH;
 typedef struct fpdf_dest_t__* FPDF_DEST;
 typedef struct fpdf_base_document_t__* EPDF_BASE_DOCUMENT;
-typedef struct epdf_checkpoint_t__* EPDF_CHECKPOINT;
 typedef struct fpdf_document_t__* FPDF_DOCUMENT;
 typedef struct fpdf_font_t__* FPDF_FONT;
 typedef struct fpdf_form_handle_t__* FPDF_FORMHANDLE;
@@ -717,8 +716,109 @@ EPDFLayer_OpenLayerArtifactFromPath(EPDF_BASE_DOCUMENT base,
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFLayer_IsObjectPromoted(FPDF_DOCUMENT layer, unsigned long obj_num);
 
+// Function: EPDFPage_IsValid
+//          Return whether |page| still names a page of its document: its
+//          object resolves and it is in the document's page list. A page
+//          deleted, or created in an aborted layer transaction, is invalid;
+//          an abort that brings a page back makes its handle valid again.
+//          Other calls on an invalid page keep working on its last version;
+//          load the page again after a transaction that may have removed it.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFPage_IsValid(FPDF_PAGE page);
+
+// Function: EPDFLayer_IsPagePromoted
+//          Return whether |layer| promoted the page with object number
+//          |page_obj_num| (EPDFPage_PromoteInlineAnnotsRaw()): its births
+//          are recorded, so its inline annotations from the base resolve
+//          through them, not by position.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFLayer_IsPagePromoted(FPDF_DOCUMENT layer, unsigned long page_obj_num);
+
+// Function: EPDFLayer_GetBirthObjectNumber
+//          The object an inline annotation became when |layer| promoted its
+//          page. |page_obj_num| and |birth_index| are its birth name: the
+//          page's object number and the annotation's position in the base
+//          page's /Annots.
+// Return value:
+//          The object number, or 0 when the page isn't promoted (the
+//          annotation is still inline at its birth index) or the base had no
+//          inline annotation at |birth_index|.
+FPDF_EXPORT unsigned long FPDF_CALLCONV
+EPDFLayer_GetBirthObjectNumber(FPDF_DOCUMENT layer,
+                               unsigned long page_obj_num,
+                               unsigned long birth_index);
+
+// Function: EPDFLayer_GetBirthName
+//          The birth name of object |obj_num|, when it is an inline
+//          annotation from the base that |layer| promoted.
+// Parameters:
+//          page_obj_num - receives the page's object number.
+//          birth_index  - receives its position in the base page's /Annots.
+// Return value:
+//          TRUE when |obj_num| has a birth name.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFLayer_GetBirthName(FPDF_DOCUMENT layer,
+                       unsigned long obj_num,
+                       unsigned long* page_obj_num,
+                       unsigned long* birth_index);
+
+// Function: EPDFLayer_BeginTransaction
+//          Start a transaction on |layer|. Until it is committed or aborted,
+//          every write lands in an overlay above the layer's committed objects,
+//          and every read sees it. One at a time, never nested; saving during
+//          a transaction is refused.
+// Return value:
+//          TRUE if a transaction started; FALSE for a document that is not a
+//          layer, or when one is already open.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFLayer_BeginTransaction(FPDF_DOCUMENT layer);
+
+// Function: EPDFLayer_CommitTransaction
+//          Make the open transaction's writes part of the layer.
+// Return value:
+//          TRUE on success; FALSE when no transaction is open.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFLayer_CommitTransaction(FPDF_DOCUMENT layer);
+
+// Function: EPDFLayer_AbortTransaction
+//          Drop the open transaction's writes. The layer's objects and page
+//          list are exactly as at the transaction's start; object numbers it
+//          handed out are not given back.
+// Return value:
+//          TRUE on success; FALSE when no transaction is open.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFLayer_AbortTransaction(FPDF_DOCUMENT layer);
+
+// Function: EPDFLayer_IsInTransaction
+//          Return whether |layer| has an open transaction.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFLayer_IsInTransaction(FPDF_DOCUMENT layer);
+
+// Function: EPDFLayer_GetLastObjectNumber
+//          The last object number |layer| has handed out: new objects get
+//          numbers above it. Numbers a transaction handed out count even
+//          after it aborted.
+// Return value:
+//          The number, or 0 for a document that is not a layer.
+FPDF_EXPORT unsigned long FPDF_CALLCONV
+EPDFLayer_GetLastObjectNumber(FPDF_DOCUMENT layer);
+
+// Function: EPDFLayer_RaiseLastObjectNumber
+//          Raise |layer|'s last object number to |obj_num| when it is lower,
+//          so new objects get numbers above it. The numbers in between are
+//          handed out: a caller can create objects at them (the |objnum|
+//          parameter of EPDFPage_CreateAnnotRaw(), EPDFPage_InsertBlankRaw(),
+//          EPDFForm_CreateField() and EPDFForm_AttachWidget()). Never lowers
+//          the number.
+// Return value:
+//          TRUE on success; FALSE for a document that is not a layer, or a
+//          number above the parser's limit.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFLayer_RaiseLastObjectNumber(FPDF_DOCUMENT layer, unsigned long obj_num);
+
 // Function: EPDFLayer_GetPromotedObjectCount
 //          Return the number of objects currently stored in the layer overlay.
+//          Committed objects only: an open transaction's copies and new
+//          objects count once it commits.
 FPDF_EXPORT unsigned long FPDF_CALLCONV
 EPDFLayer_GetPromotedObjectCount(FPDF_DOCUMENT layer);
 
@@ -1085,33 +1185,22 @@ typedef enum EPDF_PAGE_BOX_TYPE {
 } EPDF_PAGE_BOX_TYPE;
 
 // Experimental EmbedPDF API.
-// Function: EPDF_GetPageRotationByIndex
-//          Get the rotation of the page at the given index without parsing
-//          the page contents.
+// Function: EPDF_GetPageRotateByIndex
+//          Get the page's /Rotate at the given index as the file writes it,
+//          resolved through page-tree inheritance, without parsing the page
+//          contents. No normalizing: a value that isn't a multiple of 90, or
+//          is negative or past 360, comes back as written; the caller applies
+//          the rules.
 // Parameters:
 //          document    -   Handle to document. Returned by FPDF_LoadDocument().
 //          page_index  -   Page index, zero for the first page.
+//          rotate      -   Receives the /Rotate value, 0 when absent.
 // Return value:
-//          The rotation as quarter-turns (must be one of 0, 1, 2, 3).
-//          Returns -1 on error (document or page not found).
-FPDF_EXPORT int FPDF_CALLCONV
-EPDF_GetPageRotationByIndex(FPDF_DOCUMENT document, int page_index);
-
-// Experimental EmbedPDF API.
-// Function: EPDF_GetPageSizeByIndexNormalized
-//          Get the ORIGINAL (non-rotated) size of the page at the given index.
-//          Unlike FPDF_GetPageSizeByIndexF, this does NOT swap width/height
-//          for 90/270 degree rotated pages. Does NOT load the page (lightweight).
-// Parameters:
-//          document    -   Handle to document. Returned by FPDF_LoadDocument().
-//          page_index  -   Page index, zero for the first page.
-//          size        -   Pointer to a FS_SIZEF to receive the page size (in points).
-// Return value:
-//          Non-zero for success. 0 for error.
+//          Non-zero for success. 0 on error (document or page not found).
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
-EPDF_GetPageSizeByIndexNormalized(FPDF_DOCUMENT document,
-                                   int page_index,
-                                   FS_SIZEF* size);
+EPDF_GetPageRotateByIndex(FPDF_DOCUMENT document,
+                          int page_index,
+                          int* rotate);
 
 // Experimental EmbedPDF API.
 // Function: EPDF_GetPageBoxByIndex
@@ -1122,11 +1211,14 @@ EPDF_GetPageSizeByIndexNormalized(FPDF_DOCUMENT document,
 //          box_type    -   The page box to query.
 //          box         -   Pointer to a FS_RECTF to receive the box (in points).
 // Return value:
-//          Non-zero for success. 0 for error or absent optional box.
+//          Non-zero for success. 0 for error, or when the box is absent, empty
+//          or not four numbers.
 // Comments:
-//          MediaBox is resolved through page-tree inheritance and falls back to
-//          PDFium's default page size when absent. CropBox falls back to
-//          MediaBox. BleedBox, TrimBox, and ArtBox return false when absent.
+//          The box as the file writes it, with its corners put in order.
+//          MediaBox and CropBox are resolved through page-tree inheritance;
+//          BleedBox, TrimBox and ArtBox are the page's own (ISO 32000-1 Table
+//          30). No defaults and no clipping to the media box: the caller
+//          applies those.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDF_GetPageBoxByIndex(FPDF_DOCUMENT document,
                        int page_index,
@@ -1149,6 +1241,27 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDF_GetPageUserUnitByIndex(FPDF_DOCUMENT document,
                             int page_index,
                             float* user_unit);
+
+// Experimental EmbedPDF API.
+// Function: EPDF_GetPageTabOrderByIndex
+//          Get the page's /Tabs at the given index, the order its annotations
+//          take keyboard focus in, as the file writes it, without loading or
+//          parsing the page: R (rows), C (columns), S (structure), or a name
+//          PDF 2.0 adds (A, W). /Tabs isn't inherited.
+// Parameters:
+//          document    -   Handle to document. Returned by FPDF_LoadDocument().
+//          page_index  -   Page index, zero for the first page.
+//          buffer      -   Receives the name's bytes and a trailing NUL. May
+//                          be NULL to query the length.
+//          buflen      -   The size of |buffer| in bytes.
+// Return value:
+//          The name's length in bytes, including the trailing NUL. 0 when the
+//          page sets no /Tabs, or on error (document or page not found).
+FPDF_EXPORT unsigned long FPDF_CALLCONV
+EPDF_GetPageTabOrderByIndex(FPDF_DOCUMENT document,
+                            int page_index,
+                            void* buffer,
+                            unsigned long buflen);
 
 // Experimental EmbedPDF API.
 // Function: EPDF_LoadPageNormalized
@@ -1224,6 +1337,14 @@ FPDF_EXPORT int FPDF_CALLCONV FPDF_GetPageSizeByIndex(FPDF_DOCUMENT document,
 // FPDF_COLORSCHEME is passed in, since with a single fill color for paths the
 // boundaries of adjacent fill paths are less visible.
 #define FPDF_CONVERT_FILL_TO_STROKE 0x20
+// Experimental EmbedPDF Extension API.
+// Draw form field widgets, from their appearances. It works with or without
+// FPDF_ANNOT, which draws the other annotations: with both, the widgets come
+// after them; alone, the page shows its widgets and no other annotation.
+// Hidden widgets stay hidden, and so do no-view ones unless printing. A widget
+// with no appearance is drawn in memory; the render writes nothing. Without
+// this flag widgets are left out, as upstream does.
+#define EPDF_RENDER_WIDGETS 0x8000
 
 // Struct for color scheme.
 // Each should be a 32-bit value specifying the color, in 8888 ARGB format.
@@ -1829,12 +1950,19 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDF_GetXFAPacketContent(
 // Experimental EmbedPDF Extension API.
 // Renders the appearance stream of a single annotation to a bitmap.
 //
-//   bitmap -  Destination bitmap handle.
-//   page   - Page that owns the annotation.
-//   annot  - Annotation handle obtained from any FPDFAnnot_* API.
-//   matrix - Matrix to transform the annotation
-//   flags  - Flags to control the rendering
-//   mode - One of `FPDF_ANNOT_APPEAR_*` above.
+//   bitmap         - Destination bitmap handle.
+//   page           - Page that owns the annotation.
+//   annot          - Annotation handle obtained from any FPDFAnnot_* API.
+//   appearanceMode - One of FPDF_ANNOT_APPEARANCEMODE_*.
+//   state          - NULL or empty to draw the state /AS selects (empty for
+//                    bindings that can't pass NULL). Otherwise the name
+//                    of a state of the mode's appearance subdictionary (as
+//                    EPDFAnnot_GetAppearanceStateName gives it), drawn
+//                    whatever /AS says. A mode whose entry is a single
+//                    stream, or a state the subdictionary lacks, draws
+//                    nothing.
+//   matrix         - Matrix to transform the annotation
+//   flags          - Flags to control the rendering
 //
 // Returns true if the rendering was successful, false otherwise.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
@@ -1842,16 +1970,22 @@ EPDF_RenderAnnotBitmap(FPDF_BITMAP bitmap,
                        FPDF_PAGE page,
                        FPDF_ANNOTATION annot,
                        FPDF_ANNOT_APPEARANCEMODE appearanceMode,
+                       FPDF_BYTESTRING state,
                        const FS_MATRIX* matrix,
                        int flags);
 
 // Experimental EmbedPDF Extension API.
-// Renders the annotation's AP form content WITHOUT the AP stream's rotation
-// Matrix applied, using /EMBD_Metadata /UnrotatedRect (falling back to /Rect)
-// for the MatchRect mapping. This produces an unrotated bitmap suitable for UI
-// layers that apply CSS rotation separately.
+// Renders the annotation's appearance turned back upright: as the page shows
+// it, then turned back by `degrees` about the middle of `box`, whether the
+// turn is in the appearance's /Matrix or drawn in its stream. `matrix` maps
+// page space to the bitmap, so mapping `box` fills the bitmap with the
+// upright drawing, for UI layers that turn it themselves. With `degrees` 0
+// or no `box`, it renders as the page shows it.
 //
-// Same parameters as EPDF_RenderAnnotBitmap.
+//   bitmap, page, annot, appearanceMode, state, matrix, flags - as
+//            EPDF_RenderAnnotBitmap.
+//   degrees - the turn to take out, counterclockwise (the PDF convention).
+//   box     - the box it turns about, in page space, before turning.
 //
 // Returns true if the rendering was successful, false otherwise.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
@@ -1859,8 +1993,44 @@ EPDF_RenderAnnotBitmapUnrotated(FPDF_BITMAP bitmap,
                                 FPDF_PAGE page,
                                 FPDF_ANNOTATION annot,
                                 FPDF_ANNOT_APPEARANCEMODE appearanceMode,
+                                FPDF_BYTESTRING state,
+                                float degrees,
+                                const FS_RECTF* box,
                                 const FS_MATRIX* matrix,
                                 int flags);
+
+// Experimental EmbedPDF Extension API.
+// Empties the page's image cache and frees the decoded images it holds, so
+// the page renders its images as a newly loaded page does. Renders of one
+// page share its image cache, and a cached decode depends on the size of the
+// render that made it: call this where each render must be independent of
+// earlier ones, such as before reusing a loaded page for a later job.
+//
+//   page - Handle to the page.
+//
+// Returns false, and changes nothing, when `page` is invalid or a
+// progressive render of it (FPDF_RenderPageBitmap_Start) is in progress.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFPage_ResetRenderCache(FPDF_PAGE page);
+
+// Experimental EmbedPDF Extension API.
+// Sets how many bytes of decoded images are kept across page loads, for every
+// document of this PDFium instance (the calling thread's, in thread-confined
+// builds), so an image rendered again after its page's image cache was
+// emptied is not decoded again. A kept decode renders the same bytes as a new
+// one. Above the budget the least recently used decodes are dropped. 0, the
+// default, keeps none and empties the store.
+//
+// The caller must set the budget to 0 before changing anything a decode
+// depends on: an image stream, its colour space or the resources naming it.
+// Closing a document drops its decodes.
+//
+//   bytes - The most bytes kept, counting images and their masks.
+FPDF_EXPORT void FPDF_CALLCONV EPDF_SetDecodedImageBudget(unsigned long bytes);
+
+// Experimental EmbedPDF Extension API.
+// Returns how many bytes of decoded images are kept (see
+// EPDF_SetDecodedImageBudget).
+FPDF_EXPORT unsigned long FPDF_CALLCONV EPDF_GetDecodedImageBytes();
 
 #ifdef PDF_ENABLE_V8
 // Function: FPDF_GetRecommendedV8Flags
@@ -1929,7 +2099,7 @@ EPDFDoc_LoadPageByObjectNumber(FPDF_DOCUMENT document, unsigned int obj_num);
 // rotation override to 0 so all subsequent operations (GetPageWidth,
 // annotations, text, rendering) use normalized coordinates as if the page had
 // no rotation. The intrinsic rotation is surfaced separately via
-// EPDF_GetPageRotationByIndex().
+// EPDF_GetPageRotateByIndex().
 //
 //   document - handle to the document.
 //   obj_num  - the indirect object number of the page dictionary.
@@ -2000,6 +2170,100 @@ EPDFDoc_SetPageRotationByObjectNumber(FPDF_DOCUMENT document,
 // invalid, the page dictionary is a direct object, or the page is an XFA page.
 FPDF_EXPORT unsigned int FPDF_CALLCONV
 EPDFPage_GetObjectNumber(FPDF_PAGE page);
+
+// Experimental EmbedPDF Extension API.
+// Starts loading a page by its PDF indirect object number, in slices: makes
+// the page and parses nothing yet. Continue the load with
+// EPDFPage_ContinueLoad() until it returns 1; FPDF_ClosePage() between slices
+// abandons it.
+//
+// Until the load ends, a call that reads the page - render, text, objects,
+// annotations, content generation - first finishes it in one go, so no call
+// sees half a page. EPDFPage_ContinueLoad(), EPDFPage_GetParsedSize() (the
+// size parsed so far), EPDFPage_IsContentCurrent(), EPDFPage_IsValid(),
+// EPDFPage_GetObjectNumber(), the page's size and FPDF_ClosePage() leave it
+// loading.
+//
+//   document   - handle to the document.
+//   obj_num    - the indirect object number of the page dictionary.
+//   normalized - true to load it as
+//                EPDFDoc_LoadPageByObjectNumberNormalized() does, with its
+//                rotation normalized to 0 degrees.
+//
+// Returns a handle to the page, or NULL if the object number does not
+// correspond to a page. Close it with FPDF_ClosePage().
+FPDF_EXPORT FPDF_PAGE FPDF_CALLCONV
+EPDFDoc_StartLoadPageByObjectNumber(FPDF_DOCUMENT document,
+                                    unsigned int obj_num,
+                                    FPDF_BOOL normalized);
+
+// Experimental EmbedPDF Extension API.
+// Parses more of a page that EPDFDoc_StartLoadPageByObjectNumber() started,
+// pausing once `budget_ms` milliseconds have passed; 0 parses one step. A step
+// is about 100 objects, a form's start or a content stream's decoding, so a
+// slice can run over its budget by one step. The parse pauses inside forms
+// too: a page drawn inside one huge form loads in slices like any other.
+// Loading in slices or in one go (FPDF_LoadPage()) gives the same page.
+//
+//   page      - handle to the page.
+//   budget_ms - how long to parse before pausing.
+//
+// Returns 1 once the page is loaded (at once for a page already loaded), 0
+// when the budget ran out first, and -1 when `page` is NULL or wasn't loaded
+// as a page.
+FPDF_EXPORT int FPDF_CALLCONV EPDFPage_ContinueLoad(FPDF_PAGE page,
+                                                    int budget_ms);
+
+// Experimental EmbedPDF Extension API.
+// What a page's parsed content costs in memory (EPDFPage_GetParsedSize()).
+// Every count is 64 bits, so the struct is laid out the same on every
+// platform: 40 bytes, the counts at 0, 8, 16 and 24, `complete` at 32.
+typedef struct EPDF_PAGE_PARSED_SIZE_ {
+  // Every page object, the objects inside forms included.
+  unsigned long long objects;
+  // The points of the paths, a geometry several paths share counted once.
+  unsigned long long path_points;
+  // The character codes of the text objects.
+  unsigned long long text_chars;
+  // An estimate of the bytes the objects hold, on the safe side: their own
+  // sizes, points, codes, positions and inline images. Fonts, cached images
+  // and the states objects share belong to the document and are not counted.
+  unsigned long long estimated_bytes;
+  // False while the page is still parsing: the size of what it has parsed.
+  FPDF_BOOL complete;
+} EPDF_PAGE_PARSED_SIZE;
+
+// Experimental EmbedPDF Extension API.
+// Gets what |page|'s parsed content costs in memory, counted while it parsed,
+// and counted again after its objects changed.
+//
+//   page - handle to the page.
+//   size - receives the size.
+//
+// Returns false, and leaves |size| alone, when |page| or |size| is null.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFPage_GetParsedSize(FPDF_PAGE page, EPDF_PAGE_PARSED_SIZE* size);
+
+// Experimental EmbedPDF Extension API.
+// Returns whether |page|'s parsed objects still match its document: the page's
+// boxes, its rotation, its content streams and the stream of every form placed
+// on it are the versions the objects were parsed from, or last generated into
+// (FPDFPage_GenerateContent()). A page that no longer matches renders what its
+// content was: load it again.
+//
+// A layer makes a new version of an object for every write inside a
+// transaction (EPDFLayer_BeginTransaction()), and an abort brings back the one
+// before, so a page loaded before a transaction is current after an abort and
+// after a commit that left its content alone. A write outside a transaction,
+// and every write to a document without a layer, changes objects in place,
+// which this can't see: close the pages such a write changes.
+//
+// Cheap: it compares only after the layer changed since the last call.
+//
+//   page - handle to the page.
+//
+// Returns false when |page| is null.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFPage_IsContentCurrent(FPDF_PAGE page);
 
 #ifdef __cplusplus
 }

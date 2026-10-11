@@ -67,10 +67,18 @@ class CPDF_PageObject {
   bool IsActive() const { return is_active_; }
   void TransformClipPath(const CFX_Matrix& matrix);
 
-  void SetOriginalRect(const CFX_FloatRect& rect) { original_rect_ = rect; }
-  const CFX_FloatRect& GetOriginalRect() const { return original_rect_; }
-  void SetRect(const CFX_FloatRect& rect) { rect_ = rect; }
+  void SetRect(const CFX_FloatRect& rect) {
+    rect_ = rect;
+    if (held_) {
+      NoteHeldBoundsChanged();
+    }
+  }
   const CFX_FloatRect& GetRect() const { return rect_; }
+
+  // Counts, process-wide, the changes to GetRect() of objects that a holder
+  // lists. A holder's object groups are current while it is unchanged.
+  static uint64_t HeldBoundsGeneration();
+
   FX_RECT GetBBox() const;
   FX_RECT GetTransformedBBox(const CFX_Matrix& matrix) const;
 
@@ -136,29 +144,29 @@ class CPDF_PageObject {
 
   void SetDefaultStates();
 
-  const CFX_Matrix& original_matrix() const { return original_matrix_; }
-
  protected:
   void CopyData(const CPDF_PageObject* pSrcObject);
-  void InitializeOriginalMatrix(const CFX_Matrix& matrix);
 
  private:
+  // Only a holder lists and unlists objects.
+  friend class CPDF_PageObjectHolder;
+
+  static void NoteHeldBoundsChanged();
+
   CPDF_GraphicStates graphic_states_;
   CFX_FloatRect rect_;
-  CFX_FloatRect original_rect_;
-  // Only used with `CPDF_ImageObject` for now.
-  // TODO(thestig): Use with `CPDF_FormObject` and `CPDF_PageObject` as well.
-  CFX_Matrix original_matrix_;
   CPDF_ContentMarks content_marks_;
   // Modifying `is_active_` automatically set `dirty_` to be true, but
   // otherwise `dirty_` and `is_active_` are independent.  A
   // `CPDF_PageObject` can remain dirty until page object processing completes
   // and marks it no longer dirty.
   bool dirty_ = false;
-  // Separately track if the current matrix is different from
-  // `original_matrix_`.
+  // Separately track if the current matrix is different from the one the
+  // object was created with (`CPDF_ImageObject::original_matrix()`).
   bool matrix_dirty_ = false;
   bool is_active_ = true;
+  // Whether a holder lists this object.
+  bool held_ = false;
   int32_t content_stream_;
   // The resource name for this object.
   ByteString resource_name_;

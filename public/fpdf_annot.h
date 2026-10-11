@@ -792,8 +792,10 @@ EPDFAnnot_GetEmbedMetadataJSON(FPDF_ANNOTATION annot,
                                unsigned long buflen);
 
 // Experimental EmbedPDF Extension API.
-// Removes /EMBD_Metadata from every annotation in |document|. This does not
-// remove standard annotation fields or appearance streams.
+// Removes /EMBD_Metadata from every annotation and every form field in
+// |document|: the fields in the field tree, and those a widget's /Parent chain
+// reaches. This does not remove standard annotation fields or appearance
+// streams.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFDocument_ClearEmbedMetadata(FPDF_DOCUMENT document);
 
@@ -1224,6 +1226,20 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDFAnnot_SetURI(FPDF_ANNOTATION annot,
 FPDF_EXPORT FPDF_ATTACHMENT FPDF_CALLCONV
 FPDFAnnot_GetFileAttachment(FPDF_ANNOTATION annot);
 
+// Experimental EmbedPDF Extension API.
+// FPDFAnnot_GetFileAttachment() for writing: the attachment as the document
+// opens it for writing, so a layer transaction copies it up first. Use this
+// to change an attachment the document already has; the handle
+// FPDFAnnot_GetFileAttachment() returns is for reading, and inside a layer
+// transaction the FPDFAttachment_Set*() and EPDFAttachment_Set*() calls
+// refuse it.
+//
+//   annot - handle to a file annotation.
+//
+// Returns the handle to the attachment object, or NULL on failure.
+FPDF_EXPORT FPDF_ATTACHMENT FPDF_CALLCONV
+EPDFAnnot_GetFileAttachmentForWrite(FPDF_ANNOTATION annot);
+
 // Experimental API.
 // Add an embedded file with |name| to |annot|.
 //
@@ -1264,25 +1280,25 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_SetColor(FPDF_ANNOTATION annot,
                                                        unsigned int B);
 
 // Experimental EmbedPDF Extension API.
-// Set the opacity of an annotaion.
+// Set the opacity of an annotation: /CA, stored as given. 1 removes /CA.
 //
-// annot - handle to an annotation.
-// alpha - the opacity. Ranges from 0 to 255.
+// annot   - handle to an annotation.
+// opacity - the opacity, 0 (transparent) to 1 (opaque).
 //
-// Returns true if succesful.
+// Returns true if successful; false for a value outside 0..1.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
-EPDFAnnot_SetOpacity(FPDF_ANNOTATION annot,
-                     unsigned int alpha /* 0 = transparent … 255 = opaque */);
+EPDFAnnot_SetOpacity(FPDF_ANNOTATION annot, float opacity);
 
 // Experimental EmbedPDF Extension API.
-// Get the opacity of an annotation.
+// Get the opacity of an annotation: /CA as stored, clamped to 0..1; 1 when
+// absent.
 //
-// annot - handle to an annotation.
-// alpha - buffer to hold the opacity. Ranges from 0 to 255.
+// annot   - handle to an annotation.
+// opacity - receives the opacity.
 //
-// Returns true if succesful.
+// Returns true if successful.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
-EPDFAnnot_GetOpacity(FPDF_ANNOTATION annot, unsigned int* alpha /* 0-255 */);
+EPDFAnnot_GetOpacity(FPDF_ANNOTATION annot, float* opacity);
 
 // Experimental EmbedPDF Extension API.
 // Clear the color of an annotation.
@@ -1365,23 +1381,10 @@ EPDFAnnot_GetRectangleDifferences(FPDF_ANNOTATION annot,
                                   float* top);
 
 // Experimental EmbedPDF Extension API.
-// Set the rectangle differences (/RD) for a supported annotation.
-//
-//   annot            - handle to a square, circle, caret, free-text, or polygon
-//                      annotation.
-//   left, bottom,    - the native PDF /RD values for each side.
-//   right, top         PDFium core treats /RD as [left, bottom, right, top].
-//
-// Returns true on success, false on failure.
-FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
-EPDFAnnot_SetRectangleDifferences(FPDF_ANNOTATION annot,
-                                  float left,
-                                  float bottom,
-                                  float right,
-                                  float top);
-
-// Experimental EmbedPDF Extension API.
 // Remove the rectangle differences (/RD) entry from a supported annotation.
+// Generating the appearance of a square, circle, caret or free text writes
+// /RD again when what it draws reaches past the shape (a cloudy border's
+// bumps, a callout's line): /Rect less /RD is the shape.
 //
 //   annot  - handle to a square, circle, caret, free-text, or polygon
 //            annotation.
@@ -1391,20 +1394,20 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_ClearRectangleDifferences(FPDF_ANNOTATION annot);
 
 // Experimental EmbedPDF Extension API.
-// Get the number of entries in the dash pattern for a dashed border. This
-// function handles both the modern /BS dictionary and the legacy /Border
-// array.
+// Get the number of entries in the dash pattern a border stores: /BS /D
+// whatever the border's style (only a dashed border draws it), or the legacy
+// /Border array's dash array when there is no /BS.
 //
 //   annot  - handle to an annotation.
 //
 // Returns the number of entries in the dash pattern array, or 0 if the border
-// is not dashed or has no pattern.
+// stores none.
 FPDF_EXPORT unsigned long FPDF_CALLCONV
 EPDFAnnot_GetBorderDashPatternCount(FPDF_ANNOTATION annot);
 
 // Experimental EmbedPDF Extension API.
-// Get the dash pattern for a dashed border. This function handles both the
-// modern /BS dictionary and the legacy /Border array.
+// Get the dash pattern a border stores, as EPDFAnnot_GetBorderDashPatternCount()
+// counts it.
 //
 //   annot      - handle to an annotation.
 //   dash_array - a buffer to receive the dash pattern values.
@@ -1418,7 +1421,10 @@ EPDFAnnot_GetBorderDashPattern(FPDF_ANNOTATION annot,
                                unsigned long count);
 
 // Experimental EmbedPDF Extension API.
-// Sets (or replaces) the dash pattern on an annotation's border.
+// Sets (or replaces) the dash pattern on an annotation's border (/BS /D).
+// The border style (/BS /S) is left as it is: only a dashed border draws the
+// pattern. A NULL |dash_array| or a |count| of 0 removes the pattern, and a
+// dashed border then draws the default dash [3].
 //
 //   annot      - handle to an annotation.
 //   dash_array - the dash pattern to be set.
@@ -1651,7 +1657,32 @@ EPDFAnnot_GetDefaultAppearance(FPDF_ANNOTATION annot,
                                unsigned int* B);
 
 // Experimental EmbedPDF Extension API.
-// Set the text alignment of a FreeText annotation.
+// Get the face of the font a FreeText, Redact or Widget annotation's default
+// appearance (/DA) names: its family, weight and italic, as the font's
+// descriptor and /BaseFont say (the subset tag and the style dropped from the
+// family). The font is looked up in the default resources (/DR, the field's
+// and then the form's); a name no /DR holds is a registered font's alias, a
+// standard alias (Helv is Helvetica), or the family itself.
+//
+//   annot  - handle to an annotation.
+//   family - receives the family as UTF-16LE with a trailing NUL; may be
+//            NULL to query the length.
+//   buflen - the size of |family| in bytes.
+//   weight - receives the weight, 100 to 900.
+//   italic - receives whether the face is italic.
+//
+// Returns the family's length in bytes, including the trailing NUL, or 0
+// when /DA names no font.
+FPDF_EXPORT unsigned long FPDF_CALLCONV
+EPDFAnnot_GetDefaultAppearanceFontFace(FPDF_ANNOTATION annot,
+                                       FPDF_WCHAR* family,
+                                       unsigned long buflen,
+                                       int* weight,
+                                       FPDF_BOOL* italic);
+
+// Experimental EmbedPDF Extension API.
+// Set the text alignment (/Q) of a FreeText, Redact or Widget annotation. A
+// widget's own /Q wins over its field's.
 //
 //   annot    - handle to an annotation.
 //   alignment - the text alignment to be set.
@@ -1662,7 +1693,9 @@ EPDFAnnot_SetTextAlignment(FPDF_ANNOTATION annot,
                            FPDF_TEXT_ALIGNMENT alignment);
 
 // Experimental EmbedPDF Extension API.
-// Get the text alignment of a FreeText annotation.
+// Get the text alignment (/Q) of a FreeText, Redact or Widget annotation. A
+// widget without its own /Q takes its field's (inherited), then the
+// interactive form's.
 //
 //   annot    - handle to an annotation.
 //
@@ -1826,20 +1859,25 @@ EPDFPage_GetAnnotIndexByObjectNumberRaw(FPDF_DOCUMENT doc,
 
 // Experimental EmbedPDF Extension API.
 // Create an annotation of |subtype| on a page without loading or parsing the
-// page: a new annotation dictionary, an object of its own, appended to the
-// page's /Annots. EPDFPage_CreateAnnot() on an unparsed page, for writing to
-// many pages at once.
+// page: a new annotation dictionary, an object of its own whose /P names the
+// page, appended to the page's /Annots. EPDFPage_CreateAnnot() on an unparsed
+// page, for writing to many pages at once.
 //
 //   doc        - handle to a document.
 //   page_index - the index of the page.
 //   subtype    - the subtype of the new annotation.
+//   objnum     - the object number the annotation gets, or 0 for the next
+//                free one. A number other than 0 needs a layer transaction
+//                and must be free (EPDFLayer_RaiseLastObjectNumber()).
 //
 // Returns a handle to the new annotation, which the caller closes with
-// FPDFPage_CloseAnnot(), or NULL on error.
+// FPDFPage_CloseAnnot(), or NULL on error, including a number that isn't
+// free.
 FPDF_EXPORT FPDF_ANNOTATION FPDF_CALLCONV
 EPDFPage_CreateAnnotRaw(FPDF_DOCUMENT doc,
                         int page_index,
-                        FPDF_ANNOTATION_SUBTYPE subtype);
+                        FPDF_ANNOTATION_SUBTYPE subtype,
+                        unsigned long objnum);
 
 // Experimental EmbedPDF Extension API.
 // Remove the annotation by index.
@@ -1852,6 +1890,39 @@ EPDFPage_CreateAnnotRaw(FPDF_DOCUMENT doc,
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFPage_RemoveAnnotRaw(FPDF_DOCUMENT doc,
                                                             int page_index,
                                                             int index);
+
+// Experimental EmbedPDF Extension API.
+// Promote a page: move every inline annotation dictionary in its /Annots
+// into its own indirect object, in place - same content, same order. On a
+// layer, the first promotion of a page the base has also records the page's
+// births: where each inline annotation the base has went (see
+// EPDFLayer_GetBirthObjectNumber()), in the open transaction if there is one.
+//
+// An inline annotation's permanent name is its position in the base page's
+// /Annots (its birth index), and it resolves by position only while every
+// one sits at its birth position. So promote a page before any write that
+// would move an existing entry of its /Annots: a delete, a reorder, a
+// flatten, a redaction, an insertion at a position.
+//
+//   doc        - handle to a document.
+//   page_index - the index of the page.
+//
+// Returns how many annotations moved (0 when none was inline), or -1.
+FPDF_EXPORT int FPDF_CALLCONV EPDFPage_PromoteInlineAnnotsRaw(FPDF_DOCUMENT doc,
+                                                              int page_index);
+
+// Experimental EmbedPDF Extension API.
+// Whether |annot| still names an annotation: its object resolves, it is in
+// its page's /Annots (if it ever was), and its page is in the document. A
+// handle to an annotation that was deleted, or created in an aborted layer
+// transaction, is invalid; an abort that brings an annotation back makes its
+// handle valid again. Every other call on an invalid handle fails;
+// FPDFPage_CloseAnnot() still closes it.
+//
+//   annot - handle to an annotation.
+//
+// Returns true if the handle is valid.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_IsValid(FPDF_ANNOTATION annot);
 
 // Experimental EmbedPDF Extension API.
 // Set the /Name entry of an annotation: the icon name of a text, file
@@ -1895,7 +1966,10 @@ FPDF_EXPORT unsigned long FPDF_CALLCONV EPDFAnnot_GetName(FPDF_ANNOTATION annot,
 // Experimental EmbedPDF Extension API.
 // Resize the normal appearance (/AP/N) of a Stamp to match the annotation's
 // /Rect using the specified fit policy. Updates the AP /BBox and the image's
-// CTM. Below full opacity (/CA < 1) the appearance is `/R0 gs /MWFOForm Do`
+// CTM. When our /EMBD_Metadata records a turn and the appearance isn't our
+// wrapper yet, the drawing wrapped is the form another app drew it in
+// (EPDFAnnot_GetAppearanceTransform), without the matrices that turn and place
+// it: our wrapper does the turn, so a stamp Acrobat turned is turned once. Below full opacity (/CA < 1) the appearance is `/R0 gs /MWFOForm Do`
 // over the resized form, the layer Acrobat writes: Acrobat replaces a layer
 // named so when its opacity changes, rather than painting over it. Our
 // wrapper is found again under a layer that paints /CA and under forms that
@@ -1916,19 +1990,19 @@ EPDFAnnot_UpdateAppearanceToRect(FPDF_ANNOTATION annot, EPDF_STAMP_FIT fit);
 // appearance with the opacity it was painted with: its opacity layer, ours or
 // Acrobat's, is replaced by one for the new value, not kept as drawing.
 //
-//   annot - handle to a Stamp annotation.
-//   fit   - one of EPDF_STAMP_FIT_*.
-//   alpha - the new opacity, 0-255; 255 removes /CA.
+//   annot   - handle to a Stamp annotation.
+//   fit     - one of EPDF_STAMP_FIT_*.
+//   opacity - the new opacity, 0 to 1; 1 removes /CA.
 //
 // Returns true on success; on failure /CA and the appearance are unchanged.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetStampOpacity(FPDF_ANNOTATION annot,
                           EPDF_STAMP_FIT fit,
-                          unsigned int alpha);
+                          float opacity);
 
 // Experimental EmbedPDF Extension API.
 // Create an annotation. (the difference from FPDFPage_CreateAnnot is that it
-// creates an indirect object)
+// creates an indirect object, whose /P names the page)
 //
 //   page    - handle to a page.
 //   subtype - the subtype of the annotation.
@@ -1957,6 +2031,28 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_SetRotate(FPDF_ANNOTATION annot,
 // Returns true on success, false if annot is invalid or rotation is NULL.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_GetRotate(FPDF_ANNOTATION annot,
                                                         float* rotation);
+
+// Experimental EmbedPDF Extension API.
+// Where an annotation's normal appearance is drawn: the box of the form its
+// drawing is written in, and the matrix from that form to the page, as a
+// viewer places an appearance (ISO 32000-2 12.5.5: the /BBox through the
+// /Matrix, stretched onto /Rect). The form is found as a viewer reaches it:
+// through a layer that only paints an opacity and through forms that only draw
+// another form (moving it at most), so it is the one whose /Matrix turns the
+// drawing, when one does: a stamp Acrobat turned, our stamp wrapper, a turned
+// shape we generated. Nothing is decided here: a caller reads a turn, a scale
+// or a shift from the matrix.
+//
+//   annot  - handle to an annotation.
+//   box    - receives the form's /BBox.
+//   matrix - receives the matrix from the form to the page.
+//
+// Returns true on success; false when there is no normal appearance with a
+// box, or on invalid arguments.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFAnnot_GetAppearanceTransform(FPDF_ANNOTATION annot,
+                                 FS_RECTF* box,
+                                 FS_MATRIX* matrix);
 
 // Experimental EmbedPDF Extension API.
 // Get the reply type (RT) of an annotation. This specifies how an annotation
@@ -2084,8 +2180,8 @@ EPDFAnnot_SetAppearanceFromPage(FPDF_ANNOTATION annot,
 //     /Rect with it, as ISO 32000-2 12.5.5 places any appearance. A layer
 //     that only paints the annotation's /CA (`/GS gs /Form Do`, as Acrobat
 //     writes it) is left out, one that paints another opacity is part of the
-//     drawing. With rotation metadata, the drawing is placed in /Rect, the
-//     rotation it describes is taken out, and the page is the unrotated box.
+//     drawing. With a `degrees` turn, the drawing is placed in /Rect, that
+//     turn is taken out, and the page is `unrotated_box`.
 //
 // The page is the canonical form of a drawing: its content is exactly
 // `/EPDFDRAWING Do`, the placement is folded into the form's /Matrix, and
@@ -2094,12 +2190,17 @@ EPDFAnnot_SetAppearanceFromPage(FPDF_ANNOTATION annot,
 // and EPDFDoc_ImportDrawing adopt the form as it is, so exporting what they
 // made gives the same bytes again. The source document is untouched.
 //
-//   annot - handle to an annotation with a normal appearance.
+//   annot         - handle to an annotation with a normal appearance.
+//   degrees       - the turn the annotation's data describes, counterclockwise
+//                   (the PDF convention); 0 for none.
+//   unrotated_box - the box it turns about, in page space; NULL for none.
 //
 // Returns a new document (the caller closes it with FPDF_CloseDocument()),
 // or NULL when the annotation has no normal appearance or on error.
 FPDF_EXPORT FPDF_DOCUMENT FPDF_CALLCONV
-EPDFAnnot_ExportAppearance(FPDF_ANNOTATION annot);
+EPDFAnnot_ExportAppearance(FPDF_ANNOTATION annot,
+                           float degrees,
+                           const FS_RECTF* unrotated_box);
 
 // Stamp drawings.
 //
@@ -2262,6 +2363,57 @@ FPDF_EXPORT int FPDF_CALLCONV
 EPDFAnnot_GetAvailableAppearanceModes(FPDF_ANNOTATION annot);
 
 // Experimental EmbedPDF Extension API.
+// Get how many states an appearance mode stores: the entries of its
+// appearance subdictionary that are streams (/AP /N << /Off … /Yes … >>
+// stores two). A mode whose entry is a single stream, or that the annotation
+// doesn't have, stores none: there is no falling back to /N.
+//
+//   annot          - handle to an annotation.
+//   appearanceMode - one of FPDF_ANNOT_APPEARANCEMODE_*.
+//
+// Returns the number of states, or 0.
+FPDF_EXPORT int FPDF_CALLCONV
+EPDFAnnot_GetAppearanceStateCount(FPDF_ANNOTATION annot,
+                                  FPDF_ANNOT_APPEARANCEMODE appearanceMode);
+
+// Experimental EmbedPDF Extension API.
+// Copy the name of one state of an appearance mode into |buffer| as raw PDF
+// name bytes, including the trailing NUL: the name EPDF_RenderAnnotBitmap
+// takes as its `state`. States are in the subdictionary's key order, which
+// is stable.
+//
+//   annot          - handle to an annotation.
+//   appearanceMode - one of FPDF_ANNOT_APPEARANCEMODE_*.
+//   index          - the state, in [0, EPDFAnnot_GetAppearanceStateCount).
+//   buffer         - receives the name; may be NULL to query the length.
+//   buflen         - the length of |buffer| in bytes.
+//
+// Returns the byte length of the name including the NUL, or 0 when there is
+// no such state.
+FPDF_EXPORT unsigned long FPDF_CALLCONV
+EPDFAnnot_GetAppearanceStateName(FPDF_ANNOTATION annot,
+                                 FPDF_ANNOT_APPEARANCEMODE appearanceMode,
+                                 int index,
+                                 void* buffer,
+                                 unsigned long buflen);
+
+// Experimental EmbedPDF Extension API.
+// Copy the annotation's /AS, the state it shows, into |buffer| as raw PDF
+// name bytes, including the trailing NUL: the same bytes
+// EPDFAnnot_GetAppearanceStateName gives for that state.
+//
+//   annot  - handle to an annotation.
+//   buffer - receives the name; may be NULL to query the length.
+//   buflen - the length of |buffer| in bytes.
+//
+// Returns the byte length of the name including the NUL, or 0 when the
+// annotation has no /AS name.
+FPDF_EXPORT unsigned long FPDF_CALLCONV
+EPDFAnnot_GetAppearanceState(FPDF_ANNOTATION annot,
+                             void* buffer,
+                             unsigned long buflen);
+
+// Experimental EmbedPDF Extension API.
 // Check whether an annotation has a renderable appearance stream for the
 // given mode, taking sub-appearance dictionaries and /AS into account.
 //
@@ -2280,6 +2432,24 @@ EPDFAnnot_GetAvailableAppearanceModes(FPDF_ANNOTATION annot);
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_HasAppearanceStream(FPDF_ANNOTATION annot,
                               FPDF_ANNOT_APPEARANCEMODE appearanceMode);
+
+// Experimental EmbedPDF Extension API.
+// Get where an annotation's appearance for the given mode is drawn, in page
+// space, without writing anything. A stored appearance is fitted into /Rect.
+// With none, the normal appearance PDFium draws in memory takes its own box,
+// which can reach past /Rect; it is never written to the file.
+//
+//   annot          - handle to an annotation.
+//   appearanceMode - one of FPDF_ANNOT_APPEARANCEMODE_*.
+//   rect           - receives the box.
+//
+// Returns false, and leaves `rect` alone, when there is nothing to draw
+// without writing an appearance: a hidden annotation, or a kind PDFium draws
+// only by generating one into the file.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFAnnot_GetDrawingRect(FPDF_ANNOTATION annot,
+                         FPDF_ANNOT_APPEARANCEMODE appearanceMode,
+                         FS_RECTF* rect);
 
 // Experimental EmbedPDF Extension API.
 // Color types for the MK (appearance characteristics) dictionary on widget
@@ -2327,6 +2497,54 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_GetMKColor(FPDF_ANNOTATION annot,
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_ClearMKColor(FPDF_ANNOTATION annot, EPDF_MK_COLORTYPE type);
 
+// The captions of a widget's /MK dictionary.
+#define EPDF_MK_TEXT_CA 0  // /CA, the normal caption
+#define EPDF_MK_TEXT_RC 1  // /RC, the rollover caption (push buttons)
+#define EPDF_MK_TEXT_AC 2  // /AC, the down caption (push buttons)
+
+// Experimental EmbedPDF Extension API.
+// Set a widget's /MK caption |which| (EPDF_MK_TEXT_*) to |text|, or remove
+// it when |text| is NULL. The appearance is not regenerated
+// (EPDFAnnot_GenerateFormFieldAP()). Returns false for another subtype.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_SetMKText(FPDF_ANNOTATION annot,
+                                                        int which,
+                                                        FPDF_WIDESTRING text);
+
+// Experimental EmbedPDF Extension API.
+// Copy a widget's /MK caption |which| (EPDF_MK_TEXT_*) as UTF-16LE,
+// including the trailing NUL. Returns the required byte length, or 0 when
+// the caption is absent (an empty caption returns 2). |buffer| may be NULL
+// to query the length.
+FPDF_EXPORT unsigned long FPDF_CALLCONV
+EPDFAnnot_GetMKText(FPDF_ANNOTATION annot,
+                    int which,
+                    FPDF_WCHAR* buffer,
+                    unsigned long buflen);
+
+// Experimental EmbedPDF Extension API.
+// Set a widget's /MK /TP, where a push button's caption sits beside its icon
+// (ISO 32000-2 Table 192): 0 caption only (the default), 1 icon only, 2-6
+// caption below, above, right of, left of, or over the icon.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFAnnot_SetMKTextPosition(FPDF_ANNOTATION annot, int position);
+
+// Experimental EmbedPDF Extension API.
+// A widget's /MK /TP (0 when absent), or -1 for another subtype.
+FPDF_EXPORT int FPDF_CALLCONV
+EPDFAnnot_GetMKTextPosition(FPDF_ANNOTATION annot);
+
+// Experimental EmbedPDF Extension API.
+// Set a widget's /MK /R: how far its appearance turns, in degrees
+// counterclockwise, a multiple of 90 from 0 to 270 (0 removes /R). The
+// appearance is not regenerated (EPDFAnnot_GenerateFormFieldAP()).
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFAnnot_SetMKRotation(FPDF_ANNOTATION annot, int degrees);
+
+// Experimental EmbedPDF Extension API.
+// A widget's /MK /R as stored, in degrees counterclockwise (0 when absent),
+// or -1 for another subtype.
+FPDF_EXPORT int FPDF_CALLCONV EPDFAnnot_GetMKRotation(FPDF_ANNOTATION annot);
+
 // Experimental EmbedPDF Extension API.
 // Generate the appearance stream for a form field widget annotation.
 // The standard EPDFAnnot_GenerateAppearance does NOT handle Widget subtypes.
@@ -2334,7 +2552,10 @@ EPDFAnnot_ClearMKColor(FPDF_ANNOTATION annot, EPDF_MK_COLORTYPE type);
 // dispatches to the appropriate form AP generator:
 //   - /Tx  -> text field appearance
 //   - /Ch  -> combo box or list box appearance (based on /Ff flags)
-//   - /Btn -> returns true (buttons use custom AP/N state-based appearances)
+//   - /Btn -> a check box or radio button appearance: both states, the
+//             symbol /MK /CA names in the /DA colour. A push button: its
+//             background and border, and its caption (/MK /CA) centred in
+//             the /DA font and colour; an icon (/MK /I) is not drawn.
 //
 //   annot - handle to a widget annotation.
 //
@@ -2452,6 +2673,27 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFPage_MoveAnnots(FPDF_PAGE page,
                                                         const int* from_indices,
                                                         int from_indices_len,
                                                         int to_index);
+
+// Experimental EmbedPDF Extension API.
+// EPDFPage_MoveAnnots() on a page that isn't loaded: the page's /Annots is
+// read and written from its dictionary, so its content is never parsed. A
+// reorder moves entries, so promote the page first (see
+// EPDFPage_PromoteInlineAnnotsRaw()).
+//
+//   doc              - handle to a document.
+//   page_index       - the index of the page.
+//   from_indices     - as EPDFPage_MoveAnnots().
+//   from_indices_len - as EPDFPage_MoveAnnots().
+//   to_index         - as EPDFPage_MoveAnnots().
+//
+// Returns true on success. A request EPDFPage_MoveAnnots() refuses returns
+// false and changes nothing.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFPage_MoveAnnotsRaw(FPDF_DOCUMENT doc,
+                       int page_index,
+                       const int* from_indices,
+                       int from_indices_len,
+                       int to_index);
 
 #ifdef __cplusplus
 }  // extern "C"

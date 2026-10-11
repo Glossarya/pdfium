@@ -30,6 +30,7 @@
 class CPDF_ContentParser;
 class CPDF_Document;
 class CPDF_PageObject;
+class CPDF_PageObjectGroups;
 class CPDF_Stream;
 class PauseIndicatorIface;
 
@@ -88,6 +89,11 @@ class CPDF_PageObjectHolder {
   void ContinueParse(PauseIndicatorIface* pPause);
   ParseState GetParseState() const { return parse_state_; }
 
+  // EmbedPDF: moves whenever the objects change once parsed: an object added
+  // or removed, or content generated from edited objects.
+  uint64_t GetObjectEdits() const { return object_edits_; }
+  void NoteObjectsEdited() { ++object_edits_; }
+
   CPDF_Document* GetDocument() const { return document_; }
   virtual RetainPtr<const CPDF_Dictionary> GetDict() const;
   RetainPtr<CPDF_Dictionary> GetMutableDict();
@@ -114,6 +120,17 @@ class CPDF_PageObjectHolder {
   iterator end() { return page_object_list_.end(); }
   const_iterator end() const { return page_object_list_.end(); }
 
+  // The bounds of runs of consecutive objects, for a render whose clip test is
+  // `clip`. Returns nullptr while the list is still being parsed, when there
+  // are too few objects for runs to pay, and when out-of-date runs would have
+  // to be computed for a clip that shows more than half of the page's box or
+  // the form's /BBox, where few runs miss it.
+  const CPDF_PageObjectGroups* GetObjectGroups(const CFX_FloatRect& clip) const;
+
+  // Turns the object groups off, so a test can render without them and
+  // compare.
+  static void SetObjectGroupsEnabledForTesting(bool enabled);
+
   const CFX_FloatRect& GetBBox() const { return bbox_; }
 
   const CPDF_Transparency& GetTransparency() const { return transparency_; }
@@ -130,6 +147,12 @@ class CPDF_PageObjectHolder {
   bool HasDirtyStreams() const { return !dirty_streams_.empty(); }
   std::set<int32_t> TakeDirtyStreams();
 
+  // EmbedPDF: the name caches below remember which resource name the
+  // content generator gave a font, graphics state or colour space. A cached
+  // name counts only while the resources still define it: an aborted layer
+  // transaction drops the names it added, and generated content must never
+  // use a name nothing defines.
+  bool ResourcesDefine(ByteStringView category, const ByteString& name) const;
   std::optional<ByteString> GraphicsMapSearch(const GraphicsData& gd);
   void GraphicsMapInsert(const GraphicsData& gd, const ByteString& str);
 
@@ -175,10 +198,13 @@ class CPDF_PageObjectHolder {
  private:
   bool background_alpha_needed_ = false;
   ParseState parse_state_ = ParseState::kNotParsed;
+  uint64_t object_edits_ = 0;
   UnownedPtr<CPDF_Document> document_;
   std::vector<CFX_FloatRect> mask_bounding_boxes_;
   std::unique_ptr<CPDF_ContentParser> parser_;
   std::deque<std::unique_ptr<CPDF_PageObject>> page_object_list_;
+  // Computed on demand; dropped whenever `page_object_list_` changes.
+  mutable std::unique_ptr<CPDF_PageObjectGroups> object_groups_;
 
   CTMMap all_ctms_;
 

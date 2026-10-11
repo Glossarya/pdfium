@@ -12,11 +12,11 @@
 #include <vector>
 
 #include "core/fdrm/fx_crypt_sha.h"
-#include "core/fxcrt/data_vector.h"
 #include "core/fpdfapi/parser/cpdf_array.h"
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
 #include "core/fpdfapi/parser/cpdf_document.h"
 #include "core/fpdfapi/parser/cpdf_string.h"
+#include "core/fxcrt/data_vector.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "public/cpp/fpdf_scopers.h"
 #include "public/epdf_form.h"
@@ -26,10 +26,11 @@
 #include "public/fpdf_signature.h"
 #include "public/fpdfview.h"
 #include "testing/embedder_test.h"
+#include "testing/embedpdf_form_writes.h"
 #include "testing/fx_string_testhelpers.h"
+#include "testing/gtest/include/gtest/gtest.h"
 #include "testing/utils/file_util.h"
 #include "testing/utils/path_service.h"
-#include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
 
@@ -630,7 +631,8 @@ namespace {
 // Creates an unsigned signature field "name" with a widget on page 0.
 uint32_t CreateSignatureField(FPDF_DOCUMENT doc, FPDF_PAGE page, const wchar_t* name) {
   ScopedFPDFWideString wide = GetFPDFWideString(name);
-  const uint32_t field = EPDFForm_CreateField(doc, EPDF_FORMFIELD_FAMILY_SIGNATURE, wide.get());
+  const uint32_t field =
+      EPDFForm_CreateField(doc, EPDF_FORMFIELD_FAMILY_SIGNATURE, wide.get(), 0);
   if (field == 0) {
     ADD_FAILURE() << "EPDFForm_CreateField failed";
     return 0;
@@ -648,7 +650,7 @@ uint32_t CreateSignatureField(FPDF_DOCUMENT doc, FPDF_PAGE page, const wchar_t* 
     ADD_FAILURE() << "widget has no object number";
     return 0;
   }
-  if (!EPDFForm_AttachWidget(doc, field, widget_objnum, nullptr)) {
+  if (!EPDFForm_AttachWidget(doc, field, widget_objnum, nullptr, 0)) {
     ADD_FAILURE() << "EPDFForm_AttachWidget failed for widget " << widget_objnum;
     return 0;
   }
@@ -2115,8 +2117,7 @@ TEST_F(EPDFSignatureEmbedderTest, LayerPrepareRefusesSignedBytesInLoadedDelta) {
   EXPECT_FALSE(EPDFSig_SetFieldLock(editing.get(), 5, EPDF_SIG_FIELD_ACTION_ALL, nullptr, 0, 0));
   EXPECT_EQ(0ul, EPDFLayer_GetPromotedObjectCount(editing.get()));
   // Filling a text field is a permitted change: an unsigned delta.
-  ScopedFPDFWideString after = GetFPDFWideString(L"after");
-  ASSERT_TRUE(EPDFForm_SetTextValue(editing.get(), 6, after.get(), nullptr, 0, nullptr));
+  ASSERT_TRUE(embedpdf_test::FillTextField(editing.get(), 6, L"after"));
   const std::string edits = SaveDelta(editing.get());
   ASSERT_FALSE(edits.empty());
   ScopedFPDFDocument unsigned_delta_layer = OpenLayer(signed_base.get(), edits);
@@ -2208,8 +2209,8 @@ TEST_F(EPDFSignatureEmbedderTest, LayerEncryptedSigningPreservesExistingSignatur
   ASSERT_FALSE(first.empty());
   ASSERT_FALSE(second.empty());
   ScopedFPDFWideString name = GetFPDFWideString(L"third");
-  const uint32_t field =
-      EPDFForm_CreateField(candidate.get(), EPDF_FORMFIELD_FAMILY_SIGNATURE, name.get());
+  const uint32_t field = EPDFForm_CreateField(
+      candidate.get(), EPDF_FORMFIELD_FAMILY_SIGNATURE, name.get(), 0);
   ASSERT_NE(0u, field);
   EPDF_SIG_PREPARE opts = DefaultPrepare();
   opts.subfilter = EPDF_SIG_SUBFILTER_ADBE_PKCS7_DETACHED;
@@ -2399,15 +2400,13 @@ TEST_F(EPDFSignatureEmbedderTest, LayerBaseOverlayReplacesTheLoadedDelta) {
   ASSERT_TRUE(base.get());
   ScopedFPDFDocument first = OpenLayer(base.get());
   ASSERT_TRUE(first);
-  ScopedFPDFWideString v1 = GetFPDFWideString(L"first");
-  ASSERT_TRUE(EPDFForm_SetTextValue(first.get(), 6, v1.get(), nullptr, 0, nullptr));
+  ASSERT_TRUE(embedpdf_test::FillTextField(first.get(), 6, L"first"));
   const std::string delta1 = SaveDelta(first.get());
   ASSERT_FALSE(delta1.empty());
   ScopedFPDFDocument reopened = OpenLayer(base.get(), delta1);
   ASSERT_TRUE(reopened);
   ASSERT_EQ(2, EPDFDoc_GetRevisionCount(reopened.get()));
-  ScopedFPDFWideString v2 = GetFPDFWideString(L"second");
-  ASSERT_TRUE(EPDFForm_SetTextValue(reopened.get(), 6, v2.get(), nullptr, 0, nullptr));
+  ASSERT_TRUE(embedpdf_test::FillTextField(reopened.get(), 6, L"second"));
   const std::string delta2 = SaveDelta(reopened.get());
   ASSERT_FALSE(delta2.empty());
 
@@ -2455,8 +2454,7 @@ TEST_F(EPDFSignatureEmbedderTest, LayerRevisionReadsAreCachedAndStable) {
   ASSERT_TRUE(base.get());
   ScopedFPDFDocument editing = OpenLayer(base.get());
   ASSERT_TRUE(editing);
-  ScopedFPDFWideString v1 = GetFPDFWideString(L"edited");
-  ASSERT_TRUE(EPDFForm_SetTextValue(editing.get(), 6, v1.get(), nullptr, 0, nullptr));
+  ASSERT_TRUE(embedpdf_test::FillTextField(editing.get(), 6, L"edited"));
   const std::string delta = SaveDelta(editing.get());
   ScopedFPDFDocument layer = OpenLayer(base.get(), delta);
   ASSERT_TRUE(layer);

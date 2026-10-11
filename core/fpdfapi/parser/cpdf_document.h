@@ -281,6 +281,10 @@ class CPDF_Document : public Observable,
   void LoadPages();
   void CreateNewDoc();
   RetainPtr<CPDF_Dictionary> CreateNewPage(int iPage);
+  // EmbedPDF: CreateNewPage() with the page dictionary at |objnum| (see
+  // CPDF_IndirectObjectHolder::AddIndirectObjectAt()). Null when the number
+  // can't take it or the page can't be inserted; nothing changes then.
+  RetainPtr<CPDF_Dictionary> CreateNewPageAt(int iPage, uint32_t objnum);
 
   void IncrementParsedPageCount() { ++parsed_page_count_; }
   uint32_t GetParsedPageCountForTesting() { return parsed_page_count_; }
@@ -304,6 +308,10 @@ class CPDF_Document : public Observable,
   void InvalidateCachedRootDict();
   void SetCachedInfoDict(RetainPtr<CPDF_Dictionary> info);
   void InvalidateCachedInfoDict();
+  // EmbedPDF: the cached pointers as they are, without resolving anything, so
+  // a layer transaction can put them back on abort.
+  RetainPtr<CPDF_Dictionary> GetCachedRootDict() const { return root_dict_; }
+  RetainPtr<CPDF_Dictionary> GetCachedInfoDict() const { return info_dict_; }
 
   // EmbedPDF layer documents represent deletion by removing references from the
   // promoted owning container, e.g. /Pages /Kids or /Annots. Base objects

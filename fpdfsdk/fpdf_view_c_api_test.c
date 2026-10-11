@@ -9,7 +9,7 @@
 
 #include "fpdfsdk/fpdf_view_c_api_test.h"
 
-#include "public/epdf_checkpoint.h"
+#include "public/epdf_capture.h"
 #include "public/epdf_font.h"
 #include "public/epdf_measure.h"
 #include "public/epdf_text.h"
@@ -45,6 +45,14 @@ fnptr g_c_api_test_fnptr = NULL;  // Extern, so can't know it doesn't change.
 
 // Function to call from gtest harness to ensure linker resolution.
 int CheckPDFiumCApi() {
+  // epdf_capture.h
+  CHK(EPDFDoc_ExportDictRawToOwnedBuffer);
+  CHK(EPDFDoc_ImportDictRaw);
+  CHK(EPDFForm_ExportFieldRawToOwnedBuffer);
+  CHK(EPDFForm_ImportFieldRaw);
+  CHK(EPDFPage_ExportAnnotsRawToOwnedBuffer);
+  CHK(EPDFPage_ImportAnnotsRaw);
+
   // epdf_text.h
   CHK(EPDFText_GetCharGeometry);
   CHK(EPDFText_GetCharToTextMap);
@@ -390,6 +398,8 @@ int CheckPDFiumCApi() {
   CHK(FPDF_NewXObjectFromPage);
 
   // fpdf_progressive.h
+  CHK(EPDF_RenderPageBitmapWithMatrix_Start);
+  CHK(EPDF_RenderPage_Continue);
   CHK(FPDF_RenderPageBitmapWithColorScheme_Start);
   CHK(FPDF_RenderPageBitmap_Start);
   CHK(FPDF_RenderPage_Close);
@@ -572,6 +582,8 @@ int CheckPDFiumCApi() {
   CHK(EPDF_InitThread);
   CHK(EPDF_ShutdownThread);
   CHK(EPDF_GetPageBoxByIndex);
+  CHK(EPDF_GetPageRotateByIndex);
+  CHK(EPDF_GetPageTabOrderByIndex);
   CHK(EPDF_GetPageUserUnitByIndex);
   CHK(EPDF_LoadBaseDocument);
   CHK(EPDF_LoadMemBaseDocument);
@@ -583,8 +595,10 @@ int CheckPDFiumCApi() {
   CHK(EPDF_SaveDocumentToOwnedBuffer);
   CHK(EPDF_SaveDocumentToOwnedBufferWithVersion);
   CHK(EPDFLayer_GetBaseDocument);
+  CHK(EPDFLayer_GetLastObjectNumber);
   CHK(EPDFLayer_GetPromotedObjectCount);
   CHK(EPDFLayer_IsObjectPromoted);
+  CHK(EPDFLayer_RaiseLastObjectNumber);
   CHK(EPDFLayer_OpenLayer);
   CHK(EPDFLayer_OpenLayerArtifact);
   CHK(EPDFLayer_SaveDelta);
@@ -622,16 +636,18 @@ int CheckPDFiumCApi() {
   CHK(EPDFAnnot_GetMeasure);
   CHK(EPDFAnnot_AddMeasure);
   CHK(EPDFAnnot_ExportAppearance);
+  CHK(EPDFAnnot_GetAppearanceStateCount);
+  CHK(EPDFAnnot_GetAppearanceStateName);
+  CHK(EPDFAnnot_GetAppearanceState);
+  CHK(EPDF_RenderAnnotBitmap);
+  CHK(EPDF_RenderAnnotBitmapUnrotated);
   CHK(EPDFPage_CreateAnnotRaw);
   CHK(EPDFPage_GetAnnotIndexByNameRaw);
   CHK(EPDFPage_GetAnnotIndexByObjectNumberRaw);
+  CHK(EPDFPage_MoveAnnotsRaw);
+  CHK(EPDFPage_InsertBlankRaw);
   CHK(EPDFDest_CreateXYZByObjectNumber);
   CHK(EPDFDest_CreateViewByObjectNumber);
-  CHK(EPDFDoc_BeginCheckpoint);
-  CHK(EPDFDoc_CheckpointPage);
-  CHK(EPDFDoc_CheckpointObject);
-  CHK(EPDFDoc_Rollback);
-  CHK(EPDFDoc_EndCheckpoint);
   CHK(EPDFAnnot_GetStampDrawing);
   CHK(EPDFAnnot_SetStampDrawing);
   CHK(EPDFDoc_CanonicalDrawing);

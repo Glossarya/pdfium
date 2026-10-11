@@ -40,9 +40,21 @@ std::map<const CPDF_Dictionary*, uint32_t> SweepPageWidgets(
 // A form with the page sweep applied.
 std::unique_ptr<CPDF_InteractiveForm> BuildReconciledForm(CPDF_Document* doc);
 
+// The page that shows a widget: the swept page whose /Annots holds it, else
+// the page its /P names when that is a page of |doc|, else 0 (no page).
 uint32_t PageObjNumForWidget(
+    CPDF_Document* doc,
     const std::map<const CPDF_Dictionary*, uint32_t>& widget_pages,
     const CPDF_Dictionary* widget_dict);
+
+// /AcroForm, ready to write, whatever its storage: an indirect dictionary is
+// copied up for writing (on a layer, into the open transaction), a direct one
+// inside the catalog is written through a writable catalog. When the document
+// has none, a new one when |create_if_missing| (and |out_created| is set),
+// else null. Never writes through a frozen base object.
+RetainPtr<CPDF_Dictionary> GetMutableAcroForm(CPDF_Document* doc,
+                                              bool create_if_missing,
+                                              bool* out_created);
 
 // GetOrParseIndirectObject parses on demand on plain documents and is the
 // promoted-first lookup on layer documents, where it never promotes - safe

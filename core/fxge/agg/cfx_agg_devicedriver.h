@@ -99,11 +99,47 @@ class CFX_AggDeviceDriver final : public RenderDeviceDriverIface {
 
   void Clear(uint32_t color);
 
+  // Turns off the reuse of a repeated path's rasterizer output, so a test can
+  // render without it and compare.
+  static void SetPathMemoEnabledForTesting(bool enabled);
+
  private:
+  // The path storage, rasterizer, scanline and stroker every path of this
+  // device is drawn with. Building them per path costs more than rasterizing
+  // the small paths that vector-heavy pages consist of.
+  class Workspace;
+  // The scanlines of one rasterizer pass, recorded to be composited again.
+  class RecordedPass;
+  // What DrawPath() needs to recognize a repeated small path: the last path
+  // object, and the inputs and recorded passes of the call that drew it
+  // again. Later calls with identical inputs composite the recorded passes
+  // instead of rasterizing: the rasterizer output depends on nothing else.
+  class PathMemo;
+
+  Workspace& GetWorkspace();
+  // Frees the workspace when one large path grew it, instead of keeping that
+  // memory until the device is destroyed.
+  void ReleaseLargeWorkspace();
+
+  void DrawPathPasses(const CFX_Path& path,
+                      const CFX_Matrix* pObject2Device,
+                      const CFX_GraphStateData* pGraphState,
+                      uint32_t fill_color,
+                      uint32_t stroke_color,
+                      const CFX_FillRenderOptions& fill_options,
+                      PathMemo* record);
+
+  // Composites `rasterizer`'s output; `record`, when given, keeps a copy.
   void RenderRasterizer(pdfium::agg::rasterizer_scanline_aa& rasterizer,
                         uint32_t color,
                         bool bFullCover,
-                        bool bGroupKnockout);
+                        bool bGroupKnockout,
+                        RecordedPass* record = nullptr);
+  // Composites a recorded pass exactly as RenderRasterizer() composited it.
+  void ReplayPass(const RecordedPass& pass,
+                  uint32_t color,
+                  bool bFullCover,
+                  bool bGroupKnockout);
 
   void SetClipMask(pdfium::agg::rasterizer_scanline_aa& rasterizer);
 
@@ -117,6 +153,8 @@ class CFX_AggDeviceDriver final : public RenderDeviceDriverIface {
   const bool rgb_byte_order_;
   const bool group_knockout_;
   RetainPtr<CFX_DIBitmap> backdrop_bitmap_;
+  std::unique_ptr<Workspace> workspace_;
+  std::unique_ptr<PathMemo> path_memo_;
 };
 
 }  // namespace pdfium

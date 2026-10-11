@@ -12,11 +12,13 @@
 #include "core/fpdfapi/parser/cpdf_array.h"
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
 #include "core/fpdfapi/parser/cpdf_document.h"
+#include "core/fpdfapi/parser/cpdf_layer_document.h"
 #include "core/fpdfapi/parser/cpdf_name.h"
 #include "core/fpdfapi/parser/cpdf_null.h"
 #include "core/fpdfapi/parser/cpdf_number.h"
 #include "core/fpdfapi/parser/cpdf_reference.h"
 #include "core/fpdfapi/parser/cpdf_string.h"
+#include "core/fpdfdoc/cpdf_dest.h"
 #include "core/fxcrt/compiler_specific.h"
 #include "core/fxcrt/retain_ptr.h"
 #include "core/fxcrt/widestring.h"
@@ -59,9 +61,35 @@ namespace {
     if (!doc || !obj)
       return false;
     const uint32_t num = obj->GetObjNum();
-    return num != 0 && doc->GetIndirectObject(num) == obj;
+    if (num == 0) {
+      return false;
+    }
+    // EmbedPDF: on a layer, a handle read before a transaction holds the
+    // committed (or base) version, which a write in the transaction copies:
+    // still this document's.
+    if (const CPDF_LayerDocument* layer =
+            CPDF_LayerDocument::FromDocument(doc)) {
+      return layer->IsVersionOf(num, obj);
+    }
+    return doc->GetIndirectObject(num) == obj;
   }
-  
+
+  // EmbedPDF: the bookmark dictionary a write may change. With |doc|, the
+  // document's writable version of the same object (a layer transaction
+  // copies it up); the caller has checked BelongsTo() first. Without |doc|,
+  // |bookmark| itself, and only while it may be written: one read before a
+  // layer transaction belongs to a committed version.
+  RetainPtr<CPDF_Dictionary> WritableBookmark(CPDF_Document* doc,
+                                              CPDF_Dictionary* bookmark) {
+    if (!bookmark) {
+      return nullptr;
+    }
+    if (doc && bookmark->GetObjNum() != 0) {
+      return ToDictionary(doc->GetMutableIndirectObject(bookmark->GetObjNum()));
+    }
+    return bookmark->IsWritable() ? pdfium::WrapRetain(bookmark) : nullptr;
+  }
+
   // Create a new indirect bookmark dictionary with a UTF-16 title.
   RetainPtr<CPDF_Dictionary> CreateBookmarkDict(CPDF_Document* doc,
                                                 const WideString& title) {
@@ -209,15 +237,19 @@ namespace {
     "Unknown", "XYZ", "Fit", "FitH", "FitV", "FitR", "FitB", "FitBH", "FitBV"};
   constexpr uint8_t kViewMaxParams[] = {0, 3, 0, 1, 1, 4, 0, 1, 1};
 
-  // Non-XYZ: write N numeric params, padding with 0.0 up to |need|.
+  // Non-XYZ: write N numeric params, padding with null up to |need|: a
+  // missing /FitH top keeps the viewer's current one.
   static inline void AppendNonXYZParams(CPDF_Array* arr,
                                         const FS_FLOAT* params,
                                         unsigned long num_params,
                                         uint8_t need) {
     const unsigned long use = std::min<unsigned long>(num_params, need);
     for (unsigned long i = 0; i < need; ++i) {
-      const float v = (i < use && params) ? static_cast<float>(params[i]) : 0.0f;
-      arr->AppendNew<CPDF_Number>(v);
+      if (i < use && params) {
+        arr->AppendNew<CPDF_Number>(static_cast<float>(params[i]));
+      } else {
+        arr->AppendNew<CPDF_Null>();
+      }
     }
   }
 
@@ -496,6 +528,23 @@ EPDFDest_CreateViewByObjectNumber(FPDF_DOCUMENT fdoc,
   return FPDFDestFromCPDFArray(arr.Get());
 }
 
+FPDF_EXPORT unsigned int FPDF_CALLCONV
+EPDFDest_GetViewNullParams(FPDF_DEST dest) {
+  const CPDF_Array* arr = CPDFArrayFromFPDFDest(dest);
+  if (!arr)
+    return 0;
+
+  CPDF_Dest destination(pdfium::WrapRetain(arr));
+  const size_t count = destination.GetNumParams();
+  unsigned int mask = 0;
+  for (size_t i = 0; i < count; ++i) {
+    RetainPtr<const CPDF_Object> param = arr->GetDirectObjectAt(2 + i);
+    if (!param || param->IsNull())
+      mask |= 1u << i;
+  }
+  return mask;
+}
+
 FPDF_EXPORT FPDF_ACTION FPDF_CALLCONV
 EPDFAction_CreateGoTo(FPDF_DOCUMENT document, FPDF_DEST dest) {
   CPDF_Document* pDoc = CPDFDocumentFromFPDFDocument(document);
@@ -616,6 +665,19 @@ EPDFAction_CreateURI(FPDF_DOCUMENT document, FPDF_BYTESTRING uri) {
   return FPDFActionFromCPDFDictionary(action.Get());
 }
 
+FPDF_EXPORT FPDF_ACTION FPDF_CALLCONV
+EPDFAction_CreateNamed(FPDF_DOCUMENT document, FPDF_BYTESTRING name) {
+  CPDF_Document* pDoc = CPDFDocumentFromFPDFDocument(document);
+  if (!pDoc || !name || !name[0])
+    return nullptr;
+
+  RetainPtr<CPDF_Dictionary> action = pDoc->NewIndirect<CPDF_Dictionary>();
+  action->SetNewFor<CPDF_Name>("S", "Named");
+  action->SetNewFor<CPDF_Name>("N", ByteString(name));
+
+  return FPDFActionFromCPDFDictionary(action.Get());
+}
+
 FPDF_EXPORT FPDF_BOOKMARK FPDF_CALLCONV
 EPDFBookmark_Create(FPDF_DOCUMENT doc, FPDF_WIDESTRING title) {
   CPDF_Document* pDoc = CPDFDocumentFromFPDFDocument(doc);
@@ -637,10 +699,14 @@ EPDFBookmark_Create(FPDF_DOCUMENT doc, FPDF_WIDESTRING title) {
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFBookmark_Delete(FPDF_DOCUMENT doc, FPDF_BOOKMARK bookmark) {
   CPDF_Document* pDoc = CPDFDocumentFromFPDFDocument(doc);
-  RetainPtr<CPDF_Dictionary> bm(
-      pdfium::WrapRetain(CPDFDictionaryFromFPDFBookmark(bookmark)));
-  if (!pDoc || !bm || !BelongsTo(pDoc, bm.Get()))
+  CPDF_Dictionary* handle = CPDFDictionaryFromFPDFBookmark(bookmark);
+  if (!pDoc || !handle || !BelongsTo(pDoc, handle)) {
     return false;
+  }
+  RetainPtr<CPDF_Dictionary> bm = WritableBookmark(pDoc, handle);
+  if (!bm) {
+    return false;
+  }
 
   DeleteSubtree(pDoc, bm.Get());
   return true;
@@ -659,6 +725,10 @@ EPDFBookmark_AppendChild(FPDF_DOCUMENT doc,
              : GetOrCreateOutlines(pDoc);
   if (!parent_like || !BelongsTo(pDoc, parent_like.Get()))
     return nullptr;
+  parent_like = WritableBookmark(pDoc, parent_like.Get());
+  if (!parent_like) {
+    return nullptr;
+  }
 
   WideString wtitle =
       title ? UNSAFE_BUFFERS(WideStringFromFPDFWideString(title)) : WideString();
@@ -681,11 +751,22 @@ EPDFBookmark_InsertAfter(FPDF_DOCUMENT doc,
              : GetOrCreateOutlines(pDoc);
   if (!parent_like || !BelongsTo(pDoc, parent_like.Get()))
     return nullptr;
-
-  CPDF_Dictionary* after_dict =
-      after_sibling ? CPDFDictionaryFromFPDFBookmark(after_sibling) : nullptr;
-  if (after_dict && !BelongsTo(pDoc, after_dict))
+  parent_like = WritableBookmark(pDoc, parent_like.Get());
+  if (!parent_like) {
     return nullptr;
+  }
+
+  CPDF_Dictionary* after_handle =
+      after_sibling ? CPDFDictionaryFromFPDFBookmark(after_sibling) : nullptr;
+  if (after_handle && !BelongsTo(pDoc, after_handle)) {
+    return nullptr;
+  }
+  RetainPtr<CPDF_Dictionary> after =
+      after_handle ? WritableBookmark(pDoc, after_handle) : nullptr;
+  if (after_handle && !after) {
+    return nullptr;
+  }
+  CPDF_Dictionary* after_dict = after.Get();
 
   WideString wtitle =
       title ? UNSAFE_BUFFERS(WideStringFromFPDFWideString(title)) : WideString();
@@ -733,8 +814,8 @@ EPDFBookmark_SetTitle(FPDF_BOOKMARK bookmark, FPDF_WIDESTRING title) {
   if (!bookmark)
     return false;
 
-  RetainPtr<CPDF_Dictionary> bm_dict(
-      pdfium::WrapRetain(CPDFDictionaryFromFPDFBookmark(bookmark)));
+  RetainPtr<CPDF_Dictionary> bm_dict =
+      WritableBookmark(nullptr, CPDFDictionaryFromFPDFBookmark(bookmark));
   if (!bm_dict)
     return false;
 
@@ -752,8 +833,11 @@ EPDFBookmark_SetDest(FPDF_DOCUMENT doc, FPDF_BOOKMARK bookmark, FPDF_DEST dest) 
   if (!pDoc || !bookmark || !dest)
     return false;
 
-  RetainPtr<CPDF_Dictionary> bm_dict(
-      pdfium::WrapRetain(CPDFDictionaryFromFPDFBookmark(bookmark)));
+  CPDF_Dictionary* handle = CPDFDictionaryFromFPDFBookmark(bookmark);
+  if (!handle || !BelongsTo(pDoc, handle)) {
+    return false;
+  }
+  RetainPtr<CPDF_Dictionary> bm_dict = WritableBookmark(pDoc, handle);
   if (!bm_dict)
     return false;
 
@@ -788,8 +872,11 @@ EPDFBookmark_SetAction(FPDF_DOCUMENT document,
   if (!pDoc || !bookmark || !action)
     return false;
 
-  RetainPtr<CPDF_Dictionary> bm_dict(
-      pdfium::WrapRetain(CPDFDictionaryFromFPDFBookmark(bookmark)));
+  CPDF_Dictionary* handle = CPDFDictionaryFromFPDFBookmark(bookmark);
+  if (!handle || !BelongsTo(pDoc, handle)) {
+    return false;
+  }
+  RetainPtr<CPDF_Dictionary> bm_dict = WritableBookmark(pDoc, handle);
   if (!bm_dict)
     return false;
 
@@ -813,8 +900,8 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFBookmark_ClearTarget(FPDF_BOOKMARK bookmark) {
   if (!bookmark)
     return false;
-  RetainPtr<CPDF_Dictionary> bm_dict(
-      pdfium::WrapRetain(CPDFDictionaryFromFPDFBookmark(bookmark)));
+  RetainPtr<CPDF_Dictionary> bm_dict =
+      WritableBookmark(nullptr, CPDFDictionaryFromFPDFBookmark(bookmark));
   if (!bm_dict)
     return false;
 
@@ -827,8 +914,8 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFBookmark_SetNamedDest(FPDF_BOOKMARK bookmark, FPDF_BYTESTRING name) {
   if (!bookmark || !name)
     return false;
-  RetainPtr<CPDF_Dictionary> bm(
-      pdfium::WrapRetain(CPDFDictionaryFromFPDFBookmark(bookmark)));
+  RetainPtr<CPDF_Dictionary> bm =
+      WritableBookmark(nullptr, CPDFDictionaryFromFPDFBookmark(bookmark));
   if (!bm)
     return false;
   bm->RemoveFor("A");

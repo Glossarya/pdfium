@@ -116,8 +116,13 @@ std::unique_ptr<CPDF_Annot> CreatePopupAnnot(CPDF_Document* document,
   pAnnotDict->SetRectFor(pdfium::annotation::kRect, popupRect);
   pAnnotDict->SetNewFor<CPDF_Number>(pdfium::annotation::kF, 0);
 
-  auto pPopupAnnot =
-      std::make_unique<CPDF_Annot>(std::move(pAnnotDict), document);
+  // The popup is closed, so it is drawn only once opened, and drawing
+  // generates its appearance. Generating it here would build one, with a font
+  // and two new objects in the document, for every popup of every list, and
+  // rendering a page builds a list each time.
+  auto pPopupAnnot = std::make_unique<CPDF_Annot>(
+      std::move(pAnnotDict), document,
+      CPDF_Annot::MissingAppearance::kGenerateWhenDrawn);
   pAnnot->SetPopupAnnot(pPopupAnnot.get());
   return pPopupAnnot;
 }
@@ -215,9 +220,12 @@ void CPDF_AnnotList::DisplayPass(CPDF_RenderContext* context,
 void CPDF_AnnotList::DisplayAnnots(CPDF_RenderContext* context,
                                    bool bPrinting,
                                    const CFX_Matrix& mtUser2Device,
+                                   bool bShowAnnots,
                                    bool bShowWidget) {
   CHECK(context);
-  DisplayPass(context, bPrinting, mtUser2Device, false);
+  if (bShowAnnots) {
+    DisplayPass(context, bPrinting, mtUser2Device, false);
+  }
   if (bShowWidget) {
     DisplayPass(context, bPrinting, mtUser2Device, true);
   }

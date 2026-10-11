@@ -4,7 +4,16 @@
 
 #include "core/fxcodec/flate/flatemodule.h"
 
+#include <stdint.h>
+
+#include <array>
+#include <memory>
+#include <string>
+
 #include "core/fxcodec/data_and_bytes_consumed.h"
+#include "core/fxcodec/scanlinedecoder.h"
+#include "core/fxcrt/data_vector.h"
+#include "core/fxcrt/span.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/test_support.h"
@@ -185,4 +194,68 @@ TEST(FlateModule, DecodeToSinkGarbageInput) {
   EXPECT_EQ(FlateModule::SinkDecodeStatus::kSuccess, status);
   EXPECT_EQ(0u, total);
   EXPECT_EQ(0u, sink_calls);
+}
+
+TEST(FlateModule, PredictorDecoderRewindRepeatsLines) {
+  // Two RGB lines of one pixel, PNG Up predictor: 1 2 3, then 4 5 6.
+  static constexpr std::array<uint8_t, 8> kPredicted = {2, 1, 2, 3,
+                                                        2, 3, 3, 3};
+  static constexpr std::array<uint8_t, 3> kFirst = {1, 2, 3};
+  static constexpr std::array<uint8_t, 3> kSecond = {4, 5, 6};
+  DataVector<uint8_t> encoded = FlateModule::Encode(kPredicted);
+  std::unique_ptr<ScanlineDecoder> decoder = FlateModule::CreateDecoder(
+      encoded, /*width=*/1, /*height=*/2, /*nComps=*/3, /*bpc=*/8,
+      /*predictor=*/12, /*Colors=*/3, /*BitsPerComponent=*/8, /*Columns=*/1);
+  ASSERT_TRUE(decoder);
+  EXPECT_THAT(decoder->GetScanline(0), ElementsAreArray(kFirst));
+  EXPECT_THAT(decoder->GetScanline(1), ElementsAreArray(kSecond));
+
+  // Going back rewinds the decoder, which must decode the same lines again.
+  EXPECT_THAT(decoder->GetScanline(0), ElementsAreArray(kFirst));
+  EXPECT_THAT(decoder->GetScanline(1), ElementsAreArray(kSecond));
+}
+
+// EmbedPDF: inflating in pieces of any size gives the bytes, and the input
+// consumed, of inflating at once - for good streams, empty ones, garbage,
+// and streams cut short or damaged in the middle.
+TEST(FlateModule, UncompressorInPiecesGivesTheSameBytes) {
+  const DataVector<uint8_t> big = MakePatternedData(3 * 1024 * 1024 + 123);
+  const DataVector<uint8_t> big_compressed = FlateModule::Encode(big);
+  DataVector<uint8_t> cut(big_compressed.begin(),
+                          big_compressed.begin() + big_compressed.size() / 2);
+  DataVector<uint8_t> damaged = big_compressed;
+  damaged[damaged.size() / 2] ^= 0x5a;
+  const DataVector<uint8_t> small_compressed =
+      FlateModule::Encode(MakePatternedData(1000));
+  const std::string garbage = "preposterous nonsense";
+
+  struct Case {
+    const char* name;
+    pdfium::span<const uint8_t> input;
+  };
+  const Case cases[] = {
+      {"empty", {}},
+      {"garbage", pdfium::as_byte_span(garbage)},
+      {"small", small_compressed},
+      {"big", big_compressed},
+      {"cut", cut},
+      {"damaged", damaged},
+  };
+  for (const Case& c : cases) {
+    const DataAndBytesConsumed at_once =
+        FlateModule::FlateOrLZWDecode(false, c.input, false, 0, 0, 0, 0, 0);
+    for (size_t piece : {size_t{1}, size_t{7}, size_t{4096}, size_t{1 << 20}}) {
+      if (piece == 1 && c.input.size() > 4096) {
+        continue;
+      }
+      fxcodec::FlateUncompressor uncompressor(c.input, /*orig_size=*/0);
+      while (uncompressor.Continue(piece)) {
+      }
+      const DataAndBytesConsumed in_pieces = uncompressor.TakeResult();
+      EXPECT_EQ(at_once.bytes_consumed, in_pieces.bytes_consumed)
+          << c.name << " in pieces of " << piece;
+      EXPECT_TRUE(at_once.data == in_pieces.data)
+          << c.name << " in pieces of " << piece;
+    }
+  }
 }

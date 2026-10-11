@@ -13,6 +13,7 @@
 #include "core/fpdfapi/page/cpdf_allstates.h"
 #include "core/fpdfapi/page/cpdf_contentparser.h"
 #include "core/fpdfapi/page/cpdf_pageobject.h"
+#include "core/fpdfapi/page/cpdf_pageobjectgroups.h"
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
 #include "core/fpdfapi/parser/cpdf_document.h"
 #include "core/fpdfapi/parser/cpdf_object.h"
@@ -23,6 +24,15 @@
 #include "core/fxcrt/fx_extension.h"
 #include "core/fxcrt/notreached.h"
 #include "core/fxcrt/stl_util.h"
+
+namespace {
+
+// Holders with fewer objects walk them faster than they build runs.
+constexpr size_t kMinObjectsForGroups = 8 * CPDF_PageObjectGroups::kSize;
+
+bool g_object_groups_enabled = true;
+
+}  // namespace
 
 bool GraphicsData::operator<(const GraphicsData& other) const {
   if (!FXSYS_SafeEQ(fillAlpha, other.fillAlpha)) {
@@ -111,7 +121,11 @@ RetainPtr<CPDF_Dictionary> CPDF_PageObjectHolder::GetMutableDict() {
     return dict_;
   }
 
-  if (dict_->IsFrozen()) {
+  // A direct dictionary is re-derived from its owner when it can't be
+  // written in place, or when the overlay moved since it was derived: after
+  // an abort it may still point into the dropped copy, which nothing would
+  // ever read again.
+  if (!dict_->IsWritable() || dict_epoch_ != document_->GetOverlayEpoch()) {
     EnsureMutableBackingObjectForDict();
   }
   dict_epoch_ = document_->GetOverlayEpoch();
@@ -157,7 +171,8 @@ RetainPtr<CPDF_Dictionary> CPDF_PageObjectHolder::GetMutableResources() {
     return resources_;
   }
 
-  if (resources_->IsFrozen()) {
+  if (!resources_->IsWritable() ||
+      resources_epoch_ != document_->GetOverlayEpoch()) {
     EnsureMutableBackingObjectForResources();
   }
   resources_epoch_ = document_->GetOverlayEpoch();
@@ -204,7 +219,8 @@ RetainPtr<CPDF_Dictionary> CPDF_PageObjectHolder::GetMutablePageResources() {
     return page_resources_;
   }
 
-  if (page_resources_->IsFrozen()) {
+  if (!page_resources_->IsWritable() ||
+      page_resources_epoch_ != document_->GetOverlayEpoch()) {
     EnsureMutableBackingObjectForPageResources();
   }
   page_resources_epoch_ = document_->GetOverlayEpoch();
@@ -254,6 +270,7 @@ void CPDF_PageObjectHolder::ResetParsedContent() {
   parser_.reset();
   parse_state_ = ParseState::kNotParsed;
   page_object_list_.clear();
+  object_groups_.reset();
   all_ctms_.clear();
   mask_bounding_boxes_.clear();
   dirty_streams_.clear();
@@ -275,13 +292,24 @@ std::set<int32_t> CPDF_PageObjectHolder::TakeDirtyStreams() {
   return dirty_streams;
 }
 
+bool CPDF_PageObjectHolder::ResourcesDefine(ByteStringView category,
+                                            const ByteString& name) const {
+  RetainPtr<const CPDF_Dictionary> resources = GetResources();
+  RetainPtr<const CPDF_Dictionary> names =
+      resources ? resources->GetDictFor(category) : nullptr;
+  return names && names->KeyExist(name.AsStringView());
+}
+
 std::optional<ByteString> CPDF_PageObjectHolder::GraphicsMapSearch(
     const GraphicsData& gd) {
   auto it = graphics_map_.find(gd);
   if (it == graphics_map_.end()) {
     return std::nullopt;
   }
-
+  if (!ResourcesDefine("ExtGState", it->second)) {
+    graphics_map_.erase(it);
+    return std::nullopt;
+  }
   return it->second;
 }
 
@@ -296,7 +324,10 @@ std::optional<ByteString> CPDF_PageObjectHolder::FontsMapSearch(
   if (it == fonts_map_.end()) {
     return std::nullopt;
   }
-
+  if (!ResourcesDefine("Font", it->second)) {
+    fonts_map_.erase(it);
+    return std::nullopt;
+  }
   return it->second;
 }
 
@@ -309,7 +340,14 @@ std::optional<ByteString> CPDF_PageObjectHolder::FontsByObjnumSearch(uint32_t ob
   if (!objnum)
     return std::nullopt;
   auto it = fonts_by_objnum_.find(objnum);
-  return it == fonts_by_objnum_.end() ? std::nullopt : std::optional<ByteString>(it->second);
+  if (it == fonts_by_objnum_.end()) {
+    return std::nullopt;
+  }
+  if (!ResourcesDefine("Font", it->second)) {
+    fonts_by_objnum_.erase(it);
+    return std::nullopt;
+  }
+  return it->second;
 }
 
 void CPDF_PageObjectHolder::FontsByObjnumInsert(uint32_t objnum, const ByteString& name) {
@@ -321,8 +359,13 @@ void CPDF_PageObjectHolder::FontsByObjnumInsert(uint32_t objnum, const ByteStrin
 std::optional<ByteString> CPDF_PageObjectHolder::ColorSpaceMapSearch(
     const ByteString& key) {
   auto it = colorspace_map_.find(key);
-  if (it == colorspace_map_.end())
+  if (it == colorspace_map_.end()) {
     return std::nullopt;
+  }
+  if (!ResourcesDefine("ColorSpace", it->second)) {
+    colorspace_map_.erase(it);
+    return std::nullopt;
+  }
   return it->second;
 }
 
@@ -394,10 +437,44 @@ CPDF_PageObject* CPDF_PageObjectHolder::GetPageObjectByIndex(
              : nullptr;
 }
 
+const CPDF_PageObjectGroups* CPDF_PageObjectHolder::GetObjectGroups(
+    const CFX_FloatRect& clip) const {
+  if (!g_object_groups_enabled || parse_state_ != ParseState::kParsed ||
+      page_object_list_.size() < kMinObjectsForGroups) {
+    return nullptr;
+  }
+  if (!object_groups_ || !object_groups_->IsCurrent()) {
+    // Where the objects can show: a page's box, or a form's /BBox, which is in
+    // the same space as a form's clip.
+    CFX_FloatRect area = bbox_;
+    if (area.IsEmpty()) {
+      area = GetDict()->GetRectFor("BBox");
+      area.Normalize();
+    }
+    CFX_FloatRect shown = clip;
+    shown.Intersect(area);
+    if (2 * shown.Width() * shown.Height() > area.Width() * area.Height()) {
+      return nullptr;
+    }
+    object_groups_ = std::make_unique<CPDF_PageObjectGroups>(*this);
+  }
+  return object_groups_.get();
+}
+
+// static
+void CPDF_PageObjectHolder::SetObjectGroupsEnabledForTesting(bool enabled) {
+  g_object_groups_enabled = enabled;
+}
+
 void CPDF_PageObjectHolder::AppendPageObject(
     std::unique_ptr<CPDF_PageObject> pPageObj) {
   CHECK(pPageObj);
+  pPageObj->held_ = true;
   page_object_list_.push_back(std::move(pPageObj));
+  object_groups_.reset();
+  if (parse_state_ == ParseState::kParsed) {
+    NoteObjectsEdited();
+  }
 }
 
 bool CPDF_PageObjectHolder::InsertPageObjectAtIndex(
@@ -408,10 +485,13 @@ bool CPDF_PageObjectHolder::InsertPageObjectAtIndex(
     return false;
   }
 
+  page_obj->held_ = true;
   // Unsafe, but the compiler will not complain, because
   // std::deque::iterator::operator++() has not been marked as unsafe yet.
   page_object_list_.insert(UNSAFE_TODO(page_object_list_.begin() + index),
                            std::move(page_obj));
+  object_groups_.reset();
+  NoteObjectsEdited();
   return true;
 }
 
@@ -425,6 +505,9 @@ std::unique_ptr<CPDF_PageObject> CPDF_PageObjectHolder::RemovePageObject(
 
   std::unique_ptr<CPDF_PageObject> result = std::move(*it);
   page_object_list_.erase(it);
+  result->held_ = false;
+  object_groups_.reset();
+  NoteObjectsEdited();
 
   int32_t content_stream = pPageObj->GetContentStream();
   if (content_stream >= 0) {
@@ -442,5 +525,7 @@ bool CPDF_PageObjectHolder::ErasePageObjectAtIndex(size_t index) {
   // Unsafe, but the compiler will not complain, because
   // std::deque::iterator::operator++() has not been marked as unsafe yet.
   page_object_list_.erase(UNSAFE_TODO(page_object_list_.begin() + index));
+  object_groups_.reset();
+  NoteObjectsEdited();
   return true;
 }

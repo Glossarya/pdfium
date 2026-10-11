@@ -161,6 +161,54 @@ EPDFForm_GetFieldMappingName(EPDF_FORM_MODEL model,
                              FPDF_WCHAR* buffer,
                              unsigned long buflen);
 
+// Experimental EmbedPDF Extension API.
+// The field's own /EMBD_Metadata dictionary, as the model read it: EmbedPDF's
+// keys on the field dictionary that holds /T and /V, never inherited from a
+// parent field. These mirror the EPDFAnnot_*EmbedMetadata* reads, so a field
+// and an annotation are read the same way.
+//
+// Returns true if the field has an /EMBD_Metadata dictionary.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFForm_HasFieldEmbedMetadata(EPDF_FORM_MODEL model, int field_index);
+
+// Experimental EmbedPDF Extension API.
+// Copy the string at |key| in the field's /EMBD_Metadata into |buffer| as
+// UTF-16LE. Same conventions as EPDFForm_GetFieldName(); a missing key reads
+// as the empty string.
+FPDF_EXPORT unsigned long FPDF_CALLCONV
+EPDFForm_GetFieldEmbedMetadataString(EPDF_FORM_MODEL model,
+                                     int field_index,
+                                     FPDF_BYTESTRING key,
+                                     FPDF_WCHAR* buffer,
+                                     unsigned long buflen);
+
+// Experimental EmbedPDF Extension API.
+// Read the number at |key| in the field's /EMBD_Metadata. Returns false when
+// the key is missing or holds another type.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFForm_GetFieldEmbedMetadataNumber(EPDF_FORM_MODEL model,
+                                     int field_index,
+                                     FPDF_BYTESTRING key,
+                                     float* value);
+
+// Experimental EmbedPDF Extension API.
+// Read the boolean at |key| in the field's /EMBD_Metadata. Returns false when
+// the key is missing or holds another type.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFForm_GetFieldEmbedMetadataBoolean(EPDF_FORM_MODEL model,
+                                      int field_index,
+                                      FPDF_BYTESTRING key,
+                                      FPDF_BOOL* value);
+
+// Experimental EmbedPDF Extension API.
+// Copy the app's own data in the field's /EMBD_Metadata (/CustomJSON) into
+// |buffer| as UTF-16LE. Same conventions as EPDFForm_GetFieldName().
+FPDF_EXPORT unsigned long FPDF_CALLCONV
+EPDFForm_GetFieldEmbedMetadataJSON(EPDF_FORM_MODEL model,
+                                   int field_index,
+                                   FPDF_WCHAR* buffer,
+                                   unsigned long buflen);
+
 // String-oriented PDF field value shapes. Text strings and button name
 // objects are exposed as SCALAR. A multi-select choice array is ARRAY,
 // including an empty array. NONE means the inherited entry is absent or
@@ -210,6 +258,13 @@ EPDFForm_GetFieldDefaultValueAt(EPDF_FORM_MODEL model,
 // Return /MaxLen for text fields, or 0 when absent or not applicable.
 FPDF_EXPORT int FPDF_CALLCONV EPDFForm_GetFieldMaxLen(EPDF_FORM_MODEL model,
                                                       int field_index);
+
+// Experimental EmbedPDF Extension API.
+// Return a list box's /TI, the option shown in its top row, as the file
+// writes it (inherited from a parent field), or 0 when absent or not a list
+// box. No clamping to the options: the caller applies the rules.
+FPDF_EXPORT int FPDF_CALLCONV EPDFForm_GetFieldTopIndex(EPDF_FORM_MODEL model,
+                                                        int field_index);
 
 // Experimental EmbedPDF Extension API.
 // Return the number of /Opt options for choice fields, 0 otherwise.
@@ -268,12 +323,22 @@ EPDFForm_GetFieldWidgetPageObjNum(EPDF_FORM_MODEL model,
                                   int widget_index);
 
 // Experimental EmbedPDF Extension API.
+// Copy the widget's /Rect, normalized (left < right, bottom < top), in PDF
+// user space into |rect|. Returns false for an index out of range or a
+// widget without a /Rect.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFForm_GetFieldWidgetRect(EPDF_FORM_MODEL model,
+                            int field_index,
+                            int widget_index,
+                            FS_RECTF* rect);
+
+// Experimental EmbedPDF Extension API.
 // Copy the widget's on-state name (the non-"Off" key of its /AP /N
 // dictionary) into |buffer| as raw PDF name bytes, including the trailing
 // NUL. Only meaningful for checkbox and radio widgets; empty otherwise.
 // Returns the byte length of the string, or 0 on error. |buffer| may be
-// NULL to query the length. The returned bytes are an opaque token for use
-// with future toggle APIs.
+// NULL to query the length. A widget turned on by
+// EPDFForm_SetFieldWidgetsChecked() gets this as its /AS.
 FPDF_EXPORT unsigned long FPDF_CALLCONV
 EPDFForm_GetFieldWidgetOnState(EPDF_FORM_MODEL model,
                                int field_index,
@@ -325,7 +390,7 @@ EPDFForm_GetFieldIndexByObjNum(EPDF_FORM_MODEL model, uint32_t field_objnum);
 // (calculated fields are read-only yet script-written). Enforcing fill
 // policy is the caller's responsibility.
 //
-// Changed-widget reporting (uniform across all write APIs):
+// Changed-widget reporting (every writer that changes a widget's picture):
 //   changed_widget_objnums - optional caller buffer receiving the object
 //                            numbers of widget annotations whose appearance
 //                            changed (may span multiple pages). May be NULL.
@@ -337,81 +402,86 @@ EPDFForm_GetFieldIndexByObjNum(EPDF_FORM_MODEL model, uint32_t field_objnum);
 //                            number) are counted but not reported.
 // ---------------------------------------------------------------------------
 
-// Experimental EmbedPDF Extension API.
-// Set the value of a checkbox or radio field.
+// What a value writer writes, in the shapes EPDFForm_GetFieldValueKind()
+// reads: EPDF_FORM_VALUE_NONE, EPDF_FORM_VALUE_SCALAR (one value) or
+// EPDF_FORM_VALUE_ARRAY (any number of values, a multi-select list box).
+// The PDF type follows the field: a checkbox's or radio group's value is a
+// name (its bytes are the value's UTF-8), every other field's a text string.
 //
-// |on_state| is the target widget appearance state, exactly as returned by
-// EPDFForm_GetFieldWidgetOnState(), and selects WHICH widget of the group
-// is checked. NULL clears the group (rejected for radio fields with
-// NoToggleToOff). Every sibling widget's /AS is updated (checkboxes and
-// in-unison radios check all widgets sharing the target's export value and
-// on-state) and the field's /V is set to the export value name, or to the
-// control index for fields carrying /Opt, matching Acrobat conventions.
+// NONE says the field holds no value of its own: the key is removed, or,
+// when a parent field holds one, an empty value is written so the parent's
+// doesn't show through (/Off for a checkbox or radio group, an empty array
+// for a multi-select list box, an empty string otherwise).
 //
-// No appearance streams are regenerated: toggle widgets carry one appearance
-// per state, so flipping /AS IS the visual change.
-//
-// Fails when |field_objnum| is not a checkbox/radio terminal field or
-// |on_state| matches no widget. Returns TRUE with zero changes when the
-// field is already in the requested state.
-FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
-EPDFForm_SetToggle(FPDF_DOCUMENT document,
-                   uint32_t field_objnum,
-                   FPDF_BYTESTRING on_state,
-                   uint32_t* changed_widget_objnums,
-                   unsigned long buffer_size,
-                   unsigned long* out_changed_count);
+// These writers decide nothing: no cut to /MaxLen, no sibling widgets, no
+// option order. The caller works out what the field holds and writes it.
+// Writing what the file already holds writes nothing.
 
 // Experimental EmbedPDF Extension API.
-// Set the value of a text field.
+// Write a terminal field's /V as |kind| with |value_count| |values| (see
+// above). Drops /RV, a rich text value that would contradict /V, and copies
+// /V onto the field's twin controls in other planes. Draws nothing: call
+// EPDFForm_RedrawFieldWidgets() for a text or choice field's new picture.
 //
-// Writes /V, drops any stale rich-text /RV, and regenerates the /AP stream
-// of every widget of the field. Fails when |field_objnum| is not a text
-// terminal field. When the value exceeds the field's effective /MaxLen, only
-// the first /MaxLen characters are written, matching Acrobat assignment
-// semantics.
+// Fails when |field_objnum| is not a terminal field, when |value_count|
+// doesn't fit |kind| (NONE takes 0, SCALAR 1), or for an ARRAY on a field
+// other than a list box.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
-EPDFForm_SetTextValue(FPDF_DOCUMENT document,
-                      uint32_t field_objnum,
-                      FPDF_WIDESTRING value,
-                      uint32_t* changed_widget_objnums,
-                      unsigned long buffer_size,
-                      unsigned long* out_changed_count);
+EPDFForm_SetFieldValue(FPDF_DOCUMENT document,
+                       uint32_t field_objnum,
+                       int kind,
+                       const FPDF_WIDESTRING* values,
+                       unsigned long value_count);
 
 // Experimental EmbedPDF Extension API.
-// Set the selection of a combo box or list box field.
-//
-// |values| holds |value_count| option export values. Zero values clears the
-// effective selection, using a local empty value when needed to shadow an
-// inherited /V. Multiple values require a multi-select list box. For combo
-// boxes with the Edit flag a single non-option value is accepted as free
-// text; otherwise every value must match an option's export value.
-//
-// Writes /V (string, or array for multiple values ordered by option index),
-// keeps /I in sync (sorted ascending; removed when free text is set), and
-// regenerates every widget's /AP stream.
+// Write a field's /DV the same way EPDFForm_SetFieldValue() writes /V.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
-EPDFForm_SetChoiceValues(FPDF_DOCUMENT document,
-                         uint32_t field_objnum,
-                         const FPDF_WIDESTRING* values,
-                         unsigned long value_count,
-                         uint32_t* changed_widget_objnums,
-                         unsigned long buffer_size,
-                         unsigned long* out_changed_count);
+EPDFForm_SetFieldDefaultValue(FPDF_DOCUMENT document,
+                              uint32_t field_objnum,
+                              int kind,
+                              const FPDF_WIDESTRING* values,
+                              unsigned long value_count);
 
 // Experimental EmbedPDF Extension API.
-// Reset a field to its default value.
-//
-// Restores /V from the effective /DV (clearing the effective value when no
-// default exists), clears stale /RV and /I, updates toggle widget /AS states,
-// and regenerates /AP streams for text and choice widgets. Fails for push
-// buttons and signature fields.
+// Write a combo box's or list box's /I (the selected options' positions in
+// /Opt) as given, and copy it onto the field's twin controls. Zero
+// |index_count| says none, as EPDF_FORM_VALUE_NONE does for a value (an
+// empty array when a parent field holds one). Fails for other fields and
+// for a negative index.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
-EPDFForm_ResetField(FPDF_DOCUMENT document,
-                    uint32_t field_objnum,
-                    uint32_t* changed_widget_objnums,
-                    unsigned long buffer_size,
-                    unsigned long* out_changed_count);
+EPDFForm_SetFieldSelectedIndices(FPDF_DOCUMENT document,
+                                 uint32_t field_objnum,
+                                 const int* indices,
+                                 unsigned long index_count);
+
+// Experimental EmbedPDF Extension API.
+// Turn a checkbox's or radio group's widgets on or off: |checked| holds one
+// entry per widget, in the order EPDFForm_GetFieldWidgetObjNum() lists them.
+// A widget on gets its own on-state as /AS (EPDFForm_GetFieldWidgetOnState()),
+// a widget off gets /Off. A toggle widget holds a picture per state, so this
+// is the visual change; /V is EPDFForm_SetFieldValue()'s to write.
+//
+// Fails when |field_objnum| is not a checkbox or radio group, or when
+// |checked_count| isn't its widget count.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFForm_SetFieldWidgetsChecked(FPDF_DOCUMENT document,
+                                uint32_t field_objnum,
+                                const FPDF_BOOL* checked,
+                                unsigned long checked_count,
+                                uint32_t* changed_widget_objnums,
+                                unsigned long buffer_size,
+                                unsigned long* out_changed_count);
+
+// Experimental EmbedPDF Extension API.
+// Draw a new picture (/AP) for every widget of a text field, combo box or
+// list box from what the field holds, and report them all as changed. Fails
+// for other fields.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFForm_RedrawFieldWidgets(FPDF_DOCUMENT document,
+                            uint32_t field_objnum,
+                            uint32_t* changed_widget_objnums,
+                            unsigned long buffer_size,
+                            unsigned long* out_changed_count);
 
 // Acrobat-compatible Field.display values. Only the Invisible, Hidden, Print,
 // and NoView annotation flag bits are changed; all unrelated flags survive.
@@ -446,9 +516,7 @@ EPDFForm_SetFieldAppearanceText(FPDF_DOCUMENT document,
 //
 // Exports read through the same reconciled view as EPDFForm_LoadModel, so
 // recovered fields (origin kRecovered) are included, and on layer documents
-// promoted values win. Imports replay each entry through the typed write
-// transactions above, so validation, appearance regeneration, and minimal
-// layer promotion apply per field; one bad entry never poisons the rest.
+// promoted values win.
 // ---------------------------------------------------------------------------
 
 // Omit required fields whose value is empty (Acrobat's form-submission
@@ -481,41 +549,6 @@ EPDFForm_ExportXFDF(FPDF_DOCUMENT document,
                     uint32_t export_flags,
                     void* buffer,
                     unsigned long buflen);
-
-// Per-import accounting. A field entry is "applied" when its value was
-// written (including no-op writes of an unchanged value) and "skipped" when
-// the name is unknown, the field family cannot take the value, or the value
-// failed validation (unknown toggle state, MaxLen, non-option choice, ...).
-typedef struct {
-  uint32_t fields_total;
-  uint32_t fields_applied;
-  uint32_t fields_skipped;
-  uint32_t widgets_changed;
-} EPDF_FORM_IMPORT_RESULT;
-
-// Experimental EmbedPDF Extension API.
-// Apply form data from an FDF payload to the document.
-//
-// Accepts both flat entries with dotted /T names and hierarchical /Kids
-// trees. Returns TRUE when the FDF parsed, regardless of per-field skips
-// (see |out_result|); FALSE when the payload is not FDF. On a layer
-// document only the fields that actually change promote.
-FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
-EPDFForm_ImportFDF(FPDF_DOCUMENT document,
-                   const void* data,
-                   unsigned long size,
-                   EPDF_FORM_IMPORT_RESULT* out_result);
-
-// Experimental EmbedPDF Extension API.
-// Apply form data from an XFDF payload to the document. Accepts nested
-// <field> elements and dotted name attributes; multiple <value> elements
-// select multiple options of a multi-select list box. Same conventions as
-// EPDFForm_ImportFDF.
-FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
-EPDFForm_ImportXFDF(FPDF_DOCUMENT document,
-                    const void* data,
-                    unsigned long size,
-                    EPDF_FORM_IMPORT_RESULT* out_result);
 
 // ---------------------------------------------------------------------------
 // Repair ("form doctor").
@@ -581,18 +614,25 @@ EPDFForm_Repair(FPDF_DOCUMENT document,
 //
 //   family    - EPDF_FORMFIELD_FAMILY_TEXT / CHECKBOX / RADIO / COMBOBOX /
 //               LISTBOX / SIGNATURE (created unsigned; /AcroForm /SigFlags
-//               gains SignaturesExist). Push buttons and unknown are not
-//               authorable.
+//               gains SignaturesExist) / PUSHBUTTON (no value; its caption
+//               is its widgets' /MK /CA, EPDFAnnot_SetMKText()). Unknown is
+//               not authorable.
 //   full_name - dotted fully qualified name ("billing.name"). Missing
 //               non-terminal ancestors are created; a sibling name
 //               collision at any level fails.
+//   field_objnum - the object number the field dictionary gets, or 0 for
+//               the next free one. A number other than 0 needs a layer
+//               transaction and must be free
+//               (EPDFLayer_RaiseLastObjectNumber()); ancestors created on
+//               the way always get the next free numbers.
 //
 // Bootstraps /AcroForm (with /DR and /DA) when the document has none.
 // Returns the new field dictionary's object number, or 0 on failure.
 FPDF_EXPORT uint32_t FPDF_CALLCONV
 EPDFForm_CreateField(FPDF_DOCUMENT document,
                      int family,
-                     FPDF_WIDESTRING full_name);
+                     FPDF_WIDESTRING full_name,
+                     uint32_t field_objnum);
 
 // Experimental EmbedPDF Extension API.
 // Adopt an existing widget annotation as a view of |field_objnum|.
@@ -603,13 +643,17 @@ EPDFForm_CreateField(FPDF_DOCUMENT document,
 // NULL. Adoption wires /Parent + /Kids, seeds toggle /AP states and /AS,
 // and bakes the family-correct appearance stream. Adopting into a legacy
 // MERGED field first splits it (the field keeps its object number; the
-// previously merged widget becomes a new kid annotation - widget identity
-// changes, field identity never does).
+// previously merged widget becomes a new kid annotation, whose /P names its
+// page - widget identity changes, field identity never does). |split_objnum| is
+// the object number that new kid gets, or 0 for the next free one; it is used
+// only when the field is merged. A number other than 0 needs a layer
+// transaction and must be free (EPDFLayer_RaiseLastObjectNumber()).
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFForm_AttachWidget(FPDF_DOCUMENT document,
                       uint32_t field_objnum,
                       uint32_t widget_objnum,
-                      FPDF_BYTESTRING on_state);
+                      FPDF_BYTESTRING on_state,
+                      uint32_t split_objnum);
 
 // Experimental EmbedPDF Extension API.
 // Detach a widget from its field. The widget keeps its page placement and
@@ -659,37 +703,35 @@ EPDFForm_SetFieldFlags(FPDF_DOCUMENT document,
                        uint32_t clear_bits);
 
 // Experimental EmbedPDF Extension API.
+// Set a field's action for |event| (EPDF_FORM_ACTION_*: /AA K F V C) to a
+// reference to |action|, an indirect action of |document| (see
+// EPDFAction_CreateJavaScript()); NULL removes it. The field's own /AA is
+// written: one it only inherits from a parent is first copied in (its K F V
+// C entries), so its other events keep their meaning. An /AA left empty
+// goes, unless it hides an inherited one. On a field merged with its widget
+// only the field's keys change.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFForm_SetFieldEventAction(FPDF_DOCUMENT document,
+                             uint32_t field_objnum,
+                             int event,
+                             FPDF_ACTION action);
+
+// Experimental EmbedPDF Extension API.
+// Set /AcroForm /CO, the order calculate scripts run in, to the |count|
+// fields in |field_objnums|, as references. |count| 0 removes /CO. Fails,
+// writing nothing, when a number names no field or appears twice.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFForm_SetCalculationOrder(FPDF_DOCUMENT document,
+                             const uint32_t* field_objnums,
+                             int count);
+
+// Experimental EmbedPDF Extension API.
 // Set /MaxLen on a text field. 0 clears the limit. Fails when the current
 // value is already longer than the new limit.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFForm_SetFieldMaxLen(FPDF_DOCUMENT document,
                         uint32_t field_objnum,
                         int max_len);
-
-// Experimental EmbedPDF Extension API.
-// Set /DV on a text or choice field. Text fields require exactly one value.
-// Choice fields accept one value, or multiple values for a multi-select list
-// box; option validation and ordering match EPDFForm_SetChoiceValues(). A
-// single empty string is a real scalar default, not a request to remove /DV.
-FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
-EPDFForm_SetFieldDefaultValues(FPDF_DOCUMENT document,
-                               uint32_t field_objnum,
-                               const FPDF_WIDESTRING* values,
-                               unsigned long value_count);
-
-// Set a checkbox/radio /DV from the opaque widget appearance-state token
-// returned by EPDFForm_GetFieldWidgetOnState(). "Off" is an explicit default;
-// NULL and the empty string are rejected.
-FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
-EPDFForm_SetFieldDefaultToggle(FPDF_DOCUMENT document,
-                               uint32_t field_objnum,
-                               FPDF_BYTESTRING on_state);
-
-// Remove /DV from the addressed field dictionary. If an ancestor provides an
-// inherited /DV, that inherited default becomes effective; this API removes a
-// local override rather than mutating a shared ancestor.
-FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
-EPDFForm_RemoveFieldDefaultValue(FPDF_DOCUMENT document, uint32_t field_objnum);
 
 // Experimental EmbedPDF Extension API.
 // Set /TU (the accessible tooltip). An empty string clears it.
@@ -706,14 +748,60 @@ EPDFForm_SetFieldMappingName(FPDF_DOCUMENT document,
                              FPDF_WIDESTRING value);
 
 // Experimental EmbedPDF Extension API.
+// Writes to the field's own /EMBD_Metadata dictionary, on the field dictionary
+// |field_objnum| names, never on a parent field. These mirror the
+// EPDFAnnot_*EmbedMetadata* writes: the first write creates /EMBD_Metadata,
+// and removing its last key removes it. A write that changes nothing leaves
+// the field untouched. Each returns false when |field_objnum| isn't a field.
+//
+// Set a UTF-16LE string at |key|.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFForm_SetFieldEmbedMetadataString(FPDF_DOCUMENT document,
+                                     uint32_t field_objnum,
+                                     FPDF_BYTESTRING key,
+                                     FPDF_WIDESTRING value);
+
+// Experimental EmbedPDF Extension API.
+// Set a number at |key| in the field's /EMBD_Metadata.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFForm_SetFieldEmbedMetadataNumber(FPDF_DOCUMENT document,
+                                     uint32_t field_objnum,
+                                     FPDF_BYTESTRING key,
+                                     float value);
+
+// Experimental EmbedPDF Extension API.
+// Set a boolean at |key| in the field's /EMBD_Metadata.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFForm_SetFieldEmbedMetadataBoolean(FPDF_DOCUMENT document,
+                                      uint32_t field_objnum,
+                                      FPDF_BYTESTRING key,
+                                      FPDF_BOOL value);
+
+// Experimental EmbedPDF Extension API.
+// Set the app's own data (/CustomJSON) in the field's /EMBD_Metadata.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFForm_SetFieldEmbedMetadataJSON(FPDF_DOCUMENT document,
+                                   uint32_t field_objnum,
+                                   FPDF_WIDESTRING json);
+
+// Experimental EmbedPDF Extension API.
+// Remove |key| from the field's /EMBD_Metadata.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFForm_ClearFieldEmbedMetadataKey(FPDF_DOCUMENT document,
+                                    uint32_t field_objnum,
+                                    FPDF_BYTESTRING key);
+
+// Experimental EmbedPDF Extension API.
+// Remove the field's /EMBD_Metadata dictionary.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFForm_ClearFieldEmbedMetadata(FPDF_DOCUMENT document, uint32_t field_objnum);
+
+// Experimental EmbedPDF Extension API.
 // Replace a choice field's effective /Opt with |count| options. Entries where
 // label equals export are written as plain strings, otherwise as [export label]
-// pairs. The current selection is re-synced: selected exports that vanish
-// are dropped, /V and /I are rewritten consistently, and widget appearance
-// streams are regenerated. /DV is filtered through the same new option set.
-// |count| of 0 writes an empty local /Opt array (shadowing inherited options);
-// an edit combo's current/default free text survives and other selections
-// clear.
+// pairs. |count| of 0 writes an empty local /Opt array (shadowing inherited
+// options). Only /Opt is written: the caller writes the selection (/V, /I),
+// the default (/DV) and the new pictures that go with the new options.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFForm_SetFieldOptions(FPDF_DOCUMENT document,
                          uint32_t field_objnum,

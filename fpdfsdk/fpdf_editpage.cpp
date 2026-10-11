@@ -7,6 +7,7 @@
 #include "public/fpdf_edit.h"
 
 #include <algorithm>
+#include <limits>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -135,7 +136,10 @@ RetainPtr<CPDF_Dictionary> GetOrCreateMarkParamsDict(FPDF_DOCUMENT document,
     pParams = doc->New<CPDF_Dictionary>();
     pMarkItem->SetDirectDict(pParams);
   }
-  return pParams;
+  // EmbedPDF: a mark that names a property list points into the resources;
+  // inside a layer transaction that may be a committed version, which must
+  // not be written in place. Inline marks (parsed, detached) always can be.
+  return pParams->IsWritable() ? pParams : nullptr;
 }
 
 bool PageObjectContainsMark(CPDF_PageObject* pPageObj,
@@ -283,6 +287,31 @@ FPDF_EXPORT FPDF_PAGE FPDF_CALLCONV FPDFPage_New(FPDF_DOCUMENT document,
   pPage->ParseContent();
 
   return FPDFPageFromIPDFPage(pPage.Leak());  // Caller takes ownership.
+}
+
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+EPDFPage_InsertBlankRaw(FPDF_DOCUMENT document,
+                        int page_index,
+                        double width,
+                        double height,
+                        unsigned long objnum) {
+  CPDF_Document* doc = CPDFDocumentFromFPDFDocument(document);
+  if (!doc || page_index < 0 || page_index > doc->GetPageCount() ||
+      objnum > std::numeric_limits<uint32_t>::max()) {
+    return false;
+  }
+  const uint32_t number = static_cast<uint32_t>(objnum);
+  RetainPtr<CPDF_Dictionary> page_dict =
+      number ? doc->CreateNewPageAt(page_index, number)
+             : doc->CreateNewPage(page_index);
+  if (!page_dict) {
+    return false;
+  }
+  page_dict->SetRectFor(pdfium::page_object::kMediaBox,
+                        CFX_FloatRect(0, 0, width, height));
+  page_dict->SetNewFor<CPDF_Number>(pdfium::page_object::kRotate, 0);
+  page_dict->SetNewFor<CPDF_Dictionary>(pdfium::page_object::kResources);
+  return true;
 }
 
 FPDF_EXPORT int FPDF_CALLCONV FPDFPage_GetRotation(FPDF_PAGE page) {
@@ -688,7 +717,7 @@ FPDFPageObjMark_RemoveParam(FPDF_PAGEOBJECT page_object,
   }
 
   RetainPtr<CPDF_Dictionary> pParams = GetMarkParamDict(mark);
-  if (!pParams) {
+  if (!pParams || !pParams->IsWritable()) {  // see GetOrCreateMarkParamsDict
     return false;
   }
 
@@ -817,7 +846,8 @@ FPDFPageObj_SetMatrix(FPDF_PAGEOBJECT page_object, const FS_MATRIX* matrix) {
       return true;
     case CPDF_PageObject::Type::kImage:
       pPageObj->AsImage()->SetImageMatrix(cmatrix);
-      pPageObj->SetMatrixDirty(pPageObj->original_matrix() != cmatrix);
+      pPageObj->SetMatrixDirty(pPageObj->AsImage()->original_matrix() !=
+                               cmatrix);
       return true;
     case CPDF_PageObject::Type::kShading:
       return false;
@@ -960,19 +990,21 @@ FPDFPageObj_GetRotatedBounds(FPDF_PAGEOBJECT page_object,
   }
 
   CFX_Matrix matrix;
+  CFX_FloatRect bbox;
   switch (cpage_object->GetType()) {
     case CPDF_PageObject::Type::kText:
       matrix = cpage_object->AsText()->GetTextMatrix();
+      bbox = cpage_object->AsText()->GetOriginalRect();
       break;
     case CPDF_PageObject::Type::kImage:
       matrix = cpage_object->AsImage()->matrix();
+      bbox = cpage_object->AsImage()->GetOriginalRect();
       break;
     default:
       // TODO(crbug.com/42270854): Support more object types.
       return false;
   }
 
-  const CFX_FloatRect& bbox = cpage_object->GetOriginalRect();
   const CFX_PointF bottom_left = matrix.Transform({bbox.left, bbox.bottom});
   const CFX_PointF bottom_right = matrix.Transform({bbox.right, bbox.bottom});
   const CFX_PointF top_right = matrix.Transform({bbox.right, bbox.top});

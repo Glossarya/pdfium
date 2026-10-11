@@ -91,7 +91,10 @@ unsigned long GetStreamMaybeCopyAndReturnLengthImpl(
   }
 
   pdfium::span<const uint8_t> stream_data_span = stream_acc->GetSpan();
-  if (!buffer.empty() && buffer.size() <= stream_data_span.size()) {
+  // EmbedPDF: copy when the buffer is large enough, as every caller's API
+  // documents. The comparison was inverted: a larger buffer came back
+  // unfilled (with success), and a smaller one failed fxcrt::Copy()'s CHECK.
+  if (!buffer.empty() && buffer.size() >= stream_data_span.size()) {
     fxcrt::Copy(stream_data_span, buffer);
   }
   return pdfium::checked_cast<unsigned long>(stream_data_span.size());
@@ -232,6 +235,15 @@ FPDF_DOCUMENT FPDFDocumentFromCPDFDocument(CPDF_Document* doc) {
 }
 
 CPDF_Page* CPDFPageFromFPDFPage(FPDF_PAGE page) {
+  CPDF_Page* pdf_page = CPDFPageFromFPDFPageAsIs(page);
+  if (pdf_page && pdf_page->GetParseState() ==
+                      CPDF_PageObjectHolder::ParseState::kParsing) {
+    pdf_page->ParseContent();
+  }
+  return pdf_page;
+}
+
+CPDF_Page* CPDFPageFromFPDFPageAsIs(FPDF_PAGE page) {
   return page ? IPDFPageFromFPDFPage(page)->AsPDFPage() : nullptr;
 }
 
@@ -246,6 +258,11 @@ ScopedFPDFPageView::ScopedFPDFPageView(FPDF_PAGE page)
       view_scope_(page_ ? page_->GetDocument() : nullptr) {}
 
 ScopedFPDFPageView::~ScopedFPDFPageView() = default;
+
+CPDF_AnnotContext* CPDFAnnotContextFromFPDFAnnotation(FPDF_ANNOTATION annot) {
+  auto* context = reinterpret_cast<CPDF_AnnotContext*>(annot);
+  return context && context->IsValid() ? context : nullptr;
+}
 
 ScopedFPDFAnnotationView::ScopedFPDFAnnotationView(
     FPDF_ANNOTATION annotation)
@@ -332,8 +349,9 @@ RetainPtr<const CPDF_Array> GetQuadPointsArrayFromDictionary(
 
 RetainPtr<CPDF_Array> GetMutableQuadPointsArrayFromDictionary(
     CPDF_Dictionary* dict) {
-  return pdfium::WrapRetain(
-      const_cast<CPDF_Array*>(GetQuadPointsArrayFromDictionary(dict).Get()));
+  // EmbedPDF: the mutable accessor, so an indirect /QuadPoints opens through
+  // the document's write door (a layer transaction copies it up).
+  return dict->GetMutableArrayFor("QuadPoints");
 }
 
 RetainPtr<CPDF_Array> AddQuadPointsArrayToDictionary(CPDF_Dictionary* dict) {

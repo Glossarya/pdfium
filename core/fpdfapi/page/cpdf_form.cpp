@@ -92,12 +92,30 @@ void CPDF_Form::ParseContentInternal(const CPDF_AllStates* pGraphicStates,
   }
 
   if (GetParseState() == ParseState::kNotParsed) {
-    StartParse(std::make_unique<CPDF_ContentParser>(
-        std::move(stream), this, pGraphicStates, pParentMatrix, pType3Char,
-        recursion_state ? recursion_state : &recursion_state_));
+    StartParseContentInternal(std::move(stream), pGraphicStates, pParentMatrix,
+                              pType3Char, recursion_state);
   }
   DCHECK_EQ(GetParseState(), ParseState::kParsing);
   ContinueParse(nullptr);
+}
+
+void CPDF_Form::StartParseContent(const CPDF_AllStates* pGraphicStates,
+                                  RecursionState* recursion_state) {
+  CPDF_DocumentViewScope document_view(GetDocument());
+  RetainPtr<const CPDF_Stream> stream = GetStream();
+  DCHECK_EQ(GetParseState(), ParseState::kNotParsed);
+  StartParseContentInternal(std::move(stream), pGraphicStates, nullptr, nullptr,
+                            recursion_state);
+}
+
+void CPDF_Form::StartParseContentInternal(RetainPtr<const CPDF_Stream> stream,
+                                          const CPDF_AllStates* pGraphicStates,
+                                          const CFX_Matrix* pParentMatrix,
+                                          CPDF_Type3Char* pType3Char,
+                                          RecursionState* recursion_state) {
+  StartParse(std::make_unique<CPDF_ContentParser>(
+      std::move(stream), this, pGraphicStates, pParentMatrix, pType3Char,
+      recursion_state ? recursion_state : &recursion_state_));
 }
 
 bool CPDF_Form::HasPageObjects() const {
@@ -132,9 +150,12 @@ RetainPtr<CPDF_Stream> CPDF_Form::GetMutableFormStream() {
     return form_stream_;
   }
 
-  // Rebind a cached base stream to the effective layer object before asking
-  // the document for a mutable version.
-  (void)GetStream();
+  // The door gives the writable version - the layer's, copied up into an
+  // open transaction - whichever version this form parsed. Rebind without
+  // touching the parsed content: a caller asking to write is about to write
+  // exactly those objects (and may have just appended one). GetStream()'s
+  // rebind drops parsed content, which is right for a reader and would free
+  // the objects under a writer.
   const uint32_t objnum = form_stream_->GetObjNum();
   DCHECK(objnum);
   RetainPtr<CPDF_Object> live = doc->GetMutableIndirectObject(objnum);
@@ -151,6 +172,26 @@ void CPDF_Form::EnsureMutableBackingObjectForDict() {
   if (live_stream) {
     dict_ = live_stream->GetMutableDict();
   }
+}
+
+void CPDF_Form::EnsureMutableBackingObjectForResources() {
+  RetainPtr<CPDF_Dictionary> dict = GetMutableDict();
+  if (!dict) {
+    resources_ = nullptr;
+    return;
+  }
+  RetainPtr<CPDF_Dictionary> own = dict->GetMutableDictFor("Resources");
+  if (!own) {
+    // EmbedPDF: a form without /Resources of its own borrows its parent's,
+    // which can't be written in place when they are frozen or belong to a
+    // committed version in a layer transaction. A write gets resources of
+    // the form's own, a copy of what it borrowed: adding to the parent's
+    // would change the page as well.
+    own = resources_ ? ToDictionary(resources_->Clone())
+                     : pdfium::MakeRetain<CPDF_Dictionary>();
+    dict->SetFor("Resources", own);
+  }
+  resources_ = std::move(own);
 }
 
 RetainPtr<const CPDF_Stream> CPDF_Form::GetStream() const {
@@ -176,6 +217,10 @@ RetainPtr<const CPDF_Stream> CPDF_Form::GetStream() const {
           /*reset_parsed_content=*/true);
     }
   }
+  return form_stream_;
+}
+
+RetainPtr<const CPDF_Stream> CPDF_Form::GetParsedStream() const {
   return form_stream_;
 }
 

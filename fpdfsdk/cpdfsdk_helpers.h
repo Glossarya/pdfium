@@ -54,7 +54,15 @@ class SkCanvas;
 // Conversions to/from underlying types.
 IPDF_Page* IPDFPageFromFPDFPage(FPDF_PAGE page);
 FPDF_PAGE FPDFPageFromIPDFPage(IPDF_Page* page);
+// The page behind `page`. A page still loading in slices
+// (EPDFDoc_StartLoadPageByObjectNumber()) finishes its load first: no call
+// that reads a page sees half of one.
 CPDF_Page* CPDFPageFromFPDFPage(FPDF_PAGE page);
+
+// EmbedPDF: the page behind `page` as it is, perhaps still loading. Only for
+// the calls that work on a page mid-load: continuing its load, measuring it,
+// and asking what it is.
+CPDF_Page* CPDFPageFromFPDFPageAsIs(FPDF_PAGE page);
 FPDF_DOCUMENT FPDFDocumentFromCPDFDocument(CPDF_Document* doc);
 CPDF_Document* CPDFDocumentFromFPDFDocument(FPDF_DOCUMENT doc);
 
@@ -121,10 +129,11 @@ inline FPDF_ANNOTATION FPDFAnnotationFromCPDFAnnotContext(
     CPDF_AnnotContext* annot) {
   return reinterpret_cast<FPDF_ANNOTATION>(annot);
 }
-inline CPDF_AnnotContext* CPDFAnnotContextFromFPDFAnnotation(
-    FPDF_ANNOTATION annot) {
-  return reinterpret_cast<CPDF_AnnotContext*>(annot);
-}
+// EmbedPDF: null for a handle whose annotation is gone (see
+// CPDF_AnnotContext::IsValid()), so every entry point that checks for null
+// fails cleanly. Closing a handle is the one thing an invalid handle allows,
+// and FPDFPage_CloseAnnot() casts directly.
+CPDF_AnnotContext* CPDFAnnotContextFromFPDFAnnotation(FPDF_ANNOTATION annot);
 
 inline FPDF_ATTACHMENT FPDFAttachmentFromCPDFObject(CPDF_Object* attachment) {
   return reinterpret_cast<FPDF_ATTACHMENT>(attachment);

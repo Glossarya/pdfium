@@ -26,7 +26,9 @@ enum class BlendMode;
 
 class CPDF_GenerateAP {
  public:
-  enum FormType { kTextField, kComboBox, kListBox };
+  // kPushButton: the button's background and border, and its caption (/MK
+  // /CA) centred in the /DA font and colour.
+  enum FormType { kTextField, kComboBox, kListBox, kPushButton };
 
   static void GenerateFormAP(CPDF_Document* doc,
                              CPDF_Dictionary* pAnnotDict,
@@ -39,9 +41,15 @@ class CPDF_GenerateAP {
                                               FormType type,
                                               const WideString& value_override);
 
+  // A check box's Off and on appearances: the box, and when on, the symbol
+  // its /MK /CA names (a check by default) in its /DA colour (black by
+  // default).
   static void GenerateCheckboxFormAP(CPDF_Document* doc,
                                      CPDF_Dictionary* annot_dict);
 
+  // A radio button's Off and on appearances: a circle with a dot by default;
+  // any other symbol /MK /CA names sits in a box, as PDFium's form filler
+  // draws it. The symbol takes the /DA colour (black by default).
   static void GenerateRadioButtonFormAP(CPDF_Document* doc,
                                         CPDF_Dictionary* annot_dict);
 
@@ -126,9 +134,8 @@ class CPDF_GenerateAP {
     std::optional<CPDF_AnnotFontMap::PreparedFontResources> resources;
     ByteString content;                         // the whole stream
     RetainPtr<CPDF_Dictionary> graphics_state;  // direct
-    CFX_Matrix matrix;
-    CFX_FloatRect bbox;
-    bool use_transform = false;
+    CFX_Matrix matrix;       // puts the form on the page; identity upright
+    CFX_FloatRect footprint;  // what it's drawn about, in the form's space
     ByteString da_alias;  // the /DR key the DA string should name
     float body_size = 0;  // the size laid out with (auto size resolved)
     bool degraded = false;

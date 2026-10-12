@@ -9,26 +9,31 @@ set -euo pipefail
 # globals work: run it (ideally under TSAN) before lifting the server pool cap.
 #
 # Usage:
-#   thread-soak-target.sh <target> <pdf_path> [-- <soak args...>]
+#   thread-soak-target.sh <target> <pdf>... [-- <soak args...>]
 #
 # Env:
 #   EMBEDPDF_TLS_GLOBALS  default "true". Set "false" to build the baseline
 #                         (process-global) variant for an A/B comparison.
-#   EMBEDPDF_TSAN         default "0". Set "1" to build with is_tsan=true.
+#   EMBEDPDF_TSAN         default "0". Set "1" to build with is_tsan=true; the
+#                         run then stops at the first report (TSAN_OPTIONS).
 
 SOURCE_DIR="${PDF_RUNTIME_SOURCE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 TARGET="${1:-}"
-PDF_PATH="${2:-}"
 EMBEDPDF_TLS_GLOBALS="${EMBEDPDF_TLS_GLOBALS:-true}"
 EMBEDPDF_TSAN="${EMBEDPDF_TSAN:-0}"
 
-if [[ -z "$TARGET" || -z "$PDF_PATH" ]]; then
-  echo "usage: $0 <target> <pdf_path> [-- <soak args...>]" >&2
-  exit 1
-fi
-shift 2 || true
+shift || true
+PDFS=()
+while [[ $# -gt 0 && "$1" != "--" ]]; do
+  PDFS+=("$1")
+  shift
+done
 if [[ "${1:-}" == "--" ]]; then
   shift
+fi
+if [[ -z "$TARGET" || ${#PDFS[@]} -eq 0 ]]; then
+  echo "usage: $0 <target> <pdf>... [-- <soak args...>]" >&2
+  exit 1
 fi
 
 case "$TARGET" in
@@ -68,7 +73,16 @@ PDF_RUNTIME_TARGET_OS_LIST="${PDF_RUNTIME_TARGET_OS_LIST:-$GN_TARGET_OS}" \
 if [[ "$TARGET" == linux-* ]]; then
   (
     cd "$SOURCE_DIR"
-    build/install-build-deps.sh --no-prompt
+    # EmbedPDF: as in test-target.sh, skip the apt install when the image
+    # already holds this install-build-deps.py's packages.
+    if [[ -n "${EMBEDPDF_BUILD_DEPS_INSTALLED_FROM:-}" ]] &&
+      cmp -s "$EMBEDPDF_BUILD_DEPS_INSTALLED_FROM" build/install-build-deps.py; then
+      echo "Linux build dependencies preinstalled from this install-build-deps.py"
+    elif build/install-build-deps.sh --quick-check >/dev/null 2>&1; then
+      echo "Linux build dependencies already installed"
+    else
+      build/install-build-deps.sh --no-prompt
+    fi
     build/linux/sysroot_scripts/install-sysroot.py "--arch=$GN_TARGET_CPU"
   )
 fi
@@ -100,5 +114,8 @@ EOF
   ninja -C "$OUT" testing/tools:epdf_thread_soak
 )
 
+if [[ "$EMBEDPDF_TSAN" == "1" ]]; then
+  export TSAN_OPTIONS="${TSAN_OPTIONS:-halt_on_error=1 second_deadlock_stack=1}"
+fi
 echo "=== running epdf_thread_soak (tls=$EMBEDPDF_TLS_GLOBALS tsan=$EMBEDPDF_TSAN) ==="
-"$OUT/epdf_thread_soak" "$PDF_PATH" "$@"
+"$OUT/epdf_thread_soak" "${PDFS[@]}" "$@"

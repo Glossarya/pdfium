@@ -7,8 +7,9 @@
 #ifndef XFA_FGAS_LAYOUT_FGAS_LINEBREAK_H_
 #define XFA_FGAS_LAYOUT_FGAS_LINEBREAK_H_
 
-// EmbedPDF: the pair table moved to core/fxcrt/fx_linebreak.h so core code can
-// use it without XFA; this header keeps the XFA includers compiling.
+// EmbedPDF(rich-text): the pair table moved to core/fxcrt/fx_linebreak.h so
+// core code can use it without XFA; this header keeps the XFA includers
+// compiling.
 #include "core/fxcrt/fx_linebreak.h"
 
 #endif  // XFA_FGAS_LAYOUT_FGAS_LINEBREAK_H_

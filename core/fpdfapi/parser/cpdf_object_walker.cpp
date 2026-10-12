@@ -184,6 +184,8 @@ RetainPtr<CPDF_Object> CPDF_NonConstObjectWalker::GetNext() {
       const_cast<CPDF_Object*>(CPDF_ObjectWalker::GetNext().Get()));
 }
 
+// EmbedPDF(save-traversal): a save collects references without resolving
+// them.
 std::vector<uint32_t> CPDF_CollectReferences(
     RetainPtr<const CPDF_Object> root) {
   std::vector<uint32_t> references;

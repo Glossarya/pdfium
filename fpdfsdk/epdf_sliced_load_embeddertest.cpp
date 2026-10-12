@@ -43,6 +43,8 @@
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "fpdfsdk/epdf_edit_test_util.h"
 #include "public/cpp/fpdf_scopers.h"
+#include "public/epdf_layer.h"
+#include "public/epdf_view.h"
 #include "public/fpdf_edit.h"
 #include "public/fpdfview.h"
 #include "testing/embedder_test.h"

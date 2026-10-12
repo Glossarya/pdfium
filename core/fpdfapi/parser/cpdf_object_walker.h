@@ -16,6 +16,7 @@
 
 class CPDF_Object;
 
+// EmbedPDF(save-traversal): how a save finds the objects it writes.
 // Collect outgoing indirect references without resolving them. Inline
 // containers are visited once, including when a live object contains a cycle.
 std::vector<uint32_t> CPDF_CollectReferences(RetainPtr<const CPDF_Object> root);

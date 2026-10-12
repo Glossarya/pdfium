@@ -20,6 +20,7 @@ CPDF_LinkList::~CPDF_LinkList() = default;
 CPDF_Link CPDF_LinkList::GetLinkAtPoint(CPDF_Page* pPage,
                                         const CFX_PointF& point,
                                         int* z_order) {
+  // EmbedPDF(reads-dont-write): links are kept as const dictionaries.
   const std::vector<RetainPtr<const CPDF_Dictionary>>* pPageLinkList =
       GetPageLinks(pPage);
   if (!pPageLinkList) {
@@ -28,11 +29,14 @@ CPDF_Link CPDF_LinkList::GetLinkAtPoint(CPDF_Page* pPage,
 
   for (size_t i = pPageLinkList->size(); i > 0; --i) {
     size_t annot_index = i - 1;
+    // EmbedPDF(reads-dont-write): links are kept as const dictionaries.
     RetainPtr<const CPDF_Dictionary> pAnnot = (*pPageLinkList)[annot_index];
     if (!pAnnot) {
       continue;
     }
 
+    // EmbedPDF(reads-dont-write): CPDF_Link holds a mutable pointer; it gets
+    // the dictionary read without the mutable getter.
     CPDF_Link link(
         pdfium::WrapRetain(const_cast<CPDF_Dictionary*>(pAnnot.Get())));
     if (!link.GetRect().Contains(point)) {
@@ -47,8 +51,10 @@ CPDF_Link CPDF_LinkList::GetLinkAtPoint(CPDF_Page* pPage,
   return CPDF_Link();
 }
 
+// EmbedPDF(reads-dont-write): links are kept as const dictionaries.
 const std::vector<RetainPtr<const CPDF_Dictionary>>*
 CPDF_LinkList::GetPageLinks(CPDF_Page* pPage) {
+  // EmbedPDF(overlay-epoch): cached links are read again when the epoch moves.
   const uint64_t current_epoch = pPage->GetDocument()->GetOverlayEpoch();
   if (overlay_epoch_ != current_epoch) {
     page_map_.clear();
@@ -67,12 +73,14 @@ CPDF_LinkList::GetPageLinks(CPDF_Page* pPage) {
 
   // std::map::operator[] forces the creation of a map entry.
   auto* page_link_list = &page_map_[objnum];
+  // EmbedPDF(reads-dont-write): read without the mutable getter.
   RetainPtr<const CPDF_Array> pAnnotList = pPage->GetAnnotsArray();
   if (!pAnnotList) {
     return page_link_list;
   }
 
   for (size_t i = 0; i < pAnnotList->size(); ++i) {
+    // EmbedPDF(reads-dont-write): read without the mutable getter.
     RetainPtr<const CPDF_Dictionary> pAnnot = pAnnotList->GetDictAt(i);
     bool add_link = (pAnnot && pAnnot->GetByteStringFor("Subtype") == "Link");
     // Add non-links as nullptrs to preserve z-order.

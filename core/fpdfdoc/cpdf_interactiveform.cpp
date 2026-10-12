@@ -249,6 +249,7 @@ bool FindFontFromDoc(const CPDF_Dictionary* form_dict,
   CPDF_DictionaryLocker locker(font_dict);
   for (const auto& it : locker) {
     const ByteString& key = it.first;
+    // EmbedPDF(reads-dont-write): read without the mutable getter.
     RetainPtr<const CPDF_Dictionary> element =
         ToDictionary(it.second->GetDirect());
     if (!ValidateDictType(element.Get(), "Font")) {
@@ -256,6 +257,8 @@ bool FindFontFromDoc(const CPDF_Dictionary* form_dict,
     }
 
     auto* pData = CPDF_DocPageData::FromDocument(document);
+    // EmbedPDF(reads-dont-write): the font loader takes a mutable pointer; it
+    // gets the dictionary read without the mutable getter.
     font = pData->GetFont(
         pdfium::WrapRetain(const_cast<CPDF_Dictionary*>(element.Get())));
     if (!font) {
@@ -350,6 +353,7 @@ RetainPtr<CPDF_Font> GetNativeFont(const CPDF_Dictionary* form_dict,
   CPDF_DictionaryLocker locker(font_dict);
   for (const auto& it : locker) {
     const ByteString& key = it.first;
+    // EmbedPDF(reads-dont-write): read without the mutable getter.
     RetainPtr<const CPDF_Dictionary> element =
         ToDictionary(it.second->GetDirect());
     if (!ValidateDictType(element.Get(), "Font")) {
@@ -357,6 +361,8 @@ RetainPtr<CPDF_Font> GetNativeFont(const CPDF_Dictionary* form_dict,
     }
 
     auto* pData = CPDF_DocPageData::FromDocument(document);
+    // EmbedPDF(reads-dont-write): the font loader takes a mutable pointer; it
+    // gets the dictionary read without the mutable getter.
     RetainPtr<CPDF_Font> pFind = pData->GetFont(
         pdfium::WrapRetain(const_cast<CPDF_Dictionary*>(element.Get())));
     if (!pFind) {
@@ -590,11 +596,13 @@ CFieldTree::Node* CFieldTree::FindNode(const WideString& full_name) {
 
 CPDF_InteractiveForm::CPDF_InteractiveForm(CPDF_Document* document)
     : document_(document), field_tree_(std::make_unique<CFieldTree>()) {
+  // EmbedPDF(reads-dont-write): read without the mutable getter.
   const CPDF_Dictionary* pRoot = document_->GetRoot();
   if (!pRoot) {
     return;
   }
 
+  // EmbedPDF(reads-dont-write): read without the mutable getter.
   RetainPtr<const CPDF_Dictionary> form_dict = pRoot->GetDictFor("AcroForm");
   if (!form_dict) {
     return;
@@ -608,6 +616,7 @@ CPDF_InteractiveForm::CPDF_InteractiveForm(CPDF_Document* document)
   }
 
   for (size_t i = 0; i < fields->size(); ++i) {
+    // EmbedPDF(reads-dont-write): read without the mutable getter.
     LoadField(fields->GetDictAt(i), 0);
   }
 }
@@ -793,22 +802,27 @@ RetainPtr<CPDF_Font> CPDF_InteractiveForm::GetFormFont(
     return nullptr;
   }
 
+  // EmbedPDF(reads-dont-write): read without the mutable getter.
   RetainPtr<const CPDF_Dictionary> pDR = form_dict_->GetDictFor("DR");
   if (!pDR) {
     return nullptr;
   }
 
+  // EmbedPDF(reads-dont-write): read without the mutable getter.
   RetainPtr<const CPDF_Dictionary> font_dict = pDR->GetDictFor("Font");
   if (!ValidateFontResourceDict(font_dict.Get())) {
     return nullptr;
   }
 
+  // EmbedPDF(reads-dont-write): read without the mutable getter.
   RetainPtr<const CPDF_Dictionary> element =
       font_dict->GetDictFor(alias.AsStringView());
   if (!ValidateDictType(element.Get(), "Font")) {
     return nullptr;
   }
 
+  // EmbedPDF(reads-dont-write): the font loader takes a mutable pointer; it
+  // gets the dictionary read without the mutable getter.
   return GetFontForElement(
       pdfium::WrapRetain(const_cast<CPDF_Dictionary*>(element.Get())));
 }
@@ -856,10 +870,10 @@ CPDF_InteractiveForm::GetControlsForField(const CPDF_FormField* field) {
   return control_lists_[pdfium::WrapUnowned(field)];
 }
 
-// EmbedPDF: layer documents resolve references held by frozen base objects
-// through the base holder, which returns stale instances once an object has
-// been promoted into the layer. Rebinding by object number restores the
-// document's current view. Identity on plain documents. See header.
+// EmbedPDF(forms-model): layer documents resolve references held by frozen
+// base objects through the base holder, which returns stale instances once an
+// object has been promoted into the layer. Rebinding by object number restores
+// the document's current view. Identity on plain documents. See header.
 RetainPtr<const CPDF_Dictionary> CPDF_InteractiveForm::ResolveCurrentDict(
     RetainPtr<const CPDF_Dictionary> dict) const {
   if (!dict || dict->GetObjNum() == 0) {
@@ -870,6 +884,7 @@ RetainPtr<const CPDF_Dictionary> CPDF_InteractiveForm::ResolveCurrentDict(
   return current ? current : dict;
 }
 
+// EmbedPDF(reads-dont-write): loading the form walks const dictionaries.
 void CPDF_InteractiveForm::LoadField(
     RetainPtr<const CPDF_Dictionary> field_dict,
     int nLevel) {
@@ -879,11 +894,13 @@ void CPDF_InteractiveForm::LoadField(
   if (!field_dict) {
     return;
   }
-  // EmbedPDF: bind to the document's current view so layer promotions win
-  // over frozen base instances reached through base-held references.
+  // EmbedPDF(forms-model): bind to the document's current view so layer
+  // promotions win over frozen base instances reached through base-held
+  // references.
   field_dict = ResolveCurrentDict(std::move(field_dict));
 
   uint32_t dwParentObjNum = field_dict->GetObjNum();
+  // EmbedPDF(reads-dont-write): read without the mutable getter.
   RetainPtr<const CPDF_Array> kids =
       field_dict->GetArrayFor(pdfium::form_fields::kKids);
   if (!kids) {
@@ -902,6 +919,9 @@ void CPDF_InteractiveForm::LoadField(
     return;
   }
   for (size_t i = 0; i < kids->size(); i++) {
+    // EmbedPDF(reads-dont-write): read without the mutable getter. Kids of a
+    // direct field (object number 0) load too; only the field itself is
+    // skipped.
     RetainPtr<const CPDF_Dictionary> pChildDict = kids->GetDictAt(i);
     if (pChildDict && pChildDict.Get() != field_dict.Get() &&
         (dwParentObjNum == 0 || pChildDict->GetObjNum() != dwParentObjNum)) {
@@ -911,12 +931,14 @@ void CPDF_InteractiveForm::LoadField(
 }
 
 void CPDF_InteractiveForm::FixPageFields(CPDF_Page* page) {
+  // EmbedPDF(reads-dont-write): read without the mutable getter.
   RetainPtr<const CPDF_Array> annots = page->GetAnnotsArray();
   if (!annots) {
     return;
   }
 
   for (size_t i = 0; i < annots->size(); i++) {
+    // EmbedPDF(reads-dont-write): read without the mutable getter.
     RetainPtr<const CPDF_Dictionary> annot = annots->GetDictAt(i);
     if (annot && annot->GetNameFor("Subtype") == "Widget") {
       LoadField(std::move(annot), 0);
@@ -924,10 +946,10 @@ void CPDF_InteractiveForm::FixPageFields(CPDF_Page* page) {
   }
 }
 
-// EmbedPDF: recover form fields that are reachable from a page's /Annots
-// array but missing from the /AcroForm /Fields tree (a common producer
-// bug); used by the EPDFForm_* model build instead of the page-load hook
-// FixPageFields(), which requires an expensive CPDF_Page. See header.
+// EmbedPDF(forms-model): recover form fields that are reachable from a page's
+// /Annots array but missing from the /AcroForm /Fields tree (a common
+// producer bug); used by the EPDFForm_* model build instead of the page-load
+// hook FixPageFields(), which requires an expensive CPDF_Page. See header.
 void CPDF_InteractiveForm::ReconcileWidget(
     RetainPtr<const CPDF_Dictionary> widget_dict) {
   widget_dict = ResolveCurrentDict(std::move(widget_dict));
@@ -969,6 +991,9 @@ void CPDF_InteractiveForm::ReconcileWidget(
   }
 }
 
+// EmbedPDF(reads-dont-write): adding a field writes nothing. Upstream copied
+// /FT and /Ff from a widget to its parent and wrote a referenced /T back as a
+// string.
 void CPDF_InteractiveForm::AddTerminalField(
     RetainPtr<const CPDF_Dictionary> field_dict) {
   RetainPtr<const CPDF_Dictionary> field_storage_dict = field_dict;
@@ -979,7 +1004,7 @@ void CPDF_InteractiveForm::AddTerminalField(
     field_storage_dict.Reset();
     if (kids) {
       for (size_t i = 0; i < kids->size(); ++i) {
-        // EmbedPDF: rebind to the layer's current view (see
+        // EmbedPDF(forms-model): rebind to the layer's current view (see
         // ResolveCurrentDict).
         RetainPtr<const CPDF_Dictionary> kid =
             ResolveCurrentDict(kids->GetDictAt(i));
@@ -1012,6 +1037,7 @@ void CPDF_InteractiveForm::AddTerminalField(
     }
   }
 
+  // EmbedPDF(reads-dont-write): read without the mutable getter.
   RetainPtr<const CPDF_Array> kids =
       field_dict->GetArrayFor(pdfium::form_fields::kKids);
   if (!kids) {
@@ -1022,7 +1048,8 @@ void CPDF_InteractiveForm::AddTerminalField(
     return;
   }
   for (size_t i = 0; i < kids->size(); i++) {
-    // EmbedPDF: rebind to the layer's current view (see ResolveCurrentDict).
+    // EmbedPDF(forms-model, reads-dont-write): rebind to the layer's current
+    // view (see ResolveCurrentDict). Kids are read without the mutable getter.
     RetainPtr<const CPDF_Dictionary> kid =
         ResolveCurrentDict(kids->GetDictAt(i));
     if (kid && kid->GetNameFor("Subtype") == "Widget") {
@@ -1085,6 +1112,7 @@ bool CPDF_InteractiveForm::CheckRequiredFields(
   return true;
 }
 
+// EmbedPDF(forms-model): exports can keep required fields that are empty.
 std::unique_ptr<CFDF_Document> CPDF_InteractiveForm::ExportToFDF(
     const WideString& pdf_path,
     bool skip_empty_required) const {
@@ -1097,6 +1125,7 @@ std::unique_ptr<CFDF_Document> CPDF_InteractiveForm::ExportToFDF(
   return ExportToFDF(pdf_path, fields, true, skip_empty_required);
 }
 
+// EmbedPDF(forms-model): exports can keep required fields that are empty.
 std::unique_ptr<CFDF_Document> CPDF_InteractiveForm::ExportToFDF(
     const WideString& pdf_path,
     const std::vector<CPDF_FormField*>& fields,
@@ -1136,8 +1165,10 @@ std::unique_ptr<CFDF_Document> CPDF_InteractiveForm::ExportToFDF(
       continue;
     }
 
-    // EmbedPDF: |skip_empty_required| makes the historic omit-empty-required
-    // submission behavior optional so interchange exports stay faithful.
+    // EmbedPDF(forms-model, bug-fix): |skip_empty_required| makes the historic
+    // omit-empty-required submission behavior optional so interchange exports
+    // stay faithful. Upstream's emptiness check read the field's own /V as a
+    // string, so an inherited or array value counted as empty.
     if (skip_empty_required && (dwFlags & pdfium::form_flags::kRequired) != 0) {
       RetainPtr<const CPDF_Object> value =
           field->GetFieldAttr(pdfium::form_fields::kV);

@@ -7,7 +7,7 @@
 #include <string.h>
 
 #include "png.h"
-#include "public/fpdf_png.h"
+#include "public/epdf_png.h"
 
 namespace {
 

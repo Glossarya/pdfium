@@ -27,7 +27,7 @@
 #include "core/fpdfapi/parser/fpdf_parser_utility.h"
 #include "core/fpdfapi/render/cpdf_rendercontext.h"
 #include "core/fpdfapi/render/cpdf_renderoptions.h"
-#include "core/fpdfdoc/cpdf_generateap.h"
+#include "core/fpdfdoc/cpdf_appearancegenerator.h"
 #include "core/fxcrt/check.h"
 #include "core/fxge/cfx_fillrenderoptions.h"
 #include "core/fxge/cfx_graphstatedata.h"
@@ -78,6 +78,8 @@ CPDF_Form* AnnotGetMatrix(CPDF_Page* pPage,
   return pForm;
 }
 
+// EmbedPDF(reads-dont-write, annot-appearance): reads take a const
+// dictionary, and can take a chosen state instead of the one /AS selects.
 // `state`, when given, names the state of an appearance subdictionary to
 // take instead of the one /AS selects; a mode whose entry is a single stream
 // has no states, so it gives nothing then.
@@ -101,11 +103,14 @@ RetainPtr<CPDF_Stream> GetAnnotAPInternal(const CPDF_Dictionary* pAnnotDict,
     ap_entry = "N";
   }
 
+  // EmbedPDF(reads-dont-write): read without the mutable getter.
   RetainPtr<const CPDF_Object> psub = pAP->GetDirectObjectFor(ap_entry);
   if (!psub) {
     return nullptr;
   }
 
+  // EmbedPDF(reads-dont-write, annot-appearance): read without the mutable
+  // getter. A single stream has no states to choose from.
   RetainPtr<const CPDF_Stream> pStream(psub->AsStream());
   if (pStream) {
     return state ? nullptr
@@ -117,6 +122,7 @@ RetainPtr<CPDF_Stream> GetAnnotAPInternal(const CPDF_Dictionary* pAnnotDict,
     return nullptr;
   }
 
+  // EmbedPDF(annot-appearance): the chosen state, whatever /AS says.
   if (state) {
     RetainPtr<const CPDF_Stream> chosen =
         dict->GetStreamFor(state->AsStringView());
@@ -134,12 +140,15 @@ RetainPtr<CPDF_Stream> GetAnnotAPInternal(const CPDF_Dictionary* pAnnotDict,
     as = (!value.IsEmpty() && dict->KeyExist(value.AsStringView())) ? value
                                                                     : "Off";
   }
+  // EmbedPDF(reads-dont-write): read without the mutable getter.
   RetainPtr<const CPDF_Stream> stream = dict->GetStreamFor(as.AsStringView());
   return pdfium::WrapRetain(const_cast<CPDF_Stream*>(stream.Get()));
 }
 
 }  // namespace
 
+// EmbedPDF(reads-dont-write): a popup PDFium makes gets its appearance only
+// when drawn, so the constructor takes when to generate a missing one.
 CPDF_Annot::CPDF_Annot(RetainPtr<CPDF_Dictionary> dict, CPDF_Document* document)
     : CPDF_Annot(std::move(dict), document, MissingAppearance::kGenerateNow) {}
 
@@ -151,9 +160,13 @@ CPDF_Annot::CPDF_Annot(RetainPtr<CPDF_Dictionary> dict,
       subtype_(StringToAnnotSubtype(
           annot_dict_->GetByteStringFor(pdfium::annotation::kSubtype))),
       is_text_markup_annotation_(IsTextMarkupAnnotation(subtype_)),
+      // EmbedPDF(reads-dont-write): a kind drawn from memory draws a
+      // generated appearance, though none is saved.
       has_generated_ap_(
           annot_dict_->GetBooleanFor(kPDFiumKey_HasGeneratedAP, false) ||
           (CanGenerateEphemeralAP() && ShouldGenerateAP())) {
+  // EmbedPDF(reads-dont-write): construction writes no appearance for a kind
+  // drawn from memory, or for a popup PDFium makes.
   // Drawing generates a missing appearance too: see DrawAppearance() and
   // DrawInContext().
   if (missing_appearance == MissingAppearance::kGenerateNow &&
@@ -170,8 +183,9 @@ void CPDF_Annot::GenerateAPIfNeeded() {
   if (!ShouldGenerateAP()) {
     return;
   }
-  if (!CPDF_GenerateAP::GenerateAnnotAP(document_, annot_dict_.Get(),
-                                        subtype_)) {
+  // EmbedPDF(own-appearance-generator): our generator, not upstream's.
+  if (!CPDF_AppearanceGenerator::GenerateAnnotAP(document_, annot_dict_.Get(),
+                                                 subtype_)) {
     return;
   }
 
@@ -191,8 +205,10 @@ bool CPDF_Annot::ShouldGenerateAP() const {
   return !IsHidden();
 }
 
+// EmbedPDF(reads-dont-write): a missing appearance is built in memory, not
+// written to the file.
 bool CPDF_Annot::CanGenerateEphemeralAP() const {
-  return CPDF_GenerateAP::CanGenerateEphemeralAnnotAP(subtype_);
+  return CPDF_AppearanceGenerator::CanGenerateEphemeralAnnotAP(subtype_);
 }
 
 RetainPtr<CPDF_Stream> CPDF_Annot::GetOrBuildEphemeralAP(AppearanceMode mode) {
@@ -209,15 +225,17 @@ RetainPtr<CPDF_Stream> CPDF_Annot::GetOrBuildEphemeralAP(AppearanceMode mode) {
     return nullptr;
   }
 
-  std::optional<CPDF_GenerateAP::GeneratedAP> generated =
-      CPDF_GenerateAP::GenerateEphemeralAnnotAP(document_, annot_dict_.Get(),
-                                                subtype_);
+  std::optional<CPDF_AppearanceGenerator::GeneratedAP> generated =
+      CPDF_AppearanceGenerator::GenerateEphemeralAnnotAP(
+          document_, annot_dict_.Get(), subtype_);
   if (!generated.has_value()) {
     return nullptr;
   }
 
   ephemeral_font_lifetime_ = std::move(generated->font_lifetime);
   ephemeral_normal_ap_ = std::move(generated->normal_stream);
+  // EmbedPDF(annot-appearance, measurement): these kinds draw in the frame
+  // they measure.
   // What the drawing adds can reach past /Rect: dimension labels and
   // leaders, a box's cloudy border or callout. Draw in the generated
   // envelope without persisting it, or the AP is squeezed into the old box.
@@ -248,6 +266,8 @@ bool CPDF_Annot::ShouldDrawAnnotation() const {
 
 void CPDF_Annot::ClearCachedAP() {
   ap_map_.clear();
+  // EmbedPDF(reads-dont-write): drop the appearance built in memory too; the
+  // next draw builds it again from the dictionary.
   ephemeral_normal_ap_.Reset();
   ephemeral_font_lifetime_.reset();
   ephemeral_rect_.reset();
@@ -257,11 +277,14 @@ void CPDF_Annot::ClearCachedAP() {
       (CanGenerateEphemeralAP() && ShouldGenerateAP());
 }
 
+// EmbedPDF(annot-appearance): draw a chosen appearance state, whatever /AS
+// says.
 void CPDF_Annot::SetAppearanceState(const ByteString& state) {
   appearance_state_ = state;
   ap_map_.clear();
 }
 
+// EmbedPDF(annot-appearance): draws a chosen appearance state.
 RetainPtr<CPDF_Stream> CPDF_Annot::GetStoredAP(AppearanceMode mode) const {
   return appearance_state_.has_value()
              ? GetAnnotAPInternal(annot_dict_.Get(), mode,
@@ -270,6 +293,8 @@ RetainPtr<CPDF_Stream> CPDF_Annot::GetStoredAP(AppearanceMode mode) const {
              : GetAnnotAP(annot_dict_.Get(), mode);
 }
 
+// EmbedPDF(annot-appearance, reads-dont-write): the box an appearance draws
+// in, measured without writing one.
 std::optional<CFX_FloatRect> CPDF_Annot::GetDrawingRect(AppearanceMode mode) {
   // A chosen state is a stored one: nothing is drawn in memory for it.
   if (!GetStoredAP(mode) &&
@@ -284,6 +309,8 @@ CPDF_Annot::Subtype CPDF_Annot::GetSubtype() const {
 }
 
 CFX_FloatRect CPDF_Annot::RectForDrawing() const {
+  // EmbedPDF(annot-appearance): an appearance built in memory draws in the
+  // box it was generated for, which can reach past /Rect.
   if (ephemeral_rect_.has_value()) {
     return ephemeral_rect_.value();
   }
@@ -310,18 +337,22 @@ bool CPDF_Annot::IsHidden() const {
   return !!(GetFlags() & pdfium::annotation_flags::kHidden);
 }
 
+// EmbedPDF(reads-dont-write): reads take a const dictionary.
 RetainPtr<CPDF_Stream> GetAnnotAP(const CPDF_Dictionary* pAnnotDict,
                                   CPDF_Annot::AppearanceMode eMode) {
   DCHECK(pAnnotDict);
   return GetAnnotAPInternal(pAnnotDict, eMode, true);
 }
 
+// EmbedPDF(reads-dont-write): reads take a const dictionary.
 RetainPtr<CPDF_Stream> GetAnnotAPNoFallback(const CPDF_Dictionary* pAnnotDict,
                                             CPDF_Annot::AppearanceMode eMode) {
   DCHECK(pAnnotDict);
   return GetAnnotAPInternal(pAnnotDict, eMode, false);
 }
 
+// EmbedPDF(layer-door): GetAnnotAP() for writing: every step goes through the
+// mutable getters, so a layer copies the stream up before it is written.
 RetainPtr<CPDF_Stream> GetMutableAnnotAP(CPDF_Dictionary* pAnnotDict,
                                          CPDF_Annot::AppearanceMode eMode) {
   DCHECK(pAnnotDict);
@@ -371,6 +402,8 @@ RetainPtr<CPDF_Stream> GetMutableAnnotAP(CPDF_Dictionary* pAnnotDict,
 }
 
 CPDF_Form* CPDF_Annot::GetAPForm(CPDF_Page* pPage, AppearanceMode mode) {
+  // EmbedPDF(annot-appearance, reads-dont-write): the chosen state's stored
+  // appearance; with none and no chosen state, one built in memory.
   RetainPtr<CPDF_Stream> pStream = GetStoredAP(mode);
   if (!pStream && !appearance_state_.has_value()) {
     pStream = GetOrBuildEphemeralAP(mode);
@@ -384,6 +417,7 @@ CPDF_Form* CPDF_Annot::GetAPForm(CPDF_Page* pPage, AppearanceMode mode) {
     return it->second.get();
   }
 
+  // EmbedPDF(reads-dont-write): read without the mutable getter.
   auto pNewForm = std::make_unique<CPDF_Form>(
       document_,
       pdfium::WrapRetain(
@@ -415,6 +449,8 @@ CFX_FloatRect CPDF_Annot::RectFromQuadPointsArray(const CPDF_Array* pArray,
   DCHECK(pArray);
   DCHECK(nIndex < pArray->size() / 8);
 
+  // EmbedPDF(text-geometry): an oriented quad's corners can come in any
+  // order, so the bounds take all four points and skip non-finite ones.
   // QuadPoints text-markup order is top-left, top-right, bottom-left,
   // bottom-right. Bounds remain producer-order agnostic and inspect all four.
   const size_t offset = nIndex * 8;
@@ -618,6 +654,8 @@ ByteString CPDF_Annot::AnnotSubtypeToString(CPDF_Annot::Subtype nSubtype) {
   return ByteString();
 }
 
+// EmbedPDF(annot-appearance): annotation properties by their PDF names, for
+// our appearance generator and the EPDFAnnot_* functions.
 CPDF_Annot::Icon CPDF_Annot::StringToIcon(const ByteString& name) {
   if (name == "Comment") {
     return Icon::kText_Comment;
@@ -1053,12 +1091,14 @@ bool CPDF_Annot::DrawAppearance(CPDF_Page* pPage,
     return false;
   }
 
+  // EmbedPDF(reads-dont-write): a kind drawn from memory gets no appearance
+  // written here; GetAPForm() builds one in memory.
   if (!CanGenerateEphemeralAP()) {
     // It might happen that by the time this annotation instance was created,
-    // it was flagged as "hidden" (e.g. /F 2), and hence CPDF_GenerateAP decided
-    // to not "generate" its AP.
-    // If for a reason the object is no longer hidden, but still does not have
-    // its "AP" generated, generate it now.
+    // it was flagged as "hidden" (e.g. /F 2), and hence
+    // CPDF_AppearanceGenerator decided to not "generate" its AP. If for a
+    // reason the object is no longer hidden, but still does not have its "AP"
+    // generated, generate it now.
     GenerateAPIfNeeded();
   }
 
@@ -1068,6 +1108,7 @@ bool CPDF_Annot::DrawAppearance(CPDF_Page* pPage,
     return false;
   }
 
+  // EmbedPDF(reads-dont-write): read without the mutable getter.
   CPDF_RenderContext context(pPage->GetDocument(),
                              pdfium::WrapRetain(const_cast<CPDF_Dictionary*>(
                                  pPage->GetPageResources().Get())),
@@ -1085,12 +1126,14 @@ bool CPDF_Annot::DrawInContext(CPDF_Page* pPage,
     return false;
   }
 
+  // EmbedPDF(reads-dont-write): a kind drawn from memory gets no appearance
+  // written here; GetAPForm() builds one in memory.
   if (!CanGenerateEphemeralAP()) {
     // It might happen that by the time this annotation instance was created,
-    // it was flagged as "hidden" (e.g. /F 2), and hence CPDF_GenerateAP decided
-    // to not "generate" its AP.
-    // If for a reason the object is no longer hidden, but still does not have
-    // its "AP" generated, generate it now.
+    // it was flagged as "hidden" (e.g. /F 2), and hence
+    // CPDF_AppearanceGenerator decided to not "generate" its AP. If for a
+    // reason the object is no longer hidden, but still does not have its "AP"
+    // generated, generate it now.
     GenerateAPIfNeeded();
   }
 

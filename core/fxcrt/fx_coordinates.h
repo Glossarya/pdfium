@@ -455,8 +455,8 @@ class CFX_Matrix {
 
   bool IsIdentity() const { return *this == CFX_Matrix(); }
   CFX_Matrix GetInverse() const;
-  // EmbedPDF: whether GetInverse() inverts it rather than giving the
-  // identity: its determinant is finite and not 0.
+  // EmbedPDF(faithful-content-rewrite): whether GetInverse() inverts it
+  // rather than giving the identity: its determinant is finite and not 0.
   bool IsInvertible() const;
 
   bool Is90Rotated() const;

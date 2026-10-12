@@ -27,8 +27,10 @@ class CPDF_Dictionary;
 class CPDF_Document;
 class CPDF_Object;
 class CPDF_Parser;
+// EmbedPDF(save-traversal): the one trailer a save writes.
 class CPDF_SaveTrailer;
 
+// EmbedPDF(save-generations): the creator is the context its writers carry.
 class CPDF_Creator final : public CPDF_WriteContext {
  public:
   enum CreateFlags : uint32_t {
@@ -39,14 +41,17 @@ class CPDF_Creator final : public CPDF_WriteContext {
     kRemoveSecurity = (1 << 2),
     // TODO(crbug.com/42270430): Implement font subsetting.
     kSubsetNewFonts = (1 << 3),
+    // EmbedPDF(layer-save): only the new revision, for a layer's delta.
     kIncrementalAppendOnly = (1 << 4),
-    // EmbedPDF: an incremental save of a layer document writes nothing at
-    // all when no reachable object differs from the document the layer was
-    // opened with; IsUnchangedSinceLoad() then reports it and the caller
-    // returns the loaded bytes verbatim.
+    // EmbedPDF(layer-save): an incremental save of a layer document writes
+    // nothing at all when no reachable object differs from the document the
+    // layer was opened with; IsUnchangedSinceLoad() then reports it and the
+    // caller returns the loaded bytes verbatim.
     kSkipIfUnchangedSinceLoad = (1 << 5),
   };
 
+  // EmbedPDF(layer-save): why the last Create() failed; an append-only
+  // delta's offsets can outgrow what an entry holds.
   enum class FailureReason {
     kNone,
     kAppendOnlyOffsetTooLarge,
@@ -56,11 +61,14 @@ class CPDF_Creator final : public CPDF_WriteContext {
 
   CPDF_Creator(CPDF_Document* doc,
                RetainPtr<IFX_RetainableWriteStream> archive);
+  // EmbedPDF(save-generations): override: the creator is a CPDF_WriteContext.
   ~CPDF_Creator() override;
 
   bool Create(Mask<CreateFlags> flags, int32_t file_version);
+  // EmbedPDF(layer-save): see FailureReason.
   FailureReason GetFailureReason() const { return failure_reason_; }
 
+  // EmbedPDF(signatures): where signing finds its placeholders.
   // Experimental EmbedPDF Extension: where the last Create() wrote each
   // object it emitted, and where its cross-reference section starts. Valid
   // after a successful Create(); used to locate a signature dictionary's
@@ -70,18 +78,20 @@ class CPDF_Creator final : public CPDF_WriteContext {
   }
   FX_FILESIZE xref_start() const { return xref_start_; }
 
+  // EmbedPDF(layer-save): FormatXrefOffset10() for tests.
   static ByteString FormatXrefOffset10ForTesting(FX_FILESIZE offset);
 
-  // EmbedPDF: what the last incremental save of a layer found. A save
-  // writes what changed from the BASE (overlay objects equal to their base
-  // twin are elided); whether anything reachable changed since the layer
-  // was LOADED is a separate answer, used by callers to keep what they
-  // have. Valid after Create() on a layer document.
+  // EmbedPDF(layer-save): what the last incremental save of a layer found. A
+  // save writes what changed from the BASE (overlay objects equal to their
+  // base twin are elided); whether anything reachable changed since the layer
+  // was LOADED is a separate answer, used by callers to keep what they have.
+  // Valid after Create() on a layer document.
   bool changed_since_load() const { return changed_since_load_; }
   // True when Create() wrote nothing because kSkipIfUnchangedSinceLoad was
   // set and nothing changed since load.
   bool IsUnchangedSinceLoad() const { return decided_unchanged_; }
 
+  // EmbedPDF(save-security): encryption set by EPDF_SetEncryption().
   // Experimental EmbedPDF Extension: Set encryption for documents that weren't
   // originally encrypted. This sets both encrypt_dict_ (for trailer writing)
   // and security_handler_ (for GetCryptoHandler() used in stream/string
@@ -96,6 +106,8 @@ class CPDF_Creator final : public CPDF_WriteContext {
     kWriteHeader10 = 10,
     kWriteIncremental15 = 15,
     kInitWriteObjs20 = 20,
+    // EmbedPDF(save-traversal): no kWriteOldObjs21: a full save is written at
+    // kInitWriteObjs20 (WriteFullDocument()).
     kInitWriteNewObjs25 = 25,
     kWriteNewObjs26 = 26,
     kWriteEncryptDict27 = 27,
@@ -109,8 +121,11 @@ class CPDF_Creator final : public CPDF_WriteContext {
   bool Continue();
   void Clear();
 
+  // EmbedPDF(layer-save): picks what an incremental save writes; replaces
+  // InitNewObjNumOffsets().
   void PrepareIncrementalObjects();
   void InitID();
+  // EmbedPDF(save-traversal): picks the trailer, root, /Info and /Encrypt.
   bool BuildTrailer();
 
   CPDF_Creator::Stage WriteDoc_Stage1();
@@ -118,10 +133,15 @@ class CPDF_Creator final : public CPDF_WriteContext {
   CPDF_Creator::Stage WriteDoc_Stage3();
   CPDF_Creator::Stage WriteDoc_Stage4();
 
+  // EmbedPDF(save-traversal): a full save's walk from the trailer's roots;
+  // replaces WriteOldIndirectObject() and WriteOldObjs().
   bool WriteFullDocument();
   bool WriteNewObjs();
   bool WriteIndirectObj(uint32_t objnum, const CPDF_Object* pObj);
+  // EmbedPDF(layer-save): refuses an offset an entry can't hold.
   bool CheckEmittedOffset(FX_FILESIZE offset);
+  // EmbedPDF(save-generations): the creator as CPDF_WriteContext, and
+  // references written with their generations.
   uint32_t GetObjectGeneration(uint32_t object_number) const override;
   bool WriteReference(uint32_t object_number);
 
@@ -142,16 +162,20 @@ class CPDF_Creator final : public CPDF_WriteContext {
   FX_FILESIZE xref_start_ = 0;
   std::map<uint32_t, FX_FILESIZE> object_offsets_;
   std::vector<uint32_t> new_obj_num_array_;  // Sorted, ascending.
+  // EmbedPDF(layer-save): what the last save of a layer found.
   bool changed_since_load_ = false;
   bool decided_unchanged_ = false;
-  // A layer save with nothing to write appends no revision at all.
+  // EmbedPDF(layer-save): a layer save with nothing to write appends no
+  // revision at all.
   bool skip_empty_revision_ = false;
   RetainPtr<CPDF_Array> id_array_;
+  // EmbedPDF(save-traversal): the trailer BuildTrailer() picked.
   std::unique_ptr<CPDF_SaveTrailer> trailer_;
   int32_t file_version_ = 0;
   bool security_changed_ = false;
   bool is_incremental_ = false;
   bool is_original_ = false;
+  // EmbedPDF(layer-save): the append-only mode, and why a save failed.
   bool is_incremental_append_only_ = false;
   FailureReason failure_reason_ = FailureReason::kNone;
 };

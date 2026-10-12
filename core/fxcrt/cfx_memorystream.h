@@ -18,6 +18,7 @@ class CFX_MemoryStream final : public IFX_SeekableStream {
 
   // IFX_SeekableStream
   FX_FILESIZE GetSize() override;
+  // EmbedPDF(layer-door): its bytes outlive any clone, so clones share them.
   bool IsSelfContained() const override { return true; }  // owns its buffer
   FX_FILESIZE GetPosition() override;
   bool IsEOF() override;

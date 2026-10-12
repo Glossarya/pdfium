@@ -25,6 +25,7 @@ namespace {
 
 class ObjectTreeTraverser {
  public:
+  // EmbedPDF(layer-save): collect objects through a layer's view.
   ObjectTreeTraverser(const CPDF_Document* document,
                       ObjectTreeReferenceResolveMode resolve_mode)
       : document_(document), resolve_mode_(resolve_mode) {
@@ -84,6 +85,8 @@ class ObjectTreeTraverser {
           const uint32_t referenced_object_number = ref_object->GetRefObjNum();
 
           RetainPtr<const CPDF_Object> referenced_object;
+          // EmbedPDF(layer-save): resolve through the document, so a layer's
+          // overlay wins over the frozen base.
           if (resolve_mode_ ==
               ObjectTreeReferenceResolveMode::kEffectiveDocument) {
             referenced_object =
@@ -178,6 +181,7 @@ class ObjectTreeTraverser {
   }
 
   UnownedPtr<const CPDF_Document> const document_;
+  // EmbedPDF(layer-save): collect objects through a layer's view.
   const ObjectTreeReferenceResolveMode resolve_mode_;
 
   // Queue of objects to traverse.
@@ -204,6 +208,7 @@ class ObjectTreeTraverser {
 
 }  // namespace
 
+// EmbedPDF(layer-save): collect objects through a layer's view.
 std::set<uint32_t> GetObjectsWithReferences(
     const CPDF_Document* document,
     ObjectTreeReferenceResolveMode resolve_mode) {
@@ -217,6 +222,7 @@ std::set<uint32_t> GetObjectsWithReferences(
   return results;
 }
 
+// EmbedPDF(layer-save): collect objects through a layer's view.
 std::set<uint32_t> GetObjectsWithMultipleReferences(
     const CPDF_Document* document,
     ObjectTreeReferenceResolveMode resolve_mode) {

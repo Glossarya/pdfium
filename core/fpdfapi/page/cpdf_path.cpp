@@ -55,14 +55,18 @@ void CPDF_Path::AppendRect(float left, float bottom, float right, float top) {
 
 void CPDF_Path::AppendPoint(const CFX_PointF& point,
                             CFX_Path::Point::Type type) {
+  // EmbedPDF(render-speedup): append in place, not through a temporary path.
   ref_.GetPrivateCopy()->AppendPoint(point, type);
 }
 
 void CPDF_Path::AppendPointAndClose(const CFX_PointF& point,
                                     CFX_Path::Point::Type type) {
+  // EmbedPDF(render-speedup): append in place, not through a temporary path.
   ref_.GetPrivateCopy()->AppendPointAndClose(point, type);
 }
 
+// EmbedPDF(render-speedup): the content parser appends a path's points at
+// once.
 void CPDF_Path::AppendPoints(pdfium::span<const CFX_Path::Point> points) {
   ref_.GetPrivateCopy()->AppendPoints(points);
 }

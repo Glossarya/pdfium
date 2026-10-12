@@ -36,6 +36,8 @@ uint64_t CPDF_Object::KeyForCache() const {
          static_cast<uint64_t>(gen_num_);
 }
 
+// EmbedPDF(write-generation): freezing, stamping and the writable check (see
+// cpdf_write_generation.h).
 void CPDF_Object::Freeze() {
   std::set<const CPDF_Object*> visited;
   FreezeForHolder(&visited);
@@ -92,6 +94,7 @@ RetainPtr<CPDF_Object> CPDF_Object::CloneDirectObject() const {
   return CloneObjectNonCyclic(true);
 }
 
+// EmbedPDF(layer-door): the copy a layer makes when it promotes a base object.
 RetainPtr<CPDF_Object> CPDF_Object::CloneForHolder(
     CPDF_IndirectObjectHolder* holder) const {
   std::set<const CPDF_Object*> visited_objs;
@@ -104,6 +107,7 @@ RetainPtr<CPDF_Object> CPDF_Object::CloneNonCyclic(
   return Clone();
 }
 
+// EmbedPDF(layer-door): a scalar has no references, so a plain clone will do.
 RetainPtr<CPDF_Object> CPDF_Object::CloneForHolderNonCyclic(
     CPDF_IndirectObjectHolder* holder,
     std::set<const CPDF_Object*>* pVisited) const {

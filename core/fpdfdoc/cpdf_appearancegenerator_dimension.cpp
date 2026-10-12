@@ -1,6 +1,6 @@
 // Copyright 2026 CloudPDF LTD
 // SPDX-License-Identifier: Apache-2.0
-#include "core/fpdfdoc/cpdf_generateap_dimension.h"
+#include "core/fpdfdoc/cpdf_appearancegenerator_dimension.h"
 
 #include <algorithm>
 #include <cmath>

@@ -57,6 +57,7 @@ CPDF_Number* CPDF_Number::AsMutableNumber() {
 }
 
 void CPDF_Number::SetString(const ByteString& str) {
+  // EmbedPDF(write-generation): a write past the layer's door is a bug.
   DCHECK_PDF_WRITABLE(this);
   number_ = FX_Number(str.AsStringView());
 }
@@ -66,6 +67,7 @@ ByteString CPDF_Number::GetString() const {
                              : FloatToString(GetNumber());
 }
 
+// EmbedPDF(save-generations): writers carry the write context.
 bool CPDF_Number::WriteTo(IFX_ArchiveStream* archive,
                           const CPDF_Encryptor* encryptor,
                           const CPDF_WriteContext* context) const {

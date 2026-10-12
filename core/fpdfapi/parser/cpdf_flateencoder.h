@@ -19,6 +19,7 @@ class CPDF_Dictionary;
 class CPDF_Encryptor;
 class CPDF_Stream;
 class CPDF_StreamAcc;
+// EmbedPDF(save-generations): writers carry the write context.
 class CPDF_WriteContext;
 class IFX_ArchiveStream;
 
@@ -28,6 +29,7 @@ class CPDF_FlateEncoder {
   ~CPDF_FlateEncoder();
 
   void UpdateLength(size_t size);
+  // EmbedPDF(save-generations): writers carry the write context.
   bool WriteDictTo(IFX_ArchiveStream* archive,
                    const CPDF_Encryptor* encryptor,
                    const CPDF_WriteContext* context = nullptr) const;

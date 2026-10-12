@@ -1,11 +1,12 @@
 diff --git a/third_party/agg23/agg_path_storage.h b/third_party/agg23/agg_path_storage.h
-index 82148061a..6837955f4 100644
+index 82148061a..d04e941fc 100644
 --- a/third_party/agg23/agg_path_storage.h
 +++ b/third_party/agg23/agg_path_storage.h
-@@ -100,6 +100,13 @@ public:
+@@ -100,6 +100,14 @@ public:
      unsigned vertex(float* x, float* y);
      void add_vertex(float x, float y, unsigned cmd);
      void end_poly();
++    // EmbedPDF(render-speedup): one path storage draws many paths.
 +    // Empties the path and keeps its blocks, so it can be filled again
 +    // without allocating.
 +    void remove_all()
@@ -17,14 +18,15 @@ index 82148061a..6837955f4 100644
      void allocate_block(unsigned nb);
      unsigned char* storage_ptrs(float** xy_ptr);
 diff --git a/third_party/agg23/agg_rasterizer_scanline_aa.cpp b/third_party/agg23/agg_rasterizer_scanline_aa.cpp
-index ed59cf0ff..ad802d1a5 100644
+index ed59cf0ff..0e98b908a 100644
 --- a/third_party/agg23/agg_rasterizer_scanline_aa.cpp
 +++ b/third_party/agg23/agg_rasterizer_scanline_aa.cpp
-@@ -134,7 +134,10 @@ AGG_INLINE void outline_aa::add_cur_cell()
+@@ -134,7 +134,11 @@ AGG_INLINE void outline_aa::add_cur_cell()
  {
      if(m_cur_cell.area | m_cur_cell.cover) {
          if((m_num_cells & cell_block_mask) == 0) {
 -            if(m_num_blocks >= cell_block_limit) {
++            // EmbedPDF(render-speedup): one rasterizer draws many paths.
 +            // Count the blocks this outline uses, not the ones allocated: an
 +            // outline reused after reset() keeps its blocks, and must reach
 +            // the limit exactly where a new outline would.
@@ -33,13 +35,14 @@ index ed59cf0ff..ad802d1a5 100644
              }
              allocate_block();
 diff --git a/third_party/agg23/agg_rasterizer_scanline_aa.h b/third_party/agg23/agg_rasterizer_scanline_aa.h
-index dd0d00076..bcd62efab 100644
+index dd0d00076..4c5e70899 100644
 --- a/third_party/agg23/agg_rasterizer_scanline_aa.h
 +++ b/third_party/agg23/agg_rasterizer_scanline_aa.h
-@@ -113,6 +113,18 @@ public:
+@@ -113,6 +113,19 @@ public:
      {
          return m_sorted;
      }
++    // EmbedPDF(render-speedup): one rasterizer draws many paths.
 +    // Like reset(), and also restores the pen position a new outline has.
 +    // The allocated cell blocks are kept for reuse.
 +    void reset_to_initial()
@@ -55,10 +58,11 @@ index dd0d00076..bcd62efab 100644
  private:
      outline_aa(const outline_aa&);
      const outline_aa& operator = (const outline_aa&);
-@@ -221,6 +233,21 @@ public:
+@@ -221,6 +234,22 @@ public:
          m_outline.reset();
          m_status = status_initial;
      }
++    // EmbedPDF(render-speedup): one rasterizer draws many paths.
 +    // Restores every setting a newly constructed rasterizer has (reset() keeps
 +    // the filling rule and the clip box), keeping the outline's cell blocks.
 +    void reset_to_initial()

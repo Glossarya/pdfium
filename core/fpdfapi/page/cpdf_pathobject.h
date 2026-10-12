@@ -17,9 +17,10 @@
 
 class CPDF_PathObject final : public CPDF_PageObject {
  public:
-  // A path's matrix, stored once for every path that has the same one, as
-  // the paths of a content stream usually do. It never changes: a path that
-  // gets another matrix gets another SharedMatrix.
+  // EmbedPDF(lean-page-objects): a path's matrix, stored once for every path
+  // that has the same one, as the paths of a content stream usually do. It
+  // never changes: a path that gets another matrix gets another
+  // SharedMatrix.
   class SharedMatrix final : public Retainable {
    public:
     CONSTRUCT_VIA_MAKE_RETAIN;
@@ -84,6 +85,8 @@ class CPDF_PathObject final : public CPDF_PageObject {
   CPDF_Path& path() { return path_; }
   const CPDF_Path& path() const { return path_; }
 
+  // EmbedPDF(lean-page-objects): a copy, so no caller holds a reference into
+  // storage that changes.
   CFX_Matrix matrix() const {
     return matrix_ ? matrix_->value() : CFX_Matrix();
   }
@@ -96,7 +99,7 @@ class CPDF_PathObject final : public CPDF_PageObject {
   CFX_FillRenderOptions::FillType fill_type_ =
       CFX_FillRenderOptions::FillType::kNoFill;
   CPDF_Path path_;
-  // Null for the identity.
+  // EmbedPDF(lean-page-objects): shared storage; null for the identity.
   RetainPtr<const SharedMatrix> matrix_;
 };
 

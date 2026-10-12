@@ -7,6 +7,9 @@
 #include <vector>
 
 #include "public/cpp/fpdf_scopers.h"
+#include "public/epdf_layer.h"
+#include "public/epdf_save.h"
+#include "public/epdf_view.h"
 #include "public/fpdf_edit.h"
 #include "public/fpdf_save.h"
 #include "public/fpdfview.h"

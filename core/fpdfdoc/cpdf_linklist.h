@@ -29,9 +29,11 @@ class CPDF_LinkList final : public CPDF_Document::LinkListIface {
                            int* z_order);
 
  private:
+  // EmbedPDF(reads-dont-write): links are kept as const dictionaries.
   const std::vector<RetainPtr<const CPDF_Dictionary>>* GetPageLinks(
       CPDF_Page* pPage);
 
+  // EmbedPDF(overlay-epoch): the epoch the cached links were read at.
   uint64_t overlay_epoch_ = 0;
   std::map<uint32_t, std::vector<RetainPtr<const CPDF_Dictionary>>> page_map_;
 };

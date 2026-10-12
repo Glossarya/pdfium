@@ -11,7 +11,7 @@
 
 #include <memory>
 
-#include "core/fpdfdoc/cpdf_generateap.h"
+#include "core/fpdfdoc/cpdf_appearancegenerator.h"
 #include "core/fpdfdoc/cpdf_richtext.h"
 #include "core/fxcrt/bytestring.h"
 #include "core/fxcrt/widestring.h"
@@ -31,7 +31,8 @@ class CPDF_RichTextWriter {
     ByteString da;
     WideString contents;
     WideString rc;
-    std::unique_ptr<CPDF_GenerateAP::PreparedRichFreeTextAP> appearance;
+    std::unique_ptr<CPDF_AppearanceGenerator::PreparedRichFreeTextAP>
+        appearance;
     bool degraded = false;
   };
 

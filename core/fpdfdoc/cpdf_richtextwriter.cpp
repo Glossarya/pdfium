@@ -387,12 +387,12 @@ bool CPDF_RichTextWriter::Prepare(CPDF_Document* doc,
                          static_cast<int>(rgb.fColor3 * 255 + 0.5f));
   }
 
-  CPDF_GenerateAP::RichFreeTextRequest request;
+  CPDF_AppearanceGenerator::RichFreeTextRequest request;
   request.document = &document;
   request.da_color = da_color;
   Prepared prepared;
   prepared.appearance =
-      CPDF_GenerateAP::PrepareRichFreeTextAP(doc, annot_dict, request);
+      CPDF_AppearanceGenerator::PrepareRichFreeTextAP(doc, annot_dict, request);
   if (!prepared.appearance) {
     return false;
   }
@@ -425,8 +425,8 @@ void CPDF_RichTextWriter::Publish(CPDF_Document* doc,
   annot_dict->SetNewFor<CPDF_String>("RC", prepared.rc.AsStringView());
   annot_dict->SetNewFor<CPDF_String>("Contents",
                                      prepared.contents.AsStringView());
-  CPDF_GenerateAP::PublishRichFreeTextAP(doc, annot_dict,
-                                         std::move(prepared.appearance));
+  CPDF_AppearanceGenerator::PublishRichFreeTextAP(
+      doc, annot_dict, std::move(prepared.appearance));
 }
 
 // static

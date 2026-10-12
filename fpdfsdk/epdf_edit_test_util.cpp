@@ -12,6 +12,8 @@
 #include "core/fpdfapi/parser/cpdf_stream.h"
 #include "core/fpdfapi/parser/cpdf_stream_acc.h"
 #include "core/fpdfapi/parser/cpdf_string.h"
+#include "public/epdf_annot.h"
+#include "public/epdf_edit.h"
 #include "public/fpdf_edit.h"
 #include "testing/embedder_test.h"
 #include "testing/fx_string_testhelpers.h"

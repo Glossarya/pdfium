@@ -1,7 +1,7 @@
 // Copyright 2026 CloudPDF LTD
 // SPDX-License-Identifier: Apache-2.0
 
-#include "core/fpdfdoc/cpdf_generateap.h"
+#include "core/fpdfdoc/cpdf_appearancegenerator.h"
 
 #include <vector>
 
@@ -46,9 +46,9 @@ ByteString GenerateTextMarkupAPContent(const ByteString& subtype_name,
   CPDF_TestDocument doc;
   auto annot_dict = MakeAnnotDict(subtype_name, CFX_FloatRect(0, 0, 100, 100));
   annot_dict->SetFor("QuadPoints", MakeNumberArray(quad_points));
-  std::optional<CPDF_GenerateAP::GeneratedAP> generated =
-      CPDF_GenerateAP::GenerateEphemeralAnnotAP(&doc, annot_dict.Get(),
-                                                subtype);
+  std::optional<CPDF_AppearanceGenerator::GeneratedAP> generated =
+      CPDF_AppearanceGenerator::GenerateEphemeralAnnotAP(&doc, annot_dict.Get(),
+                                                         subtype);
   if (!generated || !generated->normal_stream ||
       !generated->normal_stream->IsMemoryBased()) {
     return ByteString();
@@ -177,9 +177,9 @@ TEST_F(CPDFGenerateAPTest,
     ASSERT_TRUE(annot_dict);
 
     const uint32_t last_obj_num = doc.GetLastObjNum();
-    std::optional<CPDF_GenerateAP::GeneratedAP> generated =
-        CPDF_GenerateAP::GenerateEphemeralAnnotAP(&doc, annot_dict.Get(),
-                                                  subtype);
+    std::optional<CPDF_AppearanceGenerator::GeneratedAP> generated =
+        CPDF_AppearanceGenerator::GenerateEphemeralAnnotAP(
+            &doc, annot_dict.Get(), subtype);
 
     ASSERT_TRUE(generated.has_value());
     ASSERT_TRUE(generated->normal_stream);
@@ -195,9 +195,9 @@ TEST_F(CPDFGenerateAPTest, GenerateEphemeralFreeTextAPDoesNotCreateAcroForm) {
   auto annot_dict = MakeSupportedAnnotDict(CPDF_Annot::Subtype::FREETEXT);
 
   const uint32_t last_obj_num = doc.GetLastObjNum();
-  std::optional<CPDF_GenerateAP::GeneratedAP> generated =
-      CPDF_GenerateAP::GenerateEphemeralAnnotAP(&doc, annot_dict.Get(),
-                                                CPDF_Annot::Subtype::FREETEXT);
+  std::optional<CPDF_AppearanceGenerator::GeneratedAP> generated =
+      CPDF_AppearanceGenerator::GenerateEphemeralAnnotAP(
+          &doc, annot_dict.Get(), CPDF_Annot::Subtype::FREETEXT);
 
   ASSERT_TRUE(generated.has_value());
   ASSERT_TRUE(generated->normal_stream);
@@ -214,10 +214,10 @@ TEST_F(CPDFGenerateAPTest,
   auto annot_dict = MakeAnnotDict("FreeText", CFX_FloatRect(100, 50, 150, 75));
   annot_dict->SetNewFor<CPDF_String>(pdfium::annotation::kContents, "Hello!");
 
-  ASSERT_TRUE(CPDF_GenerateAP::GenerateDefaultAppearanceWithColor(
+  ASSERT_TRUE(CPDF_AppearanceGenerator::GenerateDefaultAppearanceWithColor(
       &doc, annot_dict.Get(), CFX_Color(60, 120, 180)));
-  ASSERT_TRUE(CPDF_GenerateAP::GenerateAnnotAP(&doc, annot_dict.Get(),
-                                               CPDF_Annot::Subtype::FREETEXT));
+  ASSERT_TRUE(CPDF_AppearanceGenerator::GenerateAnnotAP(
+      &doc, annot_dict.Get(), CPDF_Annot::Subtype::FREETEXT));
 
   RetainPtr<const CPDF_Dictionary> ap_dict =
       annot_dict->GetDictFor(pdfium::annotation::kAP);
@@ -237,7 +237,7 @@ TEST_F(CPDFGenerateAPTest,
 
   auto annot_dict = MakeAnnotDict("FreeText", CFX_FloatRect(100, 50, 150, 75));
 
-  ASSERT_TRUE(CPDF_GenerateAP::GenerateDefaultAppearanceWithColor(
+  ASSERT_TRUE(CPDF_AppearanceGenerator::GenerateDefaultAppearanceWithColor(
       &doc, annot_dict.Get(), CFX_Color(60, 120, 180)));
 
   RetainPtr<const CPDF_Dictionary> font_dict =
@@ -253,9 +253,9 @@ TEST_F(CPDFGenerateAPTest, GenerateEphemeralAnnotAPDoesNotPersistHighlightAP) {
                      MakeNumberArray({10, 20, 50, 20, 10, 10, 50, 10}));
 
   const uint32_t last_obj_num = doc.GetLastObjNum();
-  std::optional<CPDF_GenerateAP::GeneratedAP> generated =
-      CPDF_GenerateAP::GenerateEphemeralAnnotAP(&doc, annot_dict.Get(),
-                                                CPDF_Annot::Subtype::HIGHLIGHT);
+  std::optional<CPDF_AppearanceGenerator::GeneratedAP> generated =
+      CPDF_AppearanceGenerator::GenerateEphemeralAnnotAP(
+          &doc, annot_dict.Get(), CPDF_Annot::Subtype::HIGHLIGHT);
 
   ASSERT_TRUE(generated.has_value());
   ASSERT_TRUE(generated->normal_stream);
@@ -315,9 +315,9 @@ TEST_F(CPDFGenerateAPTest, GenerateEphemeralInkAPDoesNotInflateAnnotRect) {
   const CFX_FloatRect original_rect =
       annot_dict->GetRectFor(pdfium::annotation::kRect);
   const uint32_t last_obj_num = doc.GetLastObjNum();
-  std::optional<CPDF_GenerateAP::GeneratedAP> generated =
-      CPDF_GenerateAP::GenerateEphemeralAnnotAP(&doc, annot_dict.Get(),
-                                                CPDF_Annot::Subtype::INK);
+  std::optional<CPDF_AppearanceGenerator::GeneratedAP> generated =
+      CPDF_AppearanceGenerator::GenerateEphemeralAnnotAP(
+          &doc, annot_dict.Get(), CPDF_Annot::Subtype::INK);
 
   ASSERT_TRUE(generated.has_value());
   ASSERT_TRUE(generated->normal_stream);

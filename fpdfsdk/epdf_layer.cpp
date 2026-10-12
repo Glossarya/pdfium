@@ -32,6 +32,8 @@
 #include "fpdfsdk/cpdfsdk_filewriteadapter.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "fpdfsdk/epdf_owned_buffer.h"
+#include "public/epdf_layer.h"
+#include "public/epdf_save.h"
 #include "public/fpdf_save.h"
 
 namespace {

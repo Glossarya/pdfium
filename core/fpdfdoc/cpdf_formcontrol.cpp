@@ -222,6 +222,7 @@ RetainPtr<CPDF_Font> CPDF_FormControl::GetDefaultControlFont() const {
   }
 
   const ByteString& font_name = maybe_font_name_and_size.value().name;
+  // EmbedPDF(reads-dont-write): read without the mutable getter.
   RetainPtr<const CPDF_Dictionary> pDRDict = ToDictionary(
       CPDF_FormField::GetFieldAttrForDict(widget_dict_.Get(), "DR"));
   if (pDRDict) {
@@ -230,6 +231,8 @@ RetainPtr<CPDF_Font> CPDF_FormControl::GetDefaultControlFont() const {
       RetainPtr<const CPDF_Dictionary> pElement =
           fonts->GetDictFor(font_name.AsStringView());
       if (pElement) {
+        // EmbedPDF(reads-dont-write): the font loader takes a mutable
+        // pointer; it gets the dictionary read without the mutable getter.
         RetainPtr<CPDF_Font> font = form_->GetFontForElement(
             pdfium::WrapRetain(const_cast<CPDF_Dictionary*>(pElement.Get())));
         if (font) {
@@ -243,6 +246,7 @@ RetainPtr<CPDF_Font> CPDF_FormControl::GetDefaultControlFont() const {
     return pFormFont;
   }
 
+  // EmbedPDF(reads-dont-write): read without the mutable getter.
   RetainPtr<const CPDF_Dictionary> pPageDict = widget_dict_->GetDictFor("P");
   RetainPtr<const CPDF_Dictionary> dict = ToDictionary(
       CPDF_FormField::GetFieldAttrForDict(pPageDict.Get(), "Resources"));
@@ -250,17 +254,21 @@ RetainPtr<CPDF_Font> CPDF_FormControl::GetDefaultControlFont() const {
     return nullptr;
   }
 
+  // EmbedPDF(reads-dont-write): read without the mutable getter.
   RetainPtr<const CPDF_Dictionary> fonts = dict->GetDictFor("Font");
   if (!ValidateFontResourceDict(fonts.Get())) {
     return nullptr;
   }
 
+  // EmbedPDF(reads-dont-write): read without the mutable getter.
   RetainPtr<const CPDF_Dictionary> pElement =
       fonts->GetDictFor(font_name.AsStringView());
   if (!pElement) {
     return nullptr;
   }
 
+  // EmbedPDF(reads-dont-write): the font loader takes a mutable pointer; it
+  // gets the dictionary read without the mutable getter.
   return form_->GetFontForElement(
       pdfium::WrapRetain(const_cast<CPDF_Dictionary*>(pElement.Get())));
 }

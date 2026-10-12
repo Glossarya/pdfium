@@ -28,6 +28,11 @@
 
 namespace {
 
+// EmbedPDF(fonts): standard fonts draw with the built-in faces (see
+// FindSubstFont()); SetStandardFontsFromSystemForTesting() lets upstream's
+// embedder tests keep the test fonts they expect.
+bool g_standard_fonts_from_system = false;
+
 static_assert(CFX_FontMapper::kLast + 1 == CFX_FontMapper::kNumStandardFonts,
               "StandardFont enum count mismatch");
 
@@ -715,11 +720,12 @@ RetainPtr<CFX_Face> CFX_FontMapper::FindSubstFont(const ByteString& name,
   }
 
   const FX_Charset Charset = GetCharset(code_page, base_font, flags);
-  // EmbedPDF: a standard font draws with PDFium's built-in face on every
-  // platform, as it does where there are no system fonts (WebAssembly), so a
-  // document draws the same in every engine. A CJK code page still asks the
-  // system: the built-in faces have none of its glyphs.
-  if (base_font < kNumStandardFonts && Charset == FX_Charset::kANSI) {
+  // EmbedPDF(fonts): a standard font draws with PDFium's built-in face on
+  // every platform, as it does where there are no system fonts (WebAssembly),
+  // so a document draws the same in every engine. A CJK code page still asks
+  // the system: the built-in faces have none of its glyphs.
+  if (!g_standard_fonts_from_system && base_font < kNumStandardFonts &&
+      Charset == FX_Charset::kANSI) {
     return UseInternalSubst(base_font, old_weight, italic_angle, pitch_family,
                             subst_font);
   }
@@ -1005,4 +1011,10 @@ bool CFX_FontMapper::IsFixedFont(StandardFont font) {
   return font == StandardFont::kCourier || font == StandardFont::kCourierBold ||
          font == StandardFont::kCourierBoldOblique ||
          font == StandardFont::kCourierOblique;
+}
+
+// EmbedPDF(fonts): the switch upstream's embedder tests use.
+// static
+void CFX_FontMapper::SetStandardFontsFromSystemForTesting(bool from_system) {
+  g_standard_fonts_from_system = from_system;
 }

@@ -34,7 +34,7 @@ struct MTContext {
   std::array<uint32_t, MT_N> mt;
 };
 
-// EmbedPDF: thread-confined runtime - per-thread RNG seed state so concurrent
+// EmbedPDF(thread-confined-globals): per-thread RNG seed state so concurrent
 // workers don't race on the lazy global-seed initialization.
 EPDF_TLS bool g_bHaveGlobalSeed = false;
 EPDF_TLS uint32_t g_nGlobalSeed = 0;

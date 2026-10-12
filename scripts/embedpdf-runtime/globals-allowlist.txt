@@ -1,0 +1,86 @@
+# Writable globals in the runtime library, read by check-globals.py.
+# `<category> | <pattern> | <reason>`; the pattern is a glob over demangled names.
+# A new shared global needs EPDF_TLS, an atomic, or an entry here with its
+# reason (docs/embedpdf/fork-ledger.md, rule thread-confined-globals).
+
+# --- Ours and PDFium's: must stay thread-local (EPDF_TLS or thread_local).
+thread-local | *::g_pGEModule | The graphics module: FreeType and the font caches.
+thread-local | *::g_GEModule | Upstream's name for g_pGEModule since Feb 17 2026.
+thread-local | *::g_FontGlobals | Font globals: CMaps and standard fonts.
+thread-local | *::g_registry | The registered-font registry.
+thread-local | *::g_stock_colorspaces | Stock colour spaces.
+thread-local | *::g_opcodes | The content parser's opcode table.
+thread-local | *::g_CurrentRecursionDepth | Render recursion depth.
+thread-local | CPDF_SyntaxParser::s_CurrentRecursionDepth | Parser recursion depth: the guard against deeply nested PDFs.
+thread-local | *::g_bLibraryInitialized | Whether this thread initialized PDFium.
+thread-local | *::g_last_error | FPDF_GetLastError.
+thread-local | *::g_bHaveGlobalSeed | Random seed state.
+thread-local | *::g_nGlobalSeed | Random seed state.
+thread-local | *::g_pwl_timer_map | Form-fill timers.
+thread-local | *DefaultLocaltimeFunction*::result | localtime's result buffer.
+thread-local | *::g_decoded_image_store | Decoded images kept across page loads.
+thread-local | *::g_current_view_mode | The open document view scope.
+thread-local | *::g_current_layer_view | The open document view scope.
+thread-local | *::g_current_frozen_base | The open document view scope.
+thread-local | *::g_current_write_generation | The open layer transaction.
+thread-local | *::g_read_only_graph_guard_active | The read-only guard (debug checks only).
+thread-local | *::g_inline_rewrite_depth | The read-only guard (debug checks only).
+
+# --- Ours and PDFium's: shared, and why that is safe.
+atomic | *::g_next_write_generation | std::atomic: hands out transaction generations.
+atomic | *::g_held_bounds_generation | std::atomic: invalidates object-run bounds.
+test-only | *::g_object_groups_enabled | Only SetObjectGroupsEnabledForTesting writes it.
+test-only | *::g_specialized_loops_enabled | Only SetSpecializedLoopsEnabledForTesting writes it.
+test-only | *::g_path_memo_enabled | Only SetPathMemoEnabledForTesting writes it.
+test-only | *::g_standard_fonts_from_system | Only SetStandardFontsFromSystemForTesting writes it.
+test-only | *::g_fail_after_staged_fonts_for_testing | A test hook.
+set-once | *::g_sandbox_policy | Set once at process start-up, before workers start.
+set-once | *::g_unsupport_info | Set once at process start-up, before workers start.
+set-once | *::g_time_func | FSDK_SetTimeFunction; set once at start-up, never by the engine.
+set-once | *::g_localtime_func | FSDK_SetLocaltimeFunction; set once at start-up, never by the engine.
+set-once | CPDF_InteractiveForm::s_bUpdateAP | Only the form-fill environment writes it; the engine never starts one.
+set-once | CPDF_BAFontMap::AddStandardFont(*)::fe | A const CPDF_FontEncoding, built once.
+set-once | guard variable for CPDF_BAFontMap::AddStandardFont(*)::fe | Its initialization guard.
+set-once | FX_OutOfMemoryTerminate(*)::make_this_function_aliased | Never written; keeps the function distinct.
+set-once | (anonymous namespace)::AddStandardFont(CPDF_Document*)::encoding | Upstream: a const CPDF_FontEncoding, built once.
+set-once | guard variable for (anonymous namespace)::AddStandardFont(CPDF_Document*)::encoding | Its initialization guard.
+set-once | fxcodec::(anonymous namespace)::Basis()::basis | The JPEG writer's DCT basis: a const table built once (thread-safe static initialization) and only read after.
+set-once | guard variable for fxcodec::(anonymous namespace)::Basis()::basis | Its initialization guard.
+
+# --- Third-party code, shared by design.
+third-party | std::__Cr::* | libc++: locale and facet state behind its own locks.
+third-party | guard variable for std::__Cr::* | libc++: initialization guards.
+third-party | *cxxabiv1::* | libc++abi.
+third-party | __cxa_*_handler | libc++abi: process-wide handlers.
+third-party | (anonymous namespace)::freelist | libc++abi fallback_malloc, behind heap_mutex.
+third-party | (anonymous namespace)::heap | libc++abi fallback_malloc, behind heap_mutex.
+third-party | (anonymous namespace)::heap_mutex | libc++abi fallback_malloc.
+third-party | icu_77::* | ICU: once-initialized data behind umtx.
+third-party | (anonymous namespace)::g[A-Z]* | ICU: layout property tables, once-initialized.
+third-party | g[A-Z]* | ICU: data, directory and time zone state, once-initialized.
+third-party | p[A-Z]* | ICU: allocator and trace hooks, set before use.
+third-party | utrace_level | ICU: trace level.
+third-party | _cms* | lcms: the context pool behind _cmsContextPoolHeadMutex, plugin chunks and constants.
+third-party | globalContext | lcms: the default context (see the June thread-safety fixes).
+third-party | DefaultIntents | lcms: built-in intents list.
+third-party | DefaultOptimization | lcms: built-in optimizations list.
+third-party | SupportedMPEtypes | lcms: built-in type table.
+third-party | SupportedTags | lcms: built-in tag table.
+third-party | hb_* | HarfBuzz: lazily created defaults, thread-safe by design.
+third-party | _hb_* | HarfBuzz: Null pools and the crap pool.
+third-party | static_icu_funcs | HarfBuzz: lazy, atomic.
+third-party | static_ot_funcs | HarfBuzz: lazy, atomic.
+third-party | static_shapers | HarfBuzz: lazy, atomic.
+third-party | get_default_funcs_name()::static_funcs_name | HarfBuzz.
+third-party | known_tables | HarfBuzz subsetter: a constant table.
+third-party | langs | HarfBuzz: the language list, behind atomics.
+third-party | endchar_str | HarfBuzz CFF: a constant.
+third-party | only_cleanup_pass_is_decoded | openjpeg: a one-time warning flag, set under a mutex.
+third-party | Cr_z_arm_cpu_enable_* | zlib: CPU features, detected once.
+third-party | SkFibonacci47 | Skia path ops: a constant table.
+third-party | SkMatrix::I()::identity | Skia path ops: a constant.
+third-party | SkPath::PeekErrorSingleton()::gErrorSingleton | Skia path ops: a once-built singleton.
+third-party | SkPathData::PeekEmptySingleton()::gEmpty | Skia path ops: a once-built singleton.
+third-party | guard variable for SkPath*::Peek* | Skia path ops: initialization guards.
+third-party | next_pathdata_unique_id()::nextID | Skia path ops: an atomic counter.
+third-party | fast_float::detail::rounds_to_nearest()::fmin | fast_float: a volatile constant.

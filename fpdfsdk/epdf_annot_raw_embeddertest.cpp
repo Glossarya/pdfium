@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Annotation calls that work on a page's dictionaries without loading or
-// parsing the page (the *Raw calls in public/fpdf_annot.h).
+// parsing the page (the *Raw calls in public/epdf_annot.h).
 
 #include "core/fpdfapi/parser/cpdf_array.h"
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
@@ -11,6 +11,8 @@
 #include "core/fpdfapi/parser/cpdf_string.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "public/cpp/fpdf_scopers.h"
+#include "public/epdf_annot.h"
+#include "public/epdf_view.h"
 #include "public/fpdf_annot.h"
 #include "public/fpdf_edit.h"
 #include "public/fpdf_ppo.h"

@@ -33,7 +33,7 @@ enum class FX_BIDICLASS : uint8_t {
   kN = kON,
 };
 
-// EmbedPDF: compiled unconditionally (the rich text line breaker in
+// EmbedPDF(rich-text): compiled unconditionally (the rich text line breaker in
 // core/fpdfdoc uses it); it used to be XFA-only.
 // As defined in http://www.unicode.org/reports/tr14
 enum class FX_BREAKPROPERTY : uint8_t {
@@ -92,6 +92,7 @@ enum class FX_CHARTYPE : uint8_t {
   kArabicForm,
   kArabic,
 };
+// EmbedPDF(rich-text): the PDF_ENABLE_XFA guard ended here; see above.
 
 namespace pdfium {
 namespace unicode {
@@ -105,6 +106,8 @@ constexpr wchar_t kZeroWidthNoBreakSpace = 0xfeff;
 wchar_t GetMirrorChar(wchar_t wch);
 FX_BIDICLASS GetBidiClass(wchar_t wch);
 
+// EmbedPDF(rich-text): no PDF_ENABLE_XFA guard around these two: the rich text
+// line breaker uses them too.
 FX_CHARTYPE GetCharType(wchar_t wch);
 
 // Analagous to ULineBreak in icu's uchar.h, but permuted order, and a

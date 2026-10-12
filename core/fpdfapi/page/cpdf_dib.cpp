@@ -197,6 +197,8 @@ CPDF_DIB::LoadState CPDF_DIB::StartLoadDIBBase(
     return LoadState::kFail;
   }
 
+  // EmbedPDF(decoded-image-store): remember the levels skipped; the store
+  // keys a JPX decode by them.
   resolution_levels_to_skip_ =
       ResolutionLevelsToSkip(GetWidth(), GetHeight(), max_size_required);
 
@@ -813,6 +815,9 @@ bool CPDF_DIB::IsJBigImage() const {
   return stream_acc_->GetImageDecoder() == "JBIG2Decode";
 }
 
+// EmbedPDF(decoded-image-store): the store keeps a JPX decode per resolution
+// levels skipped. ResolutionLevelsToSkip() is upstream's computation, moved
+// out of StartLoadDIBBase().
 bool CPDF_DIB::IsJpxImage() const {
   return stream_acc_->GetImageDecoder() == "JPXDecode";
 }

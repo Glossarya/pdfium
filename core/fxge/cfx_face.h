@@ -68,12 +68,12 @@ class CFX_Face final : public Retainable, public Observable {
   bool IsFixedWidth() const;
   bool IsItalic() const;
   bool IsBold() const;
-  // EmbedPDF: the OS/2 fsType embedding-permission bits (0 when the font has
-  // no OS/2 table, i.e. installable).
+  // EmbedPDF(fonts): the OS/2 fsType embedding-permission bits (0 when the
+  // font has no OS/2 table, i.e. installable).
   uint16_t GetFsTypeFlags() const;
-  // EmbedPDF: glyph identities of CFF programs (ISO 32000-2 9.7.4.2). A CFF
-  // whose Top DICT uses CIDFont operators selects glyphs by CID through its
-  // charset; FreeType exposes GIDs for sfnt-wrapped ("OTTO") faces, so the
+  // EmbedPDF(fonts): glyph identities of CFF programs (ISO 32000-2 9.7.4.2). A
+  // CFF whose Top DICT uses CIDFont operators selects glyphs by CID through
+  // its charset; FreeType exposes GIDs for sfnt-wrapped ("OTTO") faces, so the
   // mapping is needed to write and read such fonts.
   bool IsCidKeyed() const;
   std::optional<uint32_t> GetCidFromGlyphIndex(uint32_t glyph_index) const;
@@ -111,10 +111,11 @@ class CFX_Face final : public Retainable, public Observable {
                     int dest_width,
                     int weight,
                     const CFX_SubstFont* subst_font);
-  // EmbedPDF: the bounds of `glyph_index`, in thousandths of an em, as
-  // drawing it for `subst_font` with `dest_width` draws it: a built-in generic
-  // font takes the design that gives the glyph that width and the
-  // substitute's weight. Leaves the face's design as it was.
+  // EmbedPDF(substitute-font-bounds): the bounds of `glyph_index`, in
+  // thousandths of an em, as drawing it for `subst_font` with `dest_width`
+  // draws it: a built-in generic font takes the design that gives the glyph
+  // that width and the substitute's weight. Leaves the face's design as it
+  // was.
   std::optional<FX_RECT> GetDrawnGlyphBBox(uint32_t glyph_index,
                                            int dest_width,
                                            const CFX_SubstFont* subst_font);

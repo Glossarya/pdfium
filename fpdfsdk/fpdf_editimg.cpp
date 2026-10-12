@@ -35,6 +35,7 @@
 #include "core/fxge/dib/cfx_dibitmap.h"
 #include "fpdfsdk/cpdfsdk_customaccess.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
+#include "public/epdf_edit.h"
 
 namespace {
 
@@ -628,6 +629,7 @@ FPDFImageObj_GetIccProfileDataDecoded(FPDF_PAGEOBJECT image_object,
   return true;
 }
 
+// EmbedPDF(epdf-api): EPDFImageObj_SetPng and EPDFImageObj_SetJpeg.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFImageObj_SetPng(FPDF_PAGE* pages,
                     int count,

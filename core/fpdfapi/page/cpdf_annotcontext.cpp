@@ -23,7 +23,8 @@
 
 namespace {
 
-// Whether |annots| references object |objnum|.
+// EmbedPDF(annot-identity): whether |annots| references object |objnum|;
+// a handle ends when its annotation leaves its page's /Annots.
 bool AnnotsReference(const CPDF_Array* annots, uint32_t objnum) {
   for (size_t i = 0; annots && i < annots->size(); ++i) {
     RetainPtr<const CPDF_Reference> ref = ToReference(annots->GetObjectAt(i));
@@ -36,6 +37,8 @@ bool AnnotsReference(const CPDF_Array* annots, uint32_t objnum) {
 
 }  // namespace
 
+// EmbedPDF(annot-identity, overlay-epoch): record what names the annotation
+// (object number, or page and birth index) and the epoch it was read at.
 CPDF_AnnotContext::CPDF_AnnotContext(RetainPtr<CPDF_Dictionary> pAnnotDict,
                                      IPDF_Page* pPage,
                                      int annot_index)
@@ -69,6 +72,8 @@ CPDF_AnnotContext::~CPDF_AnnotContext() = default;
 
 void CPDF_AnnotContext::SetForm(RetainPtr<CPDF_Stream> pStream) {
   CHECK(pStream);
+  // EmbedPDF(view-scope, reads-dont-write): parse the appearance through the
+  // document's view, reading page resources without the mutable getter.
   CPDF_DocumentViewScope document_view(page_->GetDocument());
   annot_form_ = std::make_unique<CPDF_Form>(
       page_->GetDocument(),
@@ -86,6 +91,8 @@ void CPDF_AnnotContext::SetForm(RetainPtr<CPDF_Stream> pStream) {
   annot_form_->ParseContent(nullptr, &inverse_stream_matrix, nullptr);
 }
 
+// EmbedPDF(layer-door): the handle copies up when it is used for writing,
+// not when it is made: through the door, or through its owner if inline.
 RetainPtr<CPDF_Dictionary> CPDF_AnnotContext::GetMutableAnnotDict() {
   RefreshAnnotDictIfNeeded();
 
@@ -117,6 +124,7 @@ RetainPtr<CPDF_Dictionary> CPDF_AnnotContext::GetMutableAnnotDict() {
   return annot_dict_;
 }
 
+// EmbedPDF(overlay-epoch): reads re-resolve the handle first.
 const CPDF_Dictionary* CPDF_AnnotContext::GetAnnotDict() const {
   RefreshAnnotDictIfNeeded();
   return annot_dict_.Get();
@@ -127,6 +135,8 @@ bool CPDF_AnnotContext::IsValid() const {
   return valid_;
 }
 
+// EmbedPDF(overlay-epoch, annot-identity): re-read the annotation when the
+// overlay epoch moved; a handle whose annotation is gone turns invalid.
 void CPDF_AnnotContext::RefreshAnnotDictIfNeeded() const {
   CPDF_Page* page = page_ ? page_->AsPDFPage() : nullptr;
   CPDF_Document* doc = page ? page->GetDocument() : nullptr;
@@ -152,6 +162,7 @@ void CPDF_AnnotContext::RefreshAnnotDictIfNeeded() const {
   annot_dict_epoch_ = current_epoch;
 }
 
+// EmbedPDF(annot-identity): by object number, birth index or found index.
 RetainPtr<const CPDF_Dictionary> CPDF_AnnotContext::ResolveIdentity() const {
   CPDF_Page* page = page_->AsPDFPage();
   CPDF_Document* doc = page->GetDocument();
@@ -211,6 +222,8 @@ RetainPtr<const CPDF_Dictionary> CPDF_AnnotContext::ResolveIdentity() const {
   return annot_dict_;
 }
 
+// EmbedPDF(layer-door): an inline annotation is written through its owner,
+// opened for writing: the indirect /Annots array, or else the page.
 void CPDF_AnnotContext::EnsureMutableBackingForAnnotDict() {
   CPDF_Page* page = page_->AsPDFPage();
   if (annot_index_ < 0) {

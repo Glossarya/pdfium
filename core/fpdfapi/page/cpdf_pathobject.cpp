@@ -11,6 +11,8 @@
 #include <bit>
 #include <utility>
 
+// EmbedPDF(lean-page-objects): a path's matrix is stored once for the paths
+// that share it (SharedMatrix).
 namespace {
 
 bool HaveSameBits(const CFX_Matrix& a, const CFX_Matrix& b) {
@@ -54,6 +56,8 @@ CPDF_PageObject::Type CPDF_PathObject::GetType() const {
 }
 
 void CPDF_PathObject::Transform(const CFX_Matrix& matrix) {
+  // EmbedPDF(lean-page-objects): a transformed path gets its own matrix; the
+  // paths that shared the old one keep it.
   CFX_Matrix path_matrix = this->matrix();
   path_matrix.Concat(matrix);
   matrix_ = ShareMatrix(path_matrix, std::move(matrix_));
@@ -85,6 +89,7 @@ void CPDF_PathObject::CalcBoundingBox() {
   } else {
     rect = path_.GetBoundingBox();
   }
+  // EmbedPDF(lean-page-objects): read the shared matrix through matrix().
   rect = matrix().TransformRect(rect);
 
   if (width == 0 && stroke_) {
@@ -94,6 +99,8 @@ void CPDF_PathObject::CalcBoundingBox() {
 }
 
 void CPDF_PathObject::SetPathMatrix(const CFX_Matrix& matrix) {
+  // EmbedPDF(lean-page-objects): reuse the previous storage when the bits
+  // match; the paths sharing it keep theirs either way.
   matrix_ = ShareMatrix(matrix, std::move(matrix_));
   CalcBoundingBox();
 }

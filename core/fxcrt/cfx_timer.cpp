@@ -14,7 +14,7 @@
 namespace {
 
 using TimerMap = std::map<int32_t, CFX_Timer*>;
-// EmbedPDF: thread-confined runtime - per-thread timer map. The PWL timer
+// EmbedPDF(thread-confined-globals): per-thread timer map. The PWL timer
 // subsystem is inactive in headless server rendering, but the global is still
 // made per-thread so per-thread InitializeGlobals()/DestroyGlobals() (and the
 // CHECK(!g_pwl_timer_map) inside Init) hold independently on each worker.

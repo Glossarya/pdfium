@@ -47,9 +47,10 @@ class CPDF_ClipPath {
   void AppendPathWithAutoMerge(CPDF_Path path,
                                CFX_FillRenderOptions::FillType type);
   void AppendTexts(std::vector<std::unique_ptr<CPDF_TextObject>>* pTexts);
-  // EmbedPDF: calls `edit` with each text that clips; one it returns false
-  // for is removed. A BT ... ET clips to the glyphs of its texts, so one
-  // left with none clips everything: an empty rectangle takes its place.
+  // EmbedPDF(redaction): calls `edit` with each text that clips; one it
+  // returns false for is removed. A BT ... ET clips to the glyphs of its
+  // texts, so one left with none clips everything: an empty rectangle takes
+  // its place.
   void EditTexts(const std::function<bool(CPDF_TextObject*)>& edit);
   void CopyClipPath(const CPDF_ClipPath& that);
   void Transform(const CFX_Matrix& matrix);

@@ -29,11 +29,12 @@ class CFX_XMLNode : public TreeNode<CFX_XMLNode> {
   virtual CFX_XMLNode* Clone(CFX_XMLDocument* doc) = 0;
   virtual void Save(const RetainPtr<IFX_RetainableWriteStream>& pXMLStream) = 0;
 
-  // EmbedPDF: whitespace-exact serialization for xml:space="preserve"
-  // payloads (XFDF form data). Save() pretty-prints by injecting newlines
-  // into element content, which corrupts text values on round-trip. Kept
-  // as a separate method so existing Save() output (XFA checksummed XML)
-  // is untouched. Default forwards to Save(); CFX_XMLElement overrides.
+  // EmbedPDF(forms-model): whitespace-exact serialization for
+  // xml:space="preserve" payloads (XFDF form data). Save() pretty-prints by
+  // injecting newlines into element content, which corrupts text values on
+  // round-trip. Kept as a separate method so existing Save() output (XFA
+  // checksummed XML) is untouched. Default forwards to Save(); CFX_XMLElement
+  // overrides.
   virtual void SaveCompact(
       const RetainPtr<IFX_RetainableWriteStream>& pXMLStream);
 

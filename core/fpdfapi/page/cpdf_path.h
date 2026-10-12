@@ -37,6 +37,8 @@ class CPDF_Path {
   void AppendRect(float left, float bottom, float right, float top);
   void AppendPoint(const CFX_PointF& point, CFX_Path::Point::Type type);
   void AppendPointAndClose(const CFX_PointF& point, CFX_Path::Point::Type type);
+  // EmbedPDF(render-speedup): the content parser appends a path's points at
+  // once.
   void AppendPoints(pdfium::span<const CFX_Path::Point> points);
 
   // TODO(tsepez): Remove when all access thru this class.

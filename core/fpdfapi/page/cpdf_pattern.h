@@ -27,11 +27,13 @@ class CPDF_Pattern : public Retainable, public Observable {
 
   const CFX_Matrix& pattern_to_form() const { return pattern_to_form_; }
 
-  // Returns the underlying PDF object (stream or dict) that defines this pattern.
+  // EmbedPDF(faithful-content-rewrite): returns the underlying PDF object
+  // (stream or dict) that defines this pattern, so the content generator
+  // writes a pattern colour by the pattern's resource name.
   RetainPtr<CPDF_Object> pattern_obj() const { return pattern_obj_; }
 
-  // EmbedPDF: the CTM in effect where the pattern was selected; loading
-  // another pattern object for the same use takes it
+  // EmbedPDF(redaction): the CTM in effect where the pattern was selected;
+  // loading another pattern object for the same use takes it
   // (CPDF_DocPageData::GetPattern()).
   const CFX_Matrix& parent_matrix() const { return parent_matrix_; }
 
@@ -43,6 +45,8 @@ class CPDF_Pattern : public Retainable, public Observable {
 
   // All the getters that return pointers return non-NULL pointers.
   CPDF_Document* document() const { return document_; }
+  // EmbedPDF(faithful-content-rewrite, redaction): pattern_obj() and
+  // parent_matrix() moved to the public section.
 
   void SetPatternToFormMatrix();
 

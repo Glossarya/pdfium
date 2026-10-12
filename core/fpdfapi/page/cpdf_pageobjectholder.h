@@ -30,6 +30,8 @@
 class CPDF_ContentParser;
 class CPDF_Document;
 class CPDF_PageObject;
+// EmbedPDF(render-speedup, faithful-content-rewrite): for GetObjectGroups()
+// and GetMutableFormStream().
 class CPDF_PageObjectGroups;
 class CPDF_Stream;
 class PauseIndicatorIface;
@@ -80,21 +82,25 @@ class CPDF_PageObjectHolder {
 
   virtual bool IsPage() const;
 
-  // Returns the mutable Form XObject stream for CPDF_Form, or nullptr for
-  // Pages. Used by CPDF_PageContentManager to update Form XObject content
-  // directly.
+  // EmbedPDF(faithful-content-rewrite): returns the mutable Form XObject
+  // stream for CPDF_Form, or nullptr for Pages. Used by
+  // CPDF_PageContentManager to update Form XObject content directly.
   virtual RetainPtr<CPDF_Stream> GetMutableFormStream();
 
   void StartParse(std::unique_ptr<CPDF_ContentParser> pParser);
   void ContinueParse(PauseIndicatorIface* pPause);
   ParseState GetParseState() const { return parse_state_; }
 
-  // EmbedPDF: moves whenever the objects change once parsed: an object added
-  // or removed, or content generated from edited objects.
+  // EmbedPDF(page-residency): moves whenever the objects change once parsed:
+  // an object added or removed, or content generated from edited objects.
   uint64_t GetObjectEdits() const { return object_edits_; }
   void NoteObjectsEdited() { ++object_edits_; }
 
   CPDF_Document* GetDocument() const { return document_; }
+  // EmbedPDF(overlay-epoch, layer-door): the getters re-read the dictionary
+  // and resources when the overlay epoch moved, and the mutable ones copy up
+  // through the layer's door when used. Virtual so CPDF_Page can re-read
+  // inherited resources.
   virtual RetainPtr<const CPDF_Dictionary> GetDict() const;
   RetainPtr<CPDF_Dictionary> GetMutableDict();
   virtual RetainPtr<const CPDF_Dictionary> GetResources() const;
@@ -120,11 +126,12 @@ class CPDF_PageObjectHolder {
   iterator end() { return page_object_list_.end(); }
   const_iterator end() const { return page_object_list_.end(); }
 
-  // The bounds of runs of consecutive objects, for a render whose clip test is
-  // `clip`. Returns nullptr while the list is still being parsed, when there
-  // are too few objects for runs to pay, and when out-of-date runs would have
-  // to be computed for a clip that shows more than half of the page's box or
-  // the form's /BBox, where few runs miss it.
+  // EmbedPDF(render-speedup): the bounds of runs of consecutive objects, for
+  // a render whose clip test is `clip`. Returns nullptr while the list is
+  // still being parsed, when there are too few objects for runs to pay, and
+  // when out-of-date runs would have to be computed for a clip that shows
+  // more than half of the page's box or the form's /BBox, where few runs
+  // miss it.
   const CPDF_PageObjectGroups* GetObjectGroups(const CFX_FloatRect& clip) const;
 
   // Turns the object groups off, so a test can render without them and
@@ -146,12 +153,12 @@ class CPDF_PageObjectHolder {
   void AddImageMaskBoundingBox(const CFX_FloatRect& box);
   bool HasDirtyStreams() const { return !dirty_streams_.empty(); }
   std::set<int32_t> TakeDirtyStreams();
-  // EmbedPDF: content stream `stream` is to be written again though none of
-  // its objects changed: what changed is what it may name.
+  // EmbedPDF(redaction): content stream `stream` is to be written again
+  // though none of its objects changed: what changed is what it may name.
   void MarkStreamDirty(int32_t stream) { dirty_streams_.insert(stream); }
 
-  // EmbedPDF: when content is next written, the resources' entry `name` of
-  // `type` names object `replacement` (CPDF_PageContentGenerator).
+  // EmbedPDF(redaction): when content is next written, the resources' entry
+  // `name` of `type` names object `replacement` (CPDF_PageContentGenerator).
   using ResourceReplacements =
       std::map<std::pair<ByteString, ByteString>, uint32_t>;
   void ReplaceResource(const ByteString& type,
@@ -163,11 +170,11 @@ class CPDF_PageObjectHolder {
     return std::move(resource_replacements_);
   }
 
-  // EmbedPDF: the name caches below remember which resource name the
-  // content generator gave a font, graphics state or colour space. A cached
-  // name counts only while the resources still define it: an aborted layer
-  // transaction drops the names it added, and generated content must never
-  // use a name nothing defines.
+  // EmbedPDF(layer-transaction): the name caches below remember which
+  // resource name the content generator gave a font, graphics state or
+  // colour space. A cached name counts only while the resources still define
+  // it: an aborted layer transaction drops the names it added, and generated
+  // content must never use a name nothing defines.
   bool ResourcesDefine(ByteStringView category, const ByteString& name) const;
   std::optional<ByteString> GraphicsMapSearch(const GraphicsData& gd);
   void GraphicsMapInsert(const GraphicsData& gd, const ByteString& str);
@@ -175,6 +182,9 @@ class CPDF_PageObjectHolder {
   std::optional<ByteString> FontsMapSearch(const FontData& fd);
   void FontsMapInsert(const FontData& fd, const ByteString& str);
 
+  // EmbedPDF(faithful-content-rewrite): a font is named by its object, so
+  // rewritten text keeps the font it was read with; a colour space by the
+  // array it was read from.
   std::optional<ByteString> FontsByObjnumSearch(uint32_t objnum);
   void FontsByObjnumInsert(uint32_t objnum, const ByteString& name);
 
@@ -193,19 +203,26 @@ class CPDF_PageObjectHolder {
 
  protected:
   void LoadTransparencyInfo();
+  // EmbedPDF(overlay-epoch): a form drops its parsed objects when its stream
+  // has a newer version.
   void ResetParsedContent();
+  // EmbedPDF(layer-door): a holder opens its dictionary and resources for
+  // writing on their first actual write.
   virtual void EnsureMutableBackingObjectForDict();
   virtual void EnsureMutableBackingObjectForResources();
   virtual void EnsureMutableBackingObjectForPageResources();
 
   RetainPtr<CPDF_Dictionary> page_resources_;
   RetainPtr<CPDF_Dictionary> resources_;
+  // EmbedPDF(overlay-epoch): the dictionary and resources, and the overlay
+  // epoch each was read at.
   RetainPtr<CPDF_Dictionary> dict_;
   mutable uint64_t page_resources_epoch_ = 0;
   mutable uint64_t resources_epoch_ = 0;
   mutable uint64_t dict_epoch_ = 0;
   std::map<GraphicsData, ByteString> graphics_map_;
   std::map<FontData, ByteString> fonts_map_;
+  // EmbedPDF(faithful-content-rewrite): see FontsByObjnumSearch().
   std::map<uint32_t, ByteString> fonts_by_objnum_;
   std::map<ByteString, ByteString> colorspace_map_;
   CFX_FloatRect bbox_;
@@ -214,22 +231,28 @@ class CPDF_PageObjectHolder {
  private:
   bool background_alpha_needed_ = false;
   ParseState parse_state_ = ParseState::kNotParsed;
+  // EmbedPDF(page-residency, overlay-epoch): see GetObjectEdits(). Upstream's
+  // const `dict_` was here; it is protected now, so a holder can swap it for
+  // another version of the dictionary.
   uint64_t object_edits_ = 0;
   UnownedPtr<CPDF_Document> document_;
   std::vector<CFX_FloatRect> mask_bounding_boxes_;
   std::unique_ptr<CPDF_ContentParser> parser_;
   std::deque<std::unique_ptr<CPDF_PageObject>> page_object_list_;
-  // Computed on demand; dropped whenever `page_object_list_` changes.
+  // EmbedPDF(render-speedup): computed on demand; dropped whenever
+  // `page_object_list_` changes.
   mutable std::unique_ptr<CPDF_PageObjectGroups> object_groups_;
 
   CTMMap all_ctms_;
-  // EmbedPDF: the CTM the content begins with, in the space of page objects'
-  // matrices: the identity for a page, a form's /Matrix for a form drawn as
-  // page content (its objects' matrices include it).
+  // EmbedPDF(faithful-content-rewrite): the CTM the content begins with, in
+  // the space of page objects' matrices: the identity for a page, a form's
+  // /Matrix for a form drawn as page content (its objects' matrices include
+  // it).
   CFX_Matrix ctm_at_beginning_of_content_;
 
   // The indexes of Content streams that are dirty and need to be regenerated.
   std::set<int32_t> dirty_streams_;
+  // EmbedPDF(redaction): see ReplaceResource().
   ResourceReplacements resource_replacements_;
 
   // All the resources from `resources_` that are unused. Hold on to them here

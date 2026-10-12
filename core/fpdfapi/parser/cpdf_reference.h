@@ -22,6 +22,7 @@ class CPDF_Reference final : public CPDF_Object {
   // CPDF_Object:
   Type GetType() const override;
   RetainPtr<CPDF_Object> Clone() const override;
+  // EmbedPDF(layer-door): copy-up, and mutable reads through the door.
   RetainPtr<CPDF_Object> CloneForHolder(
       CPDF_IndirectObjectHolder* holder) const override;
   RetainPtr<CPDF_Object> GetMutableDirect() override;
@@ -29,6 +30,7 @@ class CPDF_Reference final : public CPDF_Object {
   float GetNumber() const override;
   int GetInteger() const override;
   CPDF_Reference* AsMutableReference() override;
+  // EmbedPDF(save-generations): writers carry the write context.
   using CPDF_Object::WriteTo;
   bool WriteTo(IFX_ArchiveStream* archive,
                const CPDF_Encryptor* encryptor,
@@ -51,6 +53,7 @@ class CPDF_Reference final : public CPDF_Object {
   RetainPtr<CPDF_Object> CloneNonCyclic(
       bool bDirect,
       std::set<const CPDF_Object*>* pVisited) const override;
+  // EmbedPDF(layer-door): references in the copy resolve through `holder`.
   RetainPtr<CPDF_Object> CloneForHolderNonCyclic(
       CPDF_IndirectObjectHolder* holder,
       std::set<const CPDF_Object*>* pVisited) const override;

@@ -30,6 +30,8 @@ RetainPtr<CPDF_Font> CPDF_TextState::GetFont() const {
   return ref_.GetObject()->font_;
 }
 
+// EmbedPDF(redaction): the resources the font was selected under; Type3
+// redaction reads them.
 RetainPtr<const CPDF_Dictionary> CPDF_TextState::GetFontResources() const {
   return ref_.GetObject()->font_resources_;
 }
@@ -105,6 +107,7 @@ pdfium::span<float> CPDF_TextState::GetMutableCTM() {
 
 CPDF_TextState::TextData::TextData() = default;
 
+// EmbedPDF(redaction): a copy keeps the font's resources.
 CPDF_TextState::TextData::TextData(const TextData& that)
     : font_(that.font_),
       font_resources_(that.font_resources_),

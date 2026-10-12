@@ -8,6 +8,7 @@
 
 #include "core/fxcrt/check.h"
 #include "core/fxcrt/fx_system.h"
+#include "core/fxge/cfx_fontmapper.h"
 #include "public/fpdfview.h"
 #include "testing/command_line_helpers.h"
 
@@ -58,6 +59,10 @@ void EmbedderTestEnvironment::SetUp() {
   FPDF_InitLibraryWithConfig(&config);
 
   test_fonts_.InstallFontMapper();
+  // EmbedPDF(fonts): standard fonts come from the test fonts, as upstream's
+  // tests expect. The product draws them with the built-in faces; our tests of
+  // that turn this off (EPDFViewEmbedderTest.StandardFontsDrawWithBuiltInFaces).
+  CFX_FontMapper::SetStandardFontsFromSystemForTesting(true);
 }
 
 void EmbedderTestEnvironment::TearDown() {

@@ -82,9 +82,9 @@ class CPDF_InteractiveForm {
   bool CheckRequiredFields(const std::vector<CPDF_FormField*>* fields,
                            bool bIncludeOrExclude) const;
 
-  // EmbedPDF: |skip_empty_required| preserves the historic submission
-  // behavior of omitting required fields whose value is empty; pass false
-  // for faithful interchange exports.
+  // EmbedPDF(forms-model): |skip_empty_required| preserves the historic
+  // submission behavior of omitting required fields whose value is empty;
+  // pass false for faithful interchange exports.
   std::unique_ptr<CFDF_Document> ExportToFDF(
       const WideString& pdf_path,
       bool skip_empty_required = true) const;
@@ -100,8 +100,8 @@ class CPDF_InteractiveForm {
   void SetNotifierIface(NotifierIface* notify);
   void FixPageFields(CPDF_Page* page);
 
-  // EmbedPDF: Load a widget annotation that is reachable from a page's
-  // /Annots array but not from the /AcroForm /Fields tree. Climbs the
+  // EmbedPDF(forms-model): load a widget annotation that is reachable from a
+  // page's /Annots array but not from the /AcroForm /Fields tree. Climbs the
   // /Parent chain to the field root first, so sibling widgets of a
   // partially linked field reconcile onto a single logical field.
   // In-memory reconciliation only; never writes to the document.
@@ -121,13 +121,14 @@ class CPDF_InteractiveForm {
   CPDF_Document* document() { return document_; }
 
  private:
-  // EmbedPDF: Rebind an indirect dictionary to the document's current view
-  // of that object number. On layer documents this returns the promoted
-  // clone when one exists; references held by frozen base objects resolve
-  // to stale frozen instances otherwise. Identity on plain documents.
+  // EmbedPDF(forms-model): rebind an indirect dictionary to the document's
+  // current view of that object number. On layer documents this returns the
+  // promoted clone when one exists; references held by frozen base objects
+  // resolve to stale frozen instances otherwise. Identity on plain documents.
   RetainPtr<const CPDF_Dictionary> ResolveCurrentDict(
       RetainPtr<const CPDF_Dictionary> dict) const;
 
+  // EmbedPDF(reads-dont-write): loading the form walks const dictionaries.
   void LoadField(RetainPtr<const CPDF_Dictionary> field_dict, int nLevel);
   void AddTerminalField(RetainPtr<const CPDF_Dictionary> field_dict);
   CPDF_FormControl* AddControl(CPDF_FormField* field,

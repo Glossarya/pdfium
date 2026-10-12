@@ -59,6 +59,8 @@ void CPDF_Type3Font::WillBeDestroyed() {
   }
 }
 
+// EmbedPDF(faithful-content-rewrite, redaction): one test for whether glyphs
+// borrow the resources of the content drawing them.
 // static
 bool CPDF_Type3Font::GlyphsUseContentResources(
     const CPDF_Dictionary* font_dict) {
@@ -66,6 +68,8 @@ bool CPDF_Type3Font::GlyphsUseContentResources(
 }
 
 bool CPDF_Type3Font::Load() {
+  // EmbedPDF(reads-dont-write): read without the mutable getter; the cast only
+  // fits the member's mutable type, nothing writes through it.
   RetainPtr<const CPDF_Dictionary> font_resources =
       font_dict_->GetDictFor("Resources");
   font_resources_ =
@@ -102,6 +106,8 @@ bool CPDF_Type3Font::Load() {
       }
     }
   }
+  // EmbedPDF(reads-dont-write): read without the mutable getter; the cast only
+  // fits the member's mutable type, nothing writes through it.
   RetainPtr<const CPDF_Dictionary> char_procs =
       font_dict_->GetDictFor("CharProcs");
   char_procs_ =
@@ -118,6 +124,7 @@ void CPDF_Type3Font::CheckType3FontMetrics() {
   CheckFontMetrics();
 }
 
+// EmbedPDF(redaction): the Type3 redactor finds a glyph's procedure by this.
 const char* CPDF_Type3Font::GetCharProcName(uint32_t charcode) const {
   return GetAdobeCharName(base_encoding_, char_names_, charcode);
 }
@@ -132,6 +139,7 @@ CPDF_Type3Char* CPDF_Type3Font::LoadChar(uint32_t charcode) {
     return it->second.get();
   }
 
+  // EmbedPDF(redaction): the same name lookup the Type3 redactor uses.
   const char* name = GetCharProcName(charcode);
   if (!name) {
     return nullptr;
@@ -141,6 +149,8 @@ CPDF_Type3Char* CPDF_Type3Font::LoadChar(uint32_t charcode) {
     return nullptr;
   }
 
+  // EmbedPDF(reads-dont-write): read without the mutable getter; the cast only
+  // fits the member's mutable type, nothing writes through it.
   RetainPtr<const CPDF_Stream> const_stream =
       ToStream(char_procs_->GetDirectObjectFor(name));
   RetainPtr<CPDF_Stream> pStream =
@@ -149,6 +159,9 @@ CPDF_Type3Char* CPDF_Type3Font::LoadChar(uint32_t charcode) {
     return nullptr;
   }
 
+  // EmbedPDF(faithful-content-rewrite, redaction): glyphs borrow the
+  // content's resources by the one test resource pruning and the Type3
+  // redactor also use.
   std::unique_ptr<CPDF_Font::FormIface> pForm = form_factory_->CreateForm(
       document_,
       GlyphsUseContentResources(font_dict_.Get()) ? page_resources_

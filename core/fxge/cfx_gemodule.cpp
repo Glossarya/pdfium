@@ -13,9 +13,9 @@
 
 namespace {
 
-// EmbedPDF: thread-confined runtime - each worker thread owns its own
-// CFX_GEModule (FreeType FT_Library + font/glyph caches), created and destroyed
-// on that thread.
+// EmbedPDF(thread-confined-globals): each worker thread owns its own
+// CFX_GEModule (FreeType FT_Library + font/glyph caches), created and
+// destroyed on that thread.
 EPDF_TLS CFX_GEModule* g_pGEModule = nullptr;
 
 }  // namespace

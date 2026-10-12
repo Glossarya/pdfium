@@ -20,10 +20,13 @@
 #include "core/fpdfapi/parser/cpdf_stream_acc.h"
 #include "core/fpdfapi/parser/cpdf_string.h"
 #include "core/fpdfdoc/cpdf_annotfontmap.h"
-#include "core/fpdfdoc/cpdf_generateap.h"
+#include "core/fpdfdoc/cpdf_appearancegenerator.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "public/cpp/fpdf_scopers.h"
+#include "public/epdf_annot.h"
 #include "public/epdf_font.h"
+#include "public/epdf_layer.h"
+#include "public/epdf_save.h"
 #include "public/fpdf_edit.h"
 #include "public/fpdf_save.h"
 #include "testing/embedder_test.h"
@@ -681,7 +684,7 @@ TEST_F(EPDFMeasureEmbedderTest, LayerAppearanceAndEphemeralRead) {
       CPDFAnnotContextFromFPDFAnnotation(a.get())->GetAnnotDict();
   auto before = doc->GetLastObjNum();
   const auto loaded_count = EPDFLayer_GetPromotedObjectCount(layer.layer);
-  auto generated = CPDF_GenerateAP::GenerateEphemeralAnnotAP(
+  auto generated = CPDF_AppearanceGenerator::GenerateEphemeralAnnotAP(
       doc, dict, CPDF_Annot::Subtype::LINE);
   ASSERT_TRUE(generated);
   EXPECT_EQ(before, doc->GetLastObjNum());
@@ -979,7 +982,7 @@ TEST_F(EPDFMeasureEmbedderTest,
       CPDFAnnotContextFromFPDFAnnotation(a.get())->GetAnnotDict();
   auto original = dict->Clone();
   auto objects = doc->GetLastObjNum();
-  auto generated = CPDF_GenerateAP::GenerateEphemeralAnnotAP(
+  auto generated = CPDF_AppearanceGenerator::GenerateEphemeralAnnotAP(
       doc, dict, CPDF_Annot::Subtype::LINE);
   ASSERT_TRUE(generated);
   ASSERT_TRUE(generated->font_lifetime);

@@ -49,6 +49,7 @@
 #include "core/fxge/fx_font.h"
 #include "core/fxge/text_char_pos.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
+#include "public/epdf_edit.h"
 #include "public/fpdf_edit.h"
 
 // These checks are here because core/ and public/ cannot depend on each other.
@@ -1103,6 +1104,7 @@ FPDFGlyphPath_GetGlyphPathSegment(FPDF_GLYPHPATH glyphpath, int index) {
   return FPDFPathSegmentFromFXPathPoint(&points[index]);
 }
 
+// EmbedPDF(epdf-api): EPDFText_RedactInRect and EPDFText_RedactInQuads.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFText_RedactInRect(FPDF_PAGE page, const FS_RECTF* rect, FPDF_BOOL recurse, FPDF_BOOL draw_black_boxes) {
   if (!page || !rect)

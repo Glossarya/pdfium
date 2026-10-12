@@ -68,6 +68,7 @@ void CPDF_FlateEncoder::UpdateLength(size_t size) {
   cloned_dict_->SetNewFor<CPDF_Number>("Length", static_cast<int>(size));
 }
 
+// EmbedPDF(save-generations): writers carry the write context.
 bool CPDF_FlateEncoder::WriteDictTo(IFX_ArchiveStream* archive,
                                     const CPDF_Encryptor* encryptor,
                                     const CPDF_WriteContext* context) const {

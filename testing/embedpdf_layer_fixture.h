@@ -7,6 +7,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "public/epdf_layer.h"
 #include "public/fpdf_save.h"
 #include "public/fpdfview.h"
 #include "testing/utils/file_util.h"

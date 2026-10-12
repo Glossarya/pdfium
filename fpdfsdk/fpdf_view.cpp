@@ -74,6 +74,7 @@
 #include "fpdfsdk/epdf_budget_pause.h"
 #include "fxjs/ijs_runtime.h"
 #include "public/epdf_named_pages.h"
+#include "public/epdf_view.h"
 #include "public/fpdf_formfill.h"
 
 #ifdef PDF_ENABLE_V8
@@ -125,8 +126,9 @@ static_assert(static_cast<int>(CFX_DefaultRenderDevice::RendererType::kSkia) ==
 
 namespace {
 
-// EmbedPDF: thread-confined runtime - each worker thread tracks its own
-// library-initialized state so per-thread Init/Destroy don't race.
+// EmbedPDF(per-thread-init, thread-confined-globals): each worker thread
+// tracks its own library-initialized state so per-thread Init/Destroy don't
+// race.
 EPDF_TLS bool g_bLibraryInitialized = false;
 
 void SetRendererType(FPDF_RENDERER_TYPE public_type) {
@@ -288,8 +290,9 @@ FPDF_EXPORT void FPDF_CALLCONV FPDF_DestroyLibrary() {
   CFX_GlyphCache::DestroyGlobals();
 #endif
 
-  // EmbedPDF: registered runtime fonts are global/TLS-backed PDFium state, so
-  // tear them down with the rest of the library singletons.
+  // EmbedPDF(fonts, per-thread-init): registered runtime fonts are
+  // global/TLS-backed PDFium state, so tear them down with the rest of the
+  // library singletons.
   CFX_FontRegistry::DestroyGlobals();
   pdfium::DestroyPageModule();
   CFX_GEModule::Destroy();
@@ -465,6 +468,8 @@ FPDF_GetSecurityHandlerRevision(FPDF_DOCUMENT document) {
   return dict ? dict->GetIntegerFor("R") : -1;
 }
 
+// EmbedPDF(epdf-api): EPDF_* encryption, password probe and owner unlock
+// functions.
 namespace {
 
 // Build P value with correct reserved bits for R>=3 (including R=4 and R=6)
@@ -738,8 +743,9 @@ namespace {
 // overridden to 0 so all subsequent operations use normalized 0-degree
 // coordinates (the intrinsic rotation is surfaced separately via
 // EPDF_GetPageRotateByIndex). Returns nullptr on any failure.
-// EmbedPDF: the page at `page_index`, which the caller checked, not parsed
-// yet.
+// EmbedPDF(sliced-load, reads-dont-write): the page at `page_index`, which
+// the caller checked, not parsed yet. It takes the page dictionary without
+// the mutable getter; the page copies it up on its first write.
 RetainPtr<CPDF_Page> NewPage(CPDF_Document* doc, int page_index) {
   RetainPtr<const CPDF_Dictionary> const_dict =
       doc->GetPageDictionary(page_index);
@@ -754,6 +760,8 @@ RetainPtr<CPDF_Page> NewPage(CPDF_Document* doc, int page_index) {
   return pPage;
 }
 
+// EmbedPDF(epdf-api): FPDF_LoadPage()'s body, shared with the EPDF page
+// loads.
 FPDF_PAGE LoadPageByValidatedIndex(FPDF_DOCUMENT document,
                                    CPDF_Document* doc,
                                    int page_index,
@@ -769,12 +777,14 @@ FPDF_PAGE LoadPageByValidatedIndex(FPDF_DOCUMENT document,
   }
 #endif  // PDF_ENABLE_XFA
 
+  // EmbedPDF(reads-dont-write, sliced-load): see NewPage().
   RetainPtr<CPDF_Page> pPage = NewPage(doc, page_index);
   if (!pPage) {
     return nullptr;
   }
   pPage->ParseContent();
 
+  // EmbedPDF(epdf-api): for the normalized EPDF page loads.
   // Force rotation to 0 - this re-runs UpdateDimensions() so page_size_ and
   // page_matrix_ are calculated as if rotation=0.
   if (normalize) {
@@ -792,10 +802,13 @@ FPDF_EXPORT FPDF_PAGE FPDF_CALLCONV FPDF_LoadPage(FPDF_DOCUMENT document,
   if (!doc) {
     return nullptr;
   }
+  // EmbedPDF(epdf-api): upstream's body, shared with the EPDF page loads.
   return LoadPageByValidatedIndex(document, doc, page_index,
                                   /*normalize=*/false);
 }
 
+// EmbedPDF(epdf-api): EPDFDoc_* page functions by object number, the sliced
+// page load and EPDFPage_GetObjectNumber.
 FPDF_EXPORT FPDF_PAGE FPDF_CALLCONV
 EPDFDoc_LoadPageByObjectNumber(FPDF_DOCUMENT document, unsigned int obj_num) {
   auto* doc = CPDFDocumentFromFPDFDocument(document);
@@ -1100,6 +1113,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDF_RenderPage(HDC dc,
                                                     int size_y,
                                                     int rotate,
                                                     int flags) {
+  // EmbedPDF(view-scope): read through the document's view scope.
   ScopedFPDFPageView page_view(page);
   if (!page_view) {
     return false;
@@ -1226,6 +1240,7 @@ FPDF_EXPORT void FPDF_CALLCONV FPDF_RenderPageBitmap(FPDF_BITMAP bitmap,
                                                      int size_y,
                                                      int rotate,
                                                      int flags) {
+  // EmbedPDF(view-scope): read through the document's view scope.
   ScopedFPDFPageView page_view(page);
   if (!page_view) {
     return;
@@ -1263,6 +1278,7 @@ FPDF_RenderPageBitmapWithMatrix(FPDF_BITMAP bitmap,
                                 const FS_MATRIX* matrix,
                                 const FS_RECTF* clipping,
                                 int flags) {
+  // EmbedPDF(view-scope): read through the document's view scope.
   ScopedFPDFPageView page_view(page);
   if (!page_view) {
     return;
@@ -1302,6 +1318,8 @@ FPDF_RenderPageBitmapWithMatrix(FPDF_BITMAP bitmap,
                      /*color_scheme=*/nullptr);
 }
 
+// EmbedPDF(epdf-api): EPDF_RenderAnnotBitmap*, the decoded-image budget and
+// EPDFPage_ResetRenderCache.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDF_RenderAnnotBitmap(FPDF_BITMAP bitmap,
                        FPDF_PAGE page,
@@ -1519,6 +1537,7 @@ FPDF_EXPORT void FPDF_CALLCONV FPDF_RenderPageSkia(FPDF_SKIA_CANVAS canvas,
     return;
   }
 
+  // EmbedPDF(view-scope): read through the document's view scope.
   ScopedFPDFPageView page_view(page);
   if (!page_view) {
     return;
@@ -1562,6 +1581,8 @@ FPDF_EXPORT void FPDF_CALLCONV FPDF_ClosePage(FPDF_PAGE page) {
 }
 
 FPDF_EXPORT void FPDF_CALLCONV FPDF_CloseDocument(FPDF_DOCUMENT document) {
+  // EmbedPDF(decoded-image-store): the store drops the document's decoded
+  // images before the document goes.
   CPDF_Document* doc = CPDFDocumentFromFPDFDocument(document);
   // Its decoded images hold its streams, which must not outlive it.
   if (doc && CPDF_DecodedImageStore::Get()) {
@@ -1822,6 +1843,8 @@ FPDF_GetPageSizeByIndexF(FPDF_DOCUMENT document,
   }
 #endif  // PDF_ENABLE_XFA
 
+  // EmbedPDF(reads-dont-write): read without the mutable getter; the cast only
+  // fits CPDF_Page's mutable type, nothing writes through it.
   RetainPtr<const CPDF_Dictionary> const_dict =
       doc->GetPageDictionary(page_index);
   RetainPtr<CPDF_Dictionary> dict =
@@ -1837,6 +1860,8 @@ FPDF_GetPageSizeByIndexF(FPDF_DOCUMENT document,
   return true;
 }
 
+// EmbedPDF(epdf-api): EPDF_GetPage*ByIndex (rotation, tab order, boxes,
+// UserUnit) and EPDF_LoadPageNormalized, with their helpers.
 static RetainPtr<const CPDF_Dictionary> GetPageDictionaryByIndex(
     FPDF_DOCUMENT document,
     CPDF_Document* doc,
@@ -2156,6 +2181,7 @@ FPDF_VIEWERREF_GetName(FPDF_DOCUMENT document,
 
 FPDF_EXPORT FPDF_DWORD FPDF_CALLCONV
 FPDF_CountNamedDests(FPDF_DOCUMENT document) {
+  // EmbedPDF(view-scope): read through the document's view scope.
   ScopedFPDFDocumentView document_view(document);
   CPDF_Document* doc = document_view.Get();
   if (!doc) {
@@ -2167,6 +2193,7 @@ FPDF_CountNamedDests(FPDF_DOCUMENT document) {
     return 0;
   }
 
+  // EmbedPDF(reads-dont-write): read the name tree without mutable getters.
   auto name_tree = CPDF_NameTree::CreateForReading(doc, "Dests");
   FX_SAFE_UINT32 count = name_tree ? name_tree->GetCount() : 0;
   RetainPtr<const CPDF_Dictionary> pOldStyleDests = pRoot->GetDictFor("Dests");
@@ -2182,6 +2209,7 @@ FPDF_GetNamedDestByName(FPDF_DOCUMENT document, FPDF_BYTESTRING name) {
     return nullptr;
   }
 
+  // EmbedPDF(view-scope): read through the document's view scope.
   ScopedFPDFDocumentView document_view(document);
   CPDF_Document* doc = document_view.Get();
   if (!doc) {
@@ -2280,6 +2308,7 @@ FPDF_EXPORT FPDF_DEST FPDF_CALLCONV FPDF_GetNamedDest(FPDF_DOCUMENT document,
     return nullptr;
   }
 
+  // EmbedPDF(view-scope): read through the document's view scope.
   ScopedFPDFDocumentView document_view(document);
   CPDF_Document* doc = document_view.Get();
   if (!doc) {
@@ -2291,6 +2320,7 @@ FPDF_EXPORT FPDF_DEST FPDF_CALLCONV FPDF_GetNamedDest(FPDF_DOCUMENT document,
     return nullptr;
   }
 
+  // EmbedPDF(reads-dont-write): read the name tree without mutable getters.
   auto name_tree = CPDF_NameTree::CreateForReading(doc, "Dests");
   size_t name_tree_count = name_tree ? name_tree->GetCount() : 0;
   RetainPtr<const CPDF_Object> pDestObj;

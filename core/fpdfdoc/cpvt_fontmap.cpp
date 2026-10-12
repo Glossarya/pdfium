@@ -81,10 +81,11 @@ ByteString CPVT_FontMap::GetPDFFontAlias(int32_t nFontIndex) {
 int32_t CPVT_FontMap::GetWordFontIndex(uint16_t word,
                                        FX_Charset charset,
                                        int32_t nFontIndex) {
-  // EmbedPDF: preserve upstream shared AP behavior for the default form/popup
-  // font map: choose the DA font first, then PDFium's native annotation font,
-  // based only on CharCodeFromUnicode(). Stricter glyph checks live in
-  // CPDF_AnnotFontMap, which is used only by registered FreeText fonts.
+  // EmbedPDF(fonts): preserve upstream shared AP behavior for the default
+  // form/popup font map: choose the DA font first, then PDFium's native
+  // annotation font, based only on CharCodeFromUnicode(). Stricter glyph
+  // checks live in CPDF_AnnotFontMap, which is used only by registered
+  // FreeText fonts.
   if (RetainPtr<CPDF_Font> pDefFont = GetPDFFont(0)) {
     if (pDefFont->CharCodeFromUnicode(word) != CPDF_Font::kInvalidCharCode) {
       return 0;
@@ -99,9 +100,9 @@ int32_t CPVT_FontMap::GetWordFontIndex(uint16_t word,
 }
 
 int32_t CPVT_FontMap::CharCodeFromUnicode(int32_t nFontIndex, uint16_t word) {
-  // EmbedPDF: default implementation is equivalent to the old shared AP path's
-  // direct pdf_font->CharCodeFromUnicode() call. The hook exists so specialized
-  // font maps can return registered-font subset glyph ids.
+  // EmbedPDF(fonts): default implementation is equivalent to the old shared AP
+  // path's direct pdf_font->CharCodeFromUnicode() call. The hook exists so
+  // specialized font maps can return registered-font subset glyph ids.
   RetainPtr<CPDF_Font> font = GetPDFFont(nFontIndex);
   if (!font) {
     return -1;
@@ -116,8 +117,8 @@ int32_t CPVT_FontMap::CharCodeFromUnicode(int32_t nFontIndex, uint16_t word) {
 
 FX_Charset CPVT_FontMap::CharSetFromUnicode(uint16_t word,
                                             FX_Charset nOldCharset) {
-  // EmbedPDF: provide a conservative default implementation for the PVT
-  // provider hook; registered annotation maps may override as needed.
+  // EmbedPDF(fonts): provide a conservative default implementation for the
+  // PVT provider hook; registered annotation maps may override as needed.
   if (word < 0x7F) {
     return FX_Charset::kANSI;
   }

@@ -56,6 +56,11 @@ class CFX_FontMapper {
   static bool IsStandardFontName(const ByteString& name);
   static bool IsSymbolicFont(StandardFont font);
   static bool IsFixedFont(StandardFont font);
+  // EmbedPDF(fonts): with `from_system`, a standard font is looked up among
+  // the system's fonts, as upstream does, instead of drawing with PDFium's
+  // built-in face. Upstream's embedder tests turn it on: they expect the
+  // test fonts.
+  static void SetStandardFontsFromSystemForTesting(bool from_system);
   static constexpr uint32_t MakeTag(char c1, char c2, char c3, char c4) {
     return static_cast<uint8_t>(c1) << 24 | static_cast<uint8_t>(c2) << 16 |
            static_cast<uint8_t>(c3) << 8 | static_cast<uint8_t>(c4);

@@ -316,6 +316,8 @@ void CFX_Path::AppendPointAndClose(const CFX_PointF& point, Point::Type type) {
   points_.emplace_back(point, type, /*close=*/true);
 }
 
+// EmbedPDF(render-speedup): the content parser hands over a path's points at
+// once.
 void CFX_Path::AppendPoints(pdfium::span<const Point> points) {
   points_.insert(points_.end(), points.begin(), points.end());
 }

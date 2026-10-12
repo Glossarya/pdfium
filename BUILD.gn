@@ -200,10 +200,24 @@ source_set("pdfium_public_headers_impl") {
     "public/cpp/fpdf_scopers.h",
     # EmbedPDF: detached, read-only PDF action models.
     "public/epdf_action.h",
+    # EmbedPDF: the annotation API that extends public/fpdf_annot.h.
+    "public/epdf_annot.h",
+    # EmbedPDF: what we add to public/fpdf_attachment.h.
+    "public/epdf_attachment.h",
+    # EmbedPDF: what we add to public/fpdf_catalog.h.
+    "public/epdf_catalog.h",
+    # EmbedPDF: base documents and layers.
+    "public/epdf_layer.h",
     # EmbedPDF: captures of what a layer write loses, put back by an undo.
     "public/epdf_capture.h",
     # EmbedPDF: digests of bytes in memory, one implementation for every caller.
     "public/epdf_digest.h",
+    # EmbedPDF: what we add to public/fpdf_doc.h.
+    "public/epdf_doc.h",
+    # EmbedPDF: what we add to public/fpdf_edit.h.
+    "public/epdf_edit.h",
+    # EmbedPDF: what we add to public/fpdf_flatten.h.
+    "public/epdf_flatten.h",
     # EmbedPDF: public runtime font registration API used by page fallback
     # rendering and annotation authoring.
     "public/epdf_font.h",
@@ -215,11 +229,19 @@ source_set("pdfium_public_headers_impl") {
     "public/epdf_signature.h",
     # EmbedPDF: generic namespace-scoped document/page /PieceInfo metadata.
     "public/epdf_pieceinfo.h",
+    # EmbedPDF: PNG encoding of RGBA bitmaps.
+    "public/epdf_png.h",
+    # EmbedPDF: what we add to public/fpdf_progressive.h.
+    "public/epdf_progressive.h",
     # EmbedPDF: typed measurement, viewport and caption API.
     "public/epdf_measure.h",
     "public/epdf_redact.h",
+    # EmbedPDF: what we add to public/fpdf_save.h.
+    "public/epdf_save.h",
     # EmbedPDF: one-call exact oriented glyph geometry.
     "public/epdf_text.h",
+    # EmbedPDF: what we add to public/fpdfview.h.
+    "public/epdf_view.h",
     "public/fpdf_annot.h",
     "public/fpdf_attachment.h",
     "public/fpdf_catalog.h",
@@ -241,8 +263,6 @@ source_set("pdfium_public_headers_impl") {
     "public/fpdf_text.h",
     "public/fpdf_transformpage.h",
     "public/fpdfview.h",
-    "public/fpdf_png.h",
-    "public/fpdf_jpeg.h",
   ]
 }
 

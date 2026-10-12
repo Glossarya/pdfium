@@ -49,6 +49,7 @@ namespace {
 
 const size_t kArchiveBufferSize = 32768;
 
+// EmbedPDF(layer-save): the append-only and skip-if-unchanged layer saves.
 constexpr Mask<CPDF_Creator::CreateFlags> kAllValidFlags{
     CPDF_Creator::CreateFlags::kIncremental,
     CPDF_Creator::CreateFlags::kNoOriginal,
@@ -59,6 +60,7 @@ constexpr Mask<CPDF_Creator::CreateFlags> kAllValidFlags{
 constexpr Mask<CPDF_Creator::CreateFlags> kConflictingFlags{
     CPDF_Creator::CreateFlags::kIncremental,
     CPDF_Creator::CreateFlags::kNoOriginal};
+// EmbedPDF(layer-save): the largest offset a cross-reference entry can hold.
 constexpr FX_FILESIZE kMaxFourByteXrefOffset = 0xffffffff;
 
 class CFX_FileBufferArchive final : public IFX_ArchiveStream {
@@ -68,6 +70,8 @@ class CFX_FileBufferArchive final : public IFX_ArchiveStream {
 
   bool WriteBlock(pdfium::span<const uint8_t> buffer) override;
   FX_FILESIZE CurrentOffset() const override { return offset_; }
+  // EmbedPDF(layer-save): an append-only delta's offsets count from the end of
+  // what it is appended to.
   void SetNotionalStartOffset(FX_FILESIZE offset) { offset_ = offset; }
 
  private:
@@ -133,6 +137,8 @@ std::array<uint32_t, 4> GenerateFileID(uint32_t dwSeed1, uint32_t dwSeed2) {
   return buffer;
 }
 
+// EmbedPDF(save-generations): a cross-reference stream entry carries its
+// object's generation, in two bytes.
 bool OutputIndex(IFX_ArchiveStream* archive,
                  FX_FILESIZE offset,
                  uint32_t generation) {
@@ -144,10 +150,14 @@ bool OutputIndex(IFX_ArchiveStream* archive,
          archive->WriteByte(static_cast<uint8_t>(generation));
 }
 
+// EmbedPDF(layer-save): a 64-bit offset in ten digits; upstream formatted it
+// with %d. An append-only delta's offsets start where its base ends.
 ByteString FormatXrefOffset10(FX_FILESIZE offset) {
   return ByteString::Format("%010" PRId64, static_cast<int64_t>(offset));
 }
 
+// EmbedPDF(save-generations): the generations the input file, or a layer's
+// loaded delta, gives its objects.
 class InputWriteContext final : public CPDF_WriteContext {
  public:
   explicit InputWriteContext(const CPDF_Parser* parser,
@@ -172,8 +182,10 @@ class InputWriteContext final : public CPDF_WriteContext {
   UnownedPtr<const CPDF_LayerDocument> const layer_;
 };
 
-// Only numbered objects enter the work queue. Inline containers are visited
-// within one object; primitive values need no persistent traversal state.
+// EmbedPDF(save-traversal): the queue a save walks from its roots, one bit
+// per visited object. Only numbered objects enter the work queue. Inline
+// containers are visited within one object; primitive values need no
+// persistent traversal state.
 class SaveObjectWorklist {
  public:
   explicit SaveObjectWorklist(CPDF_SaveObjectReader* preferred_reader = nullptr)
@@ -237,11 +249,14 @@ CPDF_Creator::CPDF_Creator(CPDF_Document* doc,
 
 CPDF_Creator::~CPDF_Creator() = default;
 
+// EmbedPDF(layer-save): FormatXrefOffset10() for tests.
 // static
 ByteString CPDF_Creator::FormatXrefOffset10ForTesting(FX_FILESIZE offset) {
   return FormatXrefOffset10(offset);
 }
 
+// EmbedPDF(save-generations): an object keeps its generation, in its header,
+// its encryption key and the references it writes.
 bool CPDF_Creator::WriteIndirectObj(uint32_t objnum, const CPDF_Object* pObj) {
   const uint32_t generation = GetObjectGeneration(objnum);
   if (!archive_->WriteDWord(objnum) || !archive_->WriteString(" ") ||
@@ -262,6 +277,8 @@ bool CPDF_Creator::WriteIndirectObj(uint32_t objnum, const CPDF_Object* pObj) {
   return archive_->WriteString("\r\nendobj\r\n");
 }
 
+// EmbedPDF(save-generations): the generation an incremental save writes for an
+// object: the layer's version's, or the input file's. A full save writes 0.
 uint32_t CPDF_Creator::GetObjectGeneration(uint32_t object_number) const {
   if (!is_incremental_) {
     return 0;
@@ -279,6 +296,8 @@ uint32_t CPDF_Creator::GetObjectGeneration(uint32_t object_number) const {
   return 0;
 }
 
+// EmbedPDF(save-generations): a trailer reference with its target's
+// generation.
 bool CPDF_Creator::WriteReference(uint32_t object_number) {
   return archive_->WriteString(" ") && archive_->WriteDWord(object_number) &&
          archive_->WriteString(" ") &&
@@ -286,6 +305,9 @@ bool CPDF_Creator::WriteReference(uint32_t object_number) {
          archive_->WriteString(" R");
 }
 
+// EmbedPDF(save-traversal): a full save walks the live objects from the
+// trailer's roots and reads them through CPDF_SaveObjectReader, without filling
+// the document's caches. Replaces WriteOldIndirectObject() and WriteOldObjs().
 bool CPDF_Creator::WriteFullDocument() {
   CPDF_DocumentViewScope view(document_);
   CPDF_SaveObjectReader reader(document_);
@@ -317,6 +339,8 @@ bool CPDF_Creator::WriteFullDocument() {
   return true;
 }
 
+// EmbedPDF(view-scope, layer-save): objects are read as the layer sees them,
+// and the cross-reference lists only the ones written.
 bool CPDF_Creator::WriteNewObjs() {
   CPDF_DocumentViewScope view(document_);
   std::vector<uint32_t> written_new_obj_nums;
@@ -337,6 +361,8 @@ bool CPDF_Creator::WriteNewObjs() {
   return true;
 }
 
+// EmbedPDF(layer-save): refuse an offset a cross-reference entry can't hold;
+// an append-only delta's offsets start where its base ends.
 bool CPDF_Creator::CheckEmittedOffset(FX_FILESIZE offset) {
   if (offset <= kMaxFourByteXrefOffset) {
     return true;
@@ -345,6 +371,10 @@ bool CPDF_Creator::CheckEmittedOffset(FX_FILESIZE offset) {
   return false;
 }
 
+// EmbedPDF(layer-save, save-traversal): an incremental save writes the objects
+// that differ from the base and that a saved root still reaches, and records
+// whether any differ from what the layer loaded. Replaces
+// InitNewObjNumOffsets().
 void CPDF_Creator::PrepareIncrementalObjects() {
   struct Change {
     bool differs_from_base;
@@ -452,6 +482,8 @@ CPDF_Creator::Stage CPDF_Creator::WriteDoc_Stage1() {
       }
       stage_ = Stage::kInitWriteObjs20;
     } else {
+      // EmbedPDF(layer-save): an append-only delta continues from the end of
+      // the layer's base and loaded delta.
       saved_offset_ = is_incremental_append_only_
                           ? document_->GetLayerAppendBaseOffset()
                           : parser_->GetDocumentSize();
@@ -459,6 +491,7 @@ CPDF_Creator::Stage CPDF_Creator::WriteDoc_Stage1() {
     }
   }
   if (stage_ == Stage::kWriteIncremental15) {
+    // EmbedPDF(layer-save): an append-only delta copies no original bytes.
     if (is_original_ && !is_incremental_append_only_ && saved_offset_ > 0) {
       if (!parser_->WriteToArchive(archive_.get(), saved_offset_)) {
         failure_reason_ = FailureReason::kArchiveError;
@@ -476,6 +509,8 @@ CPDF_Creator::Stage CPDF_Creator::WriteDoc_Stage1() {
     }
     stage_ = Stage::kInitWriteObjs20;
   }
+  // EmbedPDF(layer-save): no InitNewObjNumOffsets() here: Create() picks the
+  // objects an incremental save writes (PrepareIncrementalObjects()).
   return stage_;
 }
 
@@ -483,6 +518,9 @@ CPDF_Creator::Stage CPDF_Creator::WriteDoc_Stage2() {
   DCHECK(stage_ >= Stage::kInitWriteObjs20 ||
          stage_ < Stage::kInitWriteXRefs80);
   if (stage_ == Stage::kInitWriteObjs20) {
+    // EmbedPDF(save-traversal): a full save writes what WriteFullDocument()
+    // reaches from the trailer's roots, new objects included; the old-objects
+    // stage (kWriteOldObjs21) is gone.
     if (!is_incremental_) {
       if (!WriteFullDocument()) {
         return Stage::kInvalid;
@@ -505,6 +543,8 @@ CPDF_Creator::Stage CPDF_Creator::WriteDoc_Stage2() {
   }
   if (stage_ == Stage::kWriteEncryptDict27) {
     if (encrypt_dict_ && encrypt_dict_->IsInline()) {
+      // EmbedPDF(save-traversal): the number the trailer gives the encryption
+      // dictionary (BuildTrailer()).
       const uint32_t encryption_number = trailer_->encryption_number();
       last_obj_num_ = std::max(last_obj_num_, encryption_number);
       FX_FILESIZE saveOffset = archive_->CurrentOffset();
@@ -530,14 +570,16 @@ CPDF_Creator::Stage CPDF_Creator::WriteDoc_Stage3() {
   if (stage_ == Stage::kInitWriteXRefs80) {
     if (is_incremental_ && skip_empty_revision_ &&
         new_obj_num_array_.empty()) {
-      // EmbedPDF: an incremental save of a layer with nothing to write
-      // appends no revision at all - not even an empty cross-reference
+      // EmbedPDF(layer-save): an incremental save of a layer with nothing to
+      // write appends no revision at all - not even an empty cross-reference
       // section. Standalone output is the base bytes copied through; an
       // append-only delta is empty (the layer equals its base).
       stage_ = Stage::kComplete100;
       return stage_;
     }
     xref_start_ = archive_->CurrentOffset();
+    // EmbedPDF(layer-save): an append-only delta writes a cross-reference
+    // table, never a stream.
     if (!is_incremental_ || is_incremental_append_only_ ||
         !parser_->IsXRefStream()) {
       if (!is_incremental_ || parser_->GetLastXRefOffset() == 0) {
@@ -592,6 +634,8 @@ CPDF_Creator::Stage CPDF_Creator::WriteDoc_Stage3() {
       }
 
       while (i < j) {
+        // EmbedPDF(save-generations, layer-save): each entry carries its
+        // object's generation, and only an offset an entry can hold.
         const uint32_t objnum = i++;
         const FX_FILESIZE offset = object_offsets_[objnum];
         if (!CheckEmittedOffset(offset)) {
@@ -639,6 +683,8 @@ CPDF_Creator::Stage CPDF_Creator::WriteDoc_Stage3() {
 
       while (i < j) {
         objnum = new_obj_num_array_[i++];
+        // EmbedPDF(save-generations, layer-save): each entry carries its
+        // object's generation, and only an offset an entry can hold.
         const FX_FILESIZE offset = object_offsets_[objnum];
         if (!CheckEmittedOffset(offset)) {
           return Stage::kInvalid;
@@ -658,6 +704,8 @@ CPDF_Creator::Stage CPDF_Creator::WriteDoc_Stage3() {
 CPDF_Creator::Stage CPDF_Creator::WriteDoc_Stage4() {
   DCHECK(stage_ >= Stage::kWriteTrailerAndFinish90);
 
+  // EmbedPDF(layer-save): an append-only delta writes a cross-reference
+  // table, never a stream.
   bool bXRefStream = is_incremental_ && !is_incremental_append_only_ &&
                      parser_->IsXRefStream();
   if (!bXRefStream) {
@@ -665,12 +713,16 @@ CPDF_Creator::Stage CPDF_Creator::WriteDoc_Stage4() {
       return Stage::kInvalid;
     }
   } else {
+    // EmbedPDF(bug-fix): the number the stream's own entry lists (below).
     if (!archive_->WriteDWord(last_obj_num_ + 1) ||
         !archive_->WriteString(" 0 obj <<")) {
       return Stage::kInvalid;
     }
   }
 
+  // EmbedPDF(save-traversal, save-generations): the trailer BuildTrailer()
+  // chose: its copied entries, then /Root, /Info and /Encrypt with their
+  // generations.
   for (const auto& [key, value] : trailer_->copied_entries()) {
     if (!archive_->WriteString("/") ||
         !archive_->WriteString(PDF_NameEncode(key).AsStringView()) ||
@@ -700,6 +752,8 @@ CPDF_Creator::Stage CPDF_Creator::WriteDoc_Stage4() {
     }
   }
 
+  // EmbedPDF(save-traversal): /Size can't overflow, and an incremental save
+  // never shrinks it below the input's.
   FX_SAFE_UINT32 trailer_size = last_obj_num_;
   trailer_size += bXRefStream ? 2 : 1;
   if (!trailer_size.IsValid()) {
@@ -725,6 +779,7 @@ CPDF_Creator::Stage CPDF_Creator::WriteDoc_Stage4() {
     }
   }
   if (id_array_) {
+    // EmbedPDF(save-generations): writers carry the write context.
     if (!archive_->WriteString(("/ID")) ||
         !id_array_->WriteTo(archive_.get(), nullptr, this)) {
       return Stage::kInvalid;
@@ -735,11 +790,12 @@ CPDF_Creator::Stage CPDF_Creator::WriteDoc_Stage4() {
       return Stage::kInvalid;
     }
   } else {
-    // EmbedPDF: a cross-reference stream is a stream object with a /Type,
-    // closed by endobj like any other (ISO 32000-2 7.5.8); readers that
-    // walk objects (the trailer-end scanner, pyHanko) stop at a missing one.
-    // Include the xref stream's own entry. Two bytes cover every generation
-    // allowed by PDF, including generations above 255.
+    // EmbedPDF(bug-fix, save-generations): a cross-reference stream is a
+    // stream object with a /Type, closed by endobj like any other (ISO
+    // 32000-2 7.5.8); upstream wrote neither, and readers that walk objects
+    // (the trailer-end scanner, pyHanko) stop at a missing one. Include the
+    // xref stream's own entry. Two bytes cover every generation allowed by
+    // PDF, including generations above 255.
     const uint32_t xref_object_number = last_obj_num_ + 1;
     object_offsets_[xref_object_number] = xref_start_;
     if (!archive_->WriteString("/Type/XRef/W[0 4 2]/Index[")) {
@@ -783,10 +839,12 @@ CPDF_Creator::Stage CPDF_Creator::WriteDoc_Stage4() {
 }
 
 bool CPDF_Creator::Create(Mask<CreateFlags> flags, int32_t file_version) {
+  // EmbedPDF(layer-save): GetFailureReason() says why a save failed.
   failure_reason_ = FailureReason::kNone;
-  // EmbedPDF: a layer's open transaction is not part of the document until it
-  // commits, and saving walks only committed objects. Refuse rather than write
-  // a document that is neither the state before the transaction nor after it.
+  // EmbedPDF(layer-transaction): a layer's open transaction is not part of the
+  // document until it commits, and saving walks only committed objects.
+  // Refuse rather than write a document that is neither the state before the
+  // transaction nor after it.
   if (const CPDF_LayerDocument* layer =
           CPDF_LayerDocument::FromDocument(document_.get());
       layer && layer->InTransaction()) {
@@ -806,6 +864,8 @@ bool CPDF_Creator::Create(Mask<CreateFlags> flags, int32_t file_version) {
   }
 
   is_incremental_ = !!(flags & CreateFlags::kIncremental);
+  // EmbedPDF(layer-save): an append-only save writes only the new revision;
+  // its offsets count from the end of the layer's base and loaded delta.
   is_incremental_append_only_ = !!(flags & CreateFlags::kIncrementalAppendOnly);
   if (is_incremental_append_only_ && !is_incremental_) {
     failure_reason_ = FailureReason::kOther;
@@ -825,15 +885,22 @@ bool CPDF_Creator::Create(Mask<CreateFlags> flags, int32_t file_version) {
   last_obj_num_ = document_->GetLastObjNum();
   object_offsets_.clear();
   new_obj_num_array_.clear();
+  // EmbedPDF(layer-save): what this save finds about the layer.
   changed_since_load_ = false;
   decided_unchanged_ = false;
   skip_empty_revision_ = false;
 
   InitID();
+  // EmbedPDF(save-traversal): pick the trailer, root, /Info and /Encrypt once,
+  // before writing.
   if (!BuildTrailer()) {
     failure_reason_ = FailureReason::kOther;
     return false;
   }
+  // EmbedPDF(layer-save): decided here as well as in WriteDoc_Stage1(), so an
+  // incremental save picks the objects that changed before it writes. With
+  // kSkipIfUnchangedSinceLoad and nothing changed since load, it writes
+  // nothing.
   if (!parser_ || (security_changed_ && is_original_)) {
     is_incremental_ = false;
   }
@@ -856,6 +923,8 @@ bool CPDF_Creator::Create(Mask<CreateFlags> flags, int32_t file_version) {
   return result;
 }
 
+// EmbedPDF(save-traversal): one trailer for the whole save: the root, /Info
+// and /Encrypt it names and the entries it copies (CPDF_SaveTrailer).
 bool CPDF_Creator::BuildTrailer() {
   uint32_t encryption_number = encrypt_dict_ ? encrypt_dict_->GetObjNum() : 0;
   if (encrypt_dict_ && encrypt_dict_->IsInline()) {
@@ -878,7 +947,8 @@ void CPDF_Creator::InitID() {
   DCHECK(!id_array_);
 
   id_array_ = pdfium::MakeRetain<CPDF_Array>();
-  // EmbedPDF: a created document can carry a preset identifier.
+  // EmbedPDF(annot-appearance): a created document can carry a preset
+  // identifier, so a canonical stamp drawing is the same bytes every time.
   RetainPtr<const CPDF_Array> pOldIDArray =
       parser_ ? parser_->GetIDArray() : document_->GetFileIdentifier();
   RetainPtr<const CPDF_Object> pID1 =
@@ -894,7 +964,8 @@ void CPDF_Creator::InitID() {
 
   if (pOldIDArray) {
     RetainPtr<const CPDF_Object> pID2 = pOldIDArray->GetObjectAt(1);
-    // EmbedPDF: a preset identifier is written as given, both halves.
+    // EmbedPDF(annot-appearance): a preset identifier (a canonical stamp
+    // drawing's) is written as given, both halves.
     if (!parser_ && pID2) {
       id_array_->Append(pID2->Clone());
       return;
@@ -963,6 +1034,8 @@ void CPDF_Creator::RemoveSecurity() {
   new_encrypt_dict_.Reset();
 }
 
+// EmbedPDF(save-security): encryption for a document that wasn't encrypted
+// (EPDF_SetEncryption()).
 void CPDF_Creator::SetEncryption(
     RetainPtr<CPDF_Dictionary> encrypt_dict,
     RetainPtr<CPDF_SecurityHandler> security_handler) {

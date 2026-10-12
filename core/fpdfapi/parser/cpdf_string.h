@@ -28,6 +28,7 @@ class CPDF_String final : public CPDF_Object {
   WideString GetUnicodeText() const override;
   void SetString(const ByteString& str) override;
   CPDF_String* AsMutableString() override;
+  // EmbedPDF(save-generations): writers carry the write context.
   using CPDF_Object::WriteTo;
   bool WriteTo(IFX_ArchiveStream* archive,
                const CPDF_Encryptor* encryptor,

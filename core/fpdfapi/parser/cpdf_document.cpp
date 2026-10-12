@@ -61,6 +61,8 @@ NodeType GetNodeType(RetainPtr<CPDF_Dictionary> kid_dict) {
   return has_kids ? NodeType::kBranch : NodeType::kLeaf;
 }
 
+// EmbedPDF(reads-dont-write): GetNodeType() for a const kid, so a page-tree
+// edit doesn't promote the base pages it only looks at.
 NodeType GetNodeTypeForTraversal(const CPDF_Dictionary* kid_dict) {
   const ByteString kid_type_value = kid_dict->GetNameFor("Type");
   if (kid_type_value == "Pages") {
@@ -183,6 +185,8 @@ int FindPageIndex(const CPDF_Dictionary* pNode,
   return -1;
 }
 
+// EmbedPDF(layer-open): the page numbers for
+// CPDF_Document::RebuildPageListFromCurrentPageTree(), read const.
 bool AppendPageObjNumsConst(const CPDF_Dictionary* node,
                             const CPDF_Document* document,
                             size_t level,
@@ -244,6 +248,8 @@ bool CPDF_Document::IsValidPageObject(const CPDF_Object* obj) {
   return ValidateDictType(ToDictionary(obj), "Page");
 }
 
+// EmbedPDF(layer-seam): virtual; a layer answers with its base's parser and
+// its own /Root.
 CPDF_Parser* CPDF_Document::GetParser() const {
   return parser_.get();
 }
@@ -262,6 +268,8 @@ RetainPtr<CPDF_Object> CPDF_Document::ParseIndirectObject(uint32_t objnum) {
 }
 
 bool CPDF_Document::TryInit() {
+  // EmbedPDF(layer-seam): a layer reads its base's parser; the cached /Root
+  // changes only through its setter.
   CPDF_Parser* parser = GetParser();
   SetLastObjNum(parser->GetLastObjNum());
 
@@ -278,6 +286,7 @@ bool CPDF_Document::TryInit() {
 CPDF_Parser::Error CPDF_Document::LoadDoc(
     RetainPtr<IFX_SeekableReadStream> pFileAccess,
     const ByteString& password) {
+  // EmbedPDF(layer-seam): a layer reads its base's parser.
   if (!GetParser()) {
     SetParser(std::make_unique<CPDF_Parser>(this));
   }
@@ -289,6 +298,7 @@ CPDF_Parser::Error CPDF_Document::LoadDoc(
 CPDF_Parser::Error CPDF_Document::LoadLinearizedDoc(
     RetainPtr<CPDF_ReadValidator> validator,
     const ByteString& password) {
+  // EmbedPDF(layer-seam): a layer reads its base's parser.
   if (!GetParser()) {
     SetParser(std::make_unique<CPDF_Parser>(this));
   }
@@ -297,6 +307,8 @@ CPDF_Parser::Error CPDF_Document::LoadLinearizedDoc(
       GetParser()->StartLinearizedParse(std::move(validator), password));
 }
 
+// EmbedPDF(layer-seam): a layer reads its base's parser and keeps its own
+// page list.
 void CPDF_Document::LoadPages() {
   const CPDF_LinearizedHeader* linearized_header =
       GetParser()->GetLinearizedHeader();
@@ -314,6 +326,7 @@ void CPDF_Document::LoadPages() {
   uint32_t first_page_num = linearized_header->GetFirstPageNo();
   uint32_t page_count = linearized_header->GetPageCount();
   DCHECK(first_page_num < page_count);
+  // EmbedPDF(layer-seam): a layer keeps its own page list.
   ResizePageList(page_count);
   SetPageObjNumAt(first_page_num, objnum);
 }
@@ -332,6 +345,7 @@ RetainPtr<CPDF_Dictionary> CPDF_Document::TraversePDFPages(int iPage,
     if (*nPagesToGo != 1) {
       return nullptr;
     }
+    // EmbedPDF(layer-seam): a layer keeps its own page list.
     SetPageObjNumAt(iPage, pPages->GetObjNum());
     return pPages;
   }
@@ -357,6 +371,7 @@ RetainPtr<CPDF_Dictionary> CPDF_Document::TraversePDFPages(int iPage,
       continue;
     }
     if (!pKid->KeyExist("Kids")) {
+      // EmbedPDF(layer-seam): a layer keeps its own page list.
       SetPageObjNumAt(iPage - (*nPagesToGo) + 1, pKid->GetObjNum());
       (*nPagesToGo)--;
       tree_traversal_[level].second++;
@@ -396,6 +411,8 @@ void CPDF_Document::ResetTraversal() {
   tree_traversal_.clear();
 }
 
+// EmbedPDF(layer-open): a layer opened with a delta rebuilds its page list
+// from the page tree it now sees, read const.
 bool CPDF_Document::RebuildPageListFromCurrentPageTree() {
   RetainPtr<const CPDF_Dictionary> root = pdfium::WrapRetain(GetRoot());
   if (!root && GetParser()) {
@@ -432,6 +449,7 @@ void CPDF_Document::SetParser(std::unique_ptr<CPDF_Parser> pParser) {
 
 CPDF_Parser::Error CPDF_Document::HandleLoadResult(CPDF_Parser::Error error) {
   if (error == CPDF_Parser::SUCCESS) {
+    // EmbedPDF(layer-seam): a layer reads its base's parser.
     has_valid_cross_reference_table_ = !GetParser()->xref_table_rebuilt();
   }
   return error;
@@ -447,6 +465,7 @@ RetainPtr<CPDF_Dictionary> CPDF_Document::GetMutablePagesDict() {
       const_cast<CPDF_Dictionary*>(this->GetPagesDict().Get()));
 }
 
+// EmbedPDF(layer-seam): a layer keeps its own page list.
 bool CPDF_Document::IsPageLoaded(int iPage) const {
   return !!GetPageObjNumAt(iPage);
 }
@@ -486,6 +505,7 @@ RetainPtr<CPDF_Dictionary> CPDF_Document::GetMutablePageDictionary(int iPage) {
 }
 
 void CPDF_Document::SetPageObjNum(int iPage, uint32_t objNum) {
+  // EmbedPDF(layer-seam): a layer keeps its own page list.
   SetPageObjNumAt(iPage, objNum);
 }
 
@@ -508,6 +528,8 @@ bool CPDF_Document::IsModifiedAPStream(const CPDF_Stream* stream) const {
          pdfium::Contains(modified_apstream_ids_, stream->GetObjNum());
 }
 
+// EmbedPDF(save-security): pending encryption settings belong to the
+// document, not to a global.
 void CPDF_Document::SetPendingSecurity(PendingSecurity pending) {
   pending_security_ = std::move(pending);
 }
@@ -521,6 +543,7 @@ void CPDF_Document::ClearPendingSecurity() {
   pending_security_.reset();
 }
 
+// EmbedPDF(layer-seam): only a layer promotes objects.
 RetainPtr<CPDF_Object> CPDF_Document::FindPromotedObject(
     uint32_t objnum) const {
   return nullptr;
@@ -530,11 +553,15 @@ bool CPDF_Document::IsObjectPromoted(uint32_t objnum) const {
   return !!FindPromotedObject(objnum);
 }
 
+// EmbedPDF(layer-save): what a save compares an object against, to skip it
+// when unchanged.
 RetainPtr<const CPDF_Object> CPDF_Document::GetBaseTwin(
     uint32_t objnum) const {
   return GetLoadedTwin(objnum);
 }
 
+// EmbedPDF(layer-door): a copy-up may share stream bytes this document's own
+// file holds.
 bool CPDF_Document::SharesBackingStorageWith(const CPDF_Stream* stream) const {
   CPDF_Parser* parser = GetParser();
   RetainPtr<IFX_SeekableReadStream> file = parser ? parser->GetFileAccess() : nullptr;
@@ -542,6 +569,8 @@ bool CPDF_Document::SharesBackingStorageWith(const CPDF_Stream* stream) const {
   return file && view && view->GetUnderlyingStream() == file->GetUnderlyingStream();
 }
 
+// EmbedPDF(layer-save): the object as loaded, to tell what changed since
+// load.
 RetainPtr<const CPDF_Object> CPDF_Document::GetLoadedTwin(
     uint32_t objnum) const {
   // The object as it is in the loaded bytes, parsed afresh: the parser
@@ -556,18 +585,23 @@ RetainPtr<const CPDF_Object> CPDF_Document::GetLoadedTwin(
   return parser->ParseIndirectObject(objnum);
 }
 
+// EmbedPDF(overlay-epoch): an ordinary document never swaps versions.
 uint64_t CPDF_Document::GetOverlayEpoch() const {
   return 0;
 }
 
+// EmbedPDF(layer-seam): only a layer document says yes.
 bool CPDF_Document::IsLayerDocument() const {
   return false;
 }
 
+// EmbedPDF(view-scope): non-null only for a base document.
 const CPDF_BaseDocument* CPDF_Document::GetBaseDocumentForViewScope() const {
   return nullptr;
 }
 
+// EmbedPDF(layer-save, layer-open): where a layer's delta starts, after the
+// base bytes.
 FX_FILESIZE CPDF_Document::GetLayerAppendBaseOffset() const {
   CPDF_Parser* parser = GetParser();
   return parser ? parser->GetDocumentSize() : 0;
@@ -576,6 +610,7 @@ FX_FILESIZE CPDF_Document::GetLayerAppendBaseOffset() const {
 int CPDF_Document::GetPageIndex(uint32_t objnum) {
   uint32_t skip_count = 0;
   bool bSkipped = false;
+  // EmbedPDF(layer-seam): a layer keeps its own page list.
   for (size_t i = 0; i < GetPageListSize(); ++i) {
     if (GetPageObjNumAt(i) == objnum) {
       return pdfium::checked_cast<int>(i);
@@ -595,6 +630,7 @@ int CPDF_Document::GetPageIndex(uint32_t objnum) {
   int found_index = FindPageIndex(pPages, &skip_count, objnum, &start_index, 0);
 
   // Corrupt page tree may yield out-of-range results.
+  // EmbedPDF(layer-seam): a layer keeps its own page list.
   if (found_index < 0 ||
       static_cast<size_t>(found_index) >= GetPageListSize()) {
     return -1;
@@ -608,6 +644,7 @@ int CPDF_Document::GetPageIndex(uint32_t objnum) {
 }
 
 int CPDF_Document::GetPageCount() const {
+  // EmbedPDF(layer-seam): a layer keeps its own page list.
   return pdfium::checked_cast<int>(GetPageListSize());
 }
 
@@ -626,6 +663,7 @@ int CPDF_Document::RetrievePageCount() {
 }
 
 uint32_t CPDF_Document::GetUserPermissions(bool get_owner_perms) const {
+  // EmbedPDF(layer-seam): a layer reads its base's parser.
   CPDF_Parser* parser = GetParser();
   return parser ? parser->GetPermissions(get_owner_perms) : 0;
 }
@@ -644,6 +682,8 @@ void CPDF_Document::MaybePurgeImage(uint32_t objnum) {
   doc_page_->MaybePurgeImage(objnum);
 }
 
+// EmbedPDF(layer-seam): read /Root and /Info through the seams, and set them
+// only through their setters.
 void CPDF_Document::CreateNewDoc() {
   DCHECK(!GetRoot());
   DCHECK(!GetInfo());
@@ -670,6 +710,7 @@ RetainPtr<CPDF_Dictionary> CPDF_Document::CreateNewPage(int iPage) {
   return dict;
 }
 
+// EmbedPDF(chosen-object-numbers): a new page at a number the caller chose.
 RetainPtr<CPDF_Dictionary> CPDF_Document::CreateNewPageAt(int iPage,
                                                           uint32_t objnum) {
   auto dict = NewIndirectAt<CPDF_Dictionary>(objnum);
@@ -696,10 +737,11 @@ bool CPDF_Document::InsertDeletePDFPage(
   }
 
   for (size_t i = 0; i < kids_list->size(); i++) {
-    // EmbedPDF layer documents must not promote a base /Page object merely to
-    // decide whether traversal should skip it or remove its reference from
-    // /Kids. Use const access first, and only request a mutable object for the
-    // branch /Pages node that will be structurally edited.
+    // EmbedPDF(reads-dont-write): layer documents must not promote a base
+    // /Page object merely to decide whether traversal should skip it or remove
+    // its reference from /Kids. Use const access first, and only request a
+    // mutable object for the branch /Pages node that will be structurally
+    // edited.
     RetainPtr<const CPDF_Dictionary> const_kid_dict = kids_list->GetDictAt(i);
     if (!const_kid_dict) {
       return false;
@@ -725,6 +767,8 @@ bool CPDF_Document::InsertDeletePDFPage(
     }
 
     CHECK_EQ(kid_type, NodeType::kBranch);
+    // EmbedPDF(reads-dont-write): read the branch const; take it mutable only
+    // when it is the one edited.
     int page_count = const_kid_dict->GetIntegerFor("Count");
     if (pages_to_go >= page_count) {
       pages_to_go -= page_count;
@@ -781,6 +825,7 @@ bool CPDF_Document::InsertNewPage(int iPage,
       return false;
     }
   }
+  // EmbedPDF(layer-seam): a layer keeps its own page list.
   InsertPageObjNum(iPage, pPageDict->GetObjNum());
   return true;
 }
@@ -790,6 +835,7 @@ RetainPtr<CPDF_Dictionary> CPDF_Document::GetInfo() {
     return info_dict_;
   }
 
+  // EmbedPDF(layer-seam): a layer reads its base's parser.
   CPDF_Parser* parser = GetParser();
   if (!parser) {
     return nullptr;
@@ -801,14 +847,18 @@ RetainPtr<CPDF_Dictionary> CPDF_Document::GetInfo() {
   }
 
   auto ref = pdfium::MakeRetain<CPDF_Reference>(this, info_obj_num);
+  // EmbedPDF(layer-seam): the cached /Info changes only through its setter.
   SetCachedInfoDict(ToDictionary(ref->GetMutableDirect()));
   return info_dict_;
 }
 
+// EmbedPDF(layer-seam): a layer promotes its base /Info before a write.
 RetainPtr<CPDF_Dictionary> CPDF_Document::GetMutableInfo() {
   return GetInfo();
 }
 
+// EmbedPDF(save-traversal): the save trailer names /Info without loading or
+// promoting it.
 uint32_t CPDF_Document::GetInfoObjectNumber() const {
   if (info_dict_) {
     return info_dict_->GetObjNum();
@@ -817,6 +867,8 @@ uint32_t CPDF_Document::GetInfoObjectNumber() const {
   return parser ? parser->GetInfoObjNum() : 0;
 }
 
+// EmbedPDF(layer-door): metadata writes reach /Info through GetMutableInfo(),
+// which a layer routes through its door.
 RetainPtr<CPDF_Dictionary> CPDF_Document::GetOrCreateInfo() {
   // If the document already has an Info object, return the mutable view of it.
   // Layer documents override GetMutableInfo() to promote the base /Info into
@@ -830,11 +882,16 @@ RetainPtr<CPDF_Dictionary> CPDF_Document::GetOrCreateInfo() {
   return info_dict_;
 }
 
+// EmbedPDF(layer-seam, annot-appearance): a layer reads its base's parser. A
+// created document may carry a preset identifier, so a canonical stamp
+// drawing exports as the same bytes every time.
 RetainPtr<const CPDF_Array> CPDF_Document::GetFileIdentifier() const {
   CPDF_Parser* parser = GetParser();
   return parser ? parser->GetIDArray() : preset_file_identifier_;
 }
 
+// EmbedPDF(annot-appearance): a canonical stamp drawing exports as the same
+// bytes every time.
 void CPDF_Document::SetPresetFileIdentifier(
     RetainPtr<const CPDF_Array> identifier) {
   preset_file_identifier_ = std::move(identifier);
@@ -854,6 +911,8 @@ void CPDF_Document::DropCreatedDocumentInfo() {
 }
 
 uint32_t CPDF_Document::DeletePage(int iPage) {
+  // EmbedPDF(layer-door): edit the page tree through the door. Upstream
+  // const-casts the page tree it reads.
   RetainPtr<CPDF_Dictionary> pRoot = GetMutableRoot();
   if (!pRoot) {
     return 0;
@@ -882,10 +941,12 @@ uint32_t CPDF_Document::DeletePage(int iPage) {
     return 0;
   }
 
+  // EmbedPDF(layer-seam): a layer keeps its own page list.
   ErasePageObjNum(iPage);
   return page_dict->GetObjNum();
 }
 
+// EmbedPDF(layer-seam): a layer keeps its own page list.
 void CPDF_Document::SetPageToNullObject(uint32_t page_obj_num) {
   if (!page_obj_num || GetPageListSize() == 0) {
     return;
@@ -902,6 +963,7 @@ void CPDF_Document::SetPageToNullObject(uint32_t page_obj_num) {
     }
   }
 
+  // EmbedPDF(layer-save): a layer never null-replaces a base page.
   if (!ShouldReplaceDeletedPageWithNull(page_obj_num)) {
     return;
   }
@@ -917,6 +979,8 @@ void CPDF_Document::SetPageToNullObject(uint32_t page_obj_num) {
   CHECK(replaced);
 }
 
+// EmbedPDF(layer-save): a layer deletes a base page by dropping its reference
+// from the page tree, and never null-replaces it.
 bool CPDF_Document::ShouldReplaceDeletedPageWithNull(
     uint32_t page_obj_num) const {
   return true;
@@ -1006,6 +1070,7 @@ bool CPDF_Document::MovePages(pdfium::span<const int> page_indices,
   return true;
 }
 
+// EmbedPDF(layer-seam): the page list's storage; a layer keeps its own.
 void CPDF_Document::ResizePageListForTesting(size_t size) {
   ResizePageList(size);
 }
@@ -1034,6 +1099,8 @@ size_t CPDF_Document::GetPageListSize() const {
   return page_list_.size();
 }
 
+// EmbedPDF(layer-seam): the cached /Root and /Info change only here; a layer
+// resets them when it swaps versions.
 void CPDF_Document::SetCachedRootDict(RetainPtr<CPDF_Dictionary> root) {
   root_dict_ = std::move(root);
 }

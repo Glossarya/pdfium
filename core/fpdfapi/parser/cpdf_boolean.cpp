@@ -33,6 +33,7 @@ int CPDF_Boolean::GetInteger() const {
 }
 
 void CPDF_Boolean::SetString(const ByteString& str) {
+  // EmbedPDF(write-generation): a write past the layer's door is a bug.
   DCHECK_PDF_WRITABLE(this);
   value_ = (str == "true");
 }
@@ -41,6 +42,7 @@ CPDF_Boolean* CPDF_Boolean::AsMutableBoolean() {
   return this;
 }
 
+// EmbedPDF(save-generations): writers carry the write context.
 bool CPDF_Boolean::WriteTo(IFX_ArchiveStream* archive,
                            const CPDF_Encryptor* encryptor,
                            const CPDF_WriteContext* context) const {

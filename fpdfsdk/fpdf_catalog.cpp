@@ -12,6 +12,7 @@
 #include "core/fxcrt/retain_ptr.h"
 #include "core/fxcrt/widestring.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
+#include "public/epdf_catalog.h"
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 FPDFCatalog_IsTagged(FPDF_DOCUMENT document) {
@@ -72,6 +73,7 @@ FPDFCatalog_SetLanguage(FPDF_DOCUMENT document, FPDF_WIDESTRING language) {
   return true;
 }
 
+// EmbedPDF(epdf-api): EPDFCatalog_GetLanguage, the catalog's /Lang.
 FPDF_EXPORT unsigned long FPDF_CALLCONV
 EPDFCatalog_GetLanguage(FPDF_DOCUMENT document, void* buffer, unsigned long length) {
   CPDF_Document* doc = CPDFDocumentFromFPDFDocument(document);

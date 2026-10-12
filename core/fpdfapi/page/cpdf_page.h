@@ -31,7 +31,8 @@ class CPDF_PageImageCache;
 
 class CPDF_Page final : public IPDF_Page, public CPDF_PageObjectHolder {
  public:
-  // EmbedPDF: owned SDK measurement state; never part of the PDF graph.
+  // EmbedPDF(measurement): owned SDK measurement state; never part of the
+  // PDF graph.
   CPDF_MeasureStorage* GetMeasureStorage() const {
     return measure_storage_.get();
   }
@@ -82,6 +83,7 @@ class CPDF_Page final : public IPDF_Page, public CPDF_PageObjectHolder {
 
   // CPDF_PageObjectHolder:
   bool IsPage() const override;
+  // EmbedPDF(overlay-epoch): re-read /Resources when the overlay epoch moved.
   RetainPtr<const CPDF_Dictionary> GetResources() const override;
   RetainPtr<const CPDF_Dictionary> GetPageResources() const override;
 
@@ -91,7 +93,8 @@ class CPDF_Page final : public IPDF_Page, public CPDF_PageObjectHolder {
   CFX_Matrix GetDisplayMatrix() const;
   int GetPageRotation() const;
 
-  // EmbedPDF extensions for rotation normalization
+  // EmbedPDF(rotation-override): rotation normalization, for pages loaded as
+  // if their /Rotate were 0.
   // Returns the rotation value from the page dictionary, ignoring any override.
   int GetOriginalRotation() const;
   // Sets a rotation override and recalculates dimensions.
@@ -116,40 +119,45 @@ class CPDF_Page final : public IPDF_Page, public CPDF_PageObjectHolder {
   void ClearView();
   void UpdateDimensions();
 
-  // EmbedPDF: what the page's parsed objects cost, nested forms included.
-  // While the page parses, it is what the parse has added so far; once it has
-  // parsed, the objects are counted again after they change.
+  // EmbedPDF(page-residency): what the page's parsed objects cost, nested
+  // forms included. While the page parses, it is what the parse has added so
+  // far; once it has parsed, the objects are counted again after they change.
   const CPDF_ParsedSize& GetParsedSize() const;
 
-  // EmbedPDF: whether the page's parsed objects still match the document:
-  // the document resolves the page's boxes, rotation, /Contents streams and
-  // the stream of every form placed on it to what the objects were parsed
-  // from or last generated into. Only versions are compared (see
-  // CPDF_ContentVersions): a write outside a layer transaction edits objects
-  // in place, and this can't see it.
+  // EmbedPDF(page-residency): whether the page's parsed objects still match
+  // the document: the document resolves the page's boxes, rotation,
+  // /Contents streams and the stream of every form placed on it to what the
+  // objects were parsed from or last generated into. Only versions are
+  // compared (see CPDF_ContentVersions): a write outside a layer transaction
+  // edits objects in place, and this can't see it.
   bool IsContentCurrent() const;
 
-  // EmbedPDF: what the content parser fills while it parses this page. It
-  // starts both from empty (StartContentRecords()).
+  // EmbedPDF(page-residency): what the content parser fills while it parses
+  // this page. It starts both from empty (StartContentRecords()).
   void StartContentRecords();
   CPDF_ParsedSize* mutable_parsed_size() { return &parsed_size_; }
   CPDF_ContentVersions* mutable_content_versions() {
     return &content_versions_;
   }
 
-  // EmbedPDF: after content was generated from this page's objects. A page
-  // that matched the document before matches what was written: its content
-  // versions are recorded again. The objects are counted again.
+  // EmbedPDF(page-residency): after content was generated from this page's
+  // objects. A page that matched the document before matches what was
+  // written: its content versions are recorded again. The objects are
+  // counted again.
   void ContentGenerated(bool was_current);
 
  private:
+  // EmbedPDF(measurement): see GetMeasureStorage().
   std::unique_ptr<CPDF_MeasureStorage> measure_storage_;
   CPDF_Page(CPDF_Document* document, RetainPtr<CPDF_Dictionary> pPageDict);
   ~CPDF_Page() override;
 
+  // EmbedPDF(layer-door): open the page's resources for writing on their
+  // first actual write.
   // CPDF_PageObjectHolder:
   void EnsureMutableBackingObjectForResources() override;
   void EnsureMutableBackingObjectForPageResources() override;
+  // EmbedPDF(overlay-epoch): re-read /Resources when the overlay epoch moved.
   void RefreshResourcesIfNeeded() const;
 
   RetainPtr<CPDF_Object> GetMutablePageAttr(ByteStringView name);
@@ -164,11 +172,12 @@ class CPDF_Page final : public IPDF_Page, public CPDF_PageObjectHolder {
   std::unique_ptr<CPDF_PageImageCache> page_image_cache_;
   std::unique_ptr<RenderContextIface> render_context_;
   ObservedPtr<View> view_;
-  std::optional<int> rotation_override_;  // EmbedPDF: rotation normalization
+  std::optional<int> rotation_override_;  // EmbedPDF(rotation-override)
 
-  // EmbedPDF: the page's boxes and rotation as the last UpdateDimensions()
-  // read them, the content versions of its objects, and the last check of
-  // them, valid while the document's overlay epoch is the same.
+  // EmbedPDF(page-residency): the page's boxes and rotation as the last
+  // UpdateDimensions() read them, the content versions of its objects, and
+  // the last check of them, valid while the document's overlay epoch is the
+  // same.
   CFX_FloatRect read_mediabox_;
   CFX_FloatRect read_cropbox_;
   int read_rotation_ = 0;
@@ -176,8 +185,8 @@ class CPDF_Page final : public IPDF_Page, public CPDF_PageObjectHolder {
   mutable uint64_t content_checked_epoch_ = 0;
   mutable bool content_current_ = true;
 
-  // EmbedPDF: the count of the parsed objects, and the holder's edit count
-  // it was made at.
+  // EmbedPDF(page-residency): the count of the parsed objects, and the
+  // holder's edit count it was made at.
   mutable CPDF_ParsedSize parsed_size_;
   mutable uint64_t parsed_size_edits_ = 0;
 };

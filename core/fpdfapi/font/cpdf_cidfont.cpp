@@ -676,6 +676,8 @@ int CPDF_CIDFont::GetVerticalGlyph(int index, bool* pVertGlyph) {
   return index;
 }
 
+// EmbedPDF(fonts): CID → GID through the charset of an sfnt-wrapped CID-keyed
+// CFF program, the form registered OpenType/CFF fonts are embedded in.
 int CPDF_CIDFont::GlyphIndexFromCffCid(uint16_t cid) {
   if (!cff_cid_to_gid_.has_value()) {
     cff_cid_to_gid_.emplace();
@@ -825,11 +827,11 @@ int CPDF_CIDFont::GlyphFromCharCode(uint32_t charcode, bool* pVertGlyph) {
   uint16_t cid = CIDFromCharCode(charcode);
   if (!stream_acc_) {
     if (font_type_ == CIDFontType::kType1) {
-      // EmbedPDF: a CID-keyed CFF wrapped in an sfnt (FontFile3 /OpenType)
-      // selects glyphs through its charset (ISO 32000-2 9.7.4.2). FreeType
-      // exposes GIDs for such faces, so the CID has to be mapped. A bare CFF
-      // face already takes CIDs as glyph indices, and a CFF without CIDFont
-      // operators uses CID = GID.
+      // EmbedPDF(fonts): a CID-keyed CFF wrapped in an sfnt (FontFile3
+      // /OpenType) selects glyphs through its charset (ISO 32000-2 9.7.4.2).
+      // FreeType exposes GIDs for such faces, so the CID has to be mapped. A
+      // bare CFF face already takes CIDs as glyph indices, and a CFF without
+      // CIDFont operators uses CID = GID.
       if (face->IsTtOt() && face->IsCidKeyed()) {
         return GlyphIndexFromCffCid(cid);
       }

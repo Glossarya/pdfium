@@ -35,6 +35,7 @@
 #include "core/fxcrt/span.h"
 #include "core/fxcrt/span_util.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
+#include "public/epdf_doc.h"
 #include "public/fpdf_formfill.h"
 
 namespace {
@@ -81,6 +82,7 @@ CPDF_LinkList* GetLinkList(CPDF_Page* page) {
   return pList;
 }
 
+// EmbedPDF(epdf-api): helpers for the EPDF_*Meta* functions below.
 using pdfium::metadata::kInfoAuthor;
 using pdfium::metadata::kInfoCreationDate;
 using pdfium::metadata::kInfoCreator;
@@ -336,6 +338,7 @@ FPDF_EXPORT int FPDF_CALLCONV FPDFDest_GetDestPageIndex(FPDF_DOCUMENT document,
   return destination.GetDestPageIndex(doc);
 }
 
+// EmbedPDF(epdf-api): EPDFDest_GetPageObjectNumber.
 FPDF_EXPORT unsigned int FPDF_CALLCONV
 EPDFDest_GetPageObjectNumber(FPDF_DOCUMENT document, FPDF_DEST dest) {
   CPDF_Document* doc = CPDFDocumentFromFPDFDocument(document);
@@ -401,6 +404,7 @@ FPDFDest_GetLocationInPage(FPDF_DEST dest,
 FPDF_EXPORT FPDF_LINK FPDF_CALLCONV FPDFLink_GetLinkAtPoint(FPDF_PAGE page,
                                                             double x,
                                                             double y) {
+  // EmbedPDF(view-scope): read through the document's view scope.
   ScopedFPDFPageView page_view(page);
   if (!page_view) {
     return nullptr;
@@ -422,6 +426,7 @@ FPDF_EXPORT FPDF_LINK FPDF_CALLCONV FPDFLink_GetLinkAtPoint(FPDF_PAGE page,
 FPDF_EXPORT int FPDF_CALLCONV FPDFLink_GetLinkZOrderAtPoint(FPDF_PAGE page,
                                                             double x,
                                                             double y) {
+  // EmbedPDF(view-scope): read through the document's view scope.
   ScopedFPDFPageView page_view(page);
   if (!page_view) {
     return -1;
@@ -445,11 +450,14 @@ FPDF_EXPORT FPDF_DEST FPDF_CALLCONV FPDFLink_GetDest(FPDF_DOCUMENT document,
   if (!link) {
     return nullptr;
   }
+  // EmbedPDF(view-scope): read through the document's view scope.
   ScopedFPDFDocumentView document_view(document);
   if (!document_view) {
     return nullptr;
   }
   CPDF_Document* doc = document_view.Get();
+  // EmbedPDF(overlay-epoch): a link handle may hold an older version of its
+  // dictionary; use the one the document sees now.
   RetainPtr<CPDF_Dictionary> link_dict(CPDFDictionaryFromFPDFLink(link));
   if (link_dict->GetObjNum() != 0) {
     RetainPtr<CPDF_Dictionary> effective =
@@ -486,10 +494,13 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDFLink_Enumerate(FPDF_PAGE page,
   if (!start_pos || !link_annot) {
     return false;
   }
+  // EmbedPDF(view-scope): read through the document's view scope.
   ScopedFPDFPageView page_view(page);
   if (!page_view) {
     return false;
   }
+  // EmbedPDF(reads-dont-write): walk /Annots without the mutable getters; the
+  // cast below only fits the handle's mutable type, nothing writes through it.
   const CPDF_Page* pPage = page_view.Get();
   RetainPtr<const CPDF_Array> pAnnots = pPage->GetAnnotsArray();
   if (!pAnnots) {
@@ -513,12 +524,15 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDFLink_Enumerate(FPDF_PAGE page,
 
 FPDF_EXPORT FPDF_ANNOTATION FPDF_CALLCONV
 FPDFLink_GetAnnot(FPDF_PAGE page, FPDF_LINK link_annot) {
+  // EmbedPDF(view-scope): read through the document's view scope.
   ScopedFPDFPageView page_view(page);
   CPDF_Page* pPage = page_view.Get();
   RetainPtr<CPDF_Dictionary> pAnnotDict(CPDFDictionaryFromFPDFLink(link_annot));
   if (!pPage || !pAnnotDict) {
     return nullptr;
   }
+  // EmbedPDF(overlay-epoch): a link handle may hold an older version of its
+  // dictionary; use the one the document sees now.
   if (pAnnotDict->GetObjNum() != 0) {
     RetainPtr<CPDF_Dictionary> effective = ToDictionary(
         pPage->GetDocument()->GetOrParseIndirectObject(pAnnotDict->GetObjNum()));
@@ -674,6 +688,8 @@ FPDF_GetPageLabel(FPDF_DOCUMENT document,
       str.value(), UNSAFE_BUFFERS(SpanFromFPDFApiArgs(buffer, buflen)));
 }
 
+// EmbedPDF(epdf-api): EPDF_*MetaText, EPDF_*MetaTrapped and
+// EPDF_GetMetaKey*, on the document information dictionary.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDF_SetMetaText(FPDF_DOCUMENT document,
                                                      FPDF_BYTESTRING tag,
                                                      FPDF_WIDESTRING value) {

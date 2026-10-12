@@ -17,6 +17,8 @@ class CPDF_CryptoHandler;
 
 class CPDF_Encryptor {
  public:
+  // EmbedPDF(save-generations): the encryptor carries the object's
+  // generation.
   CPDF_Encryptor(const CPDF_CryptoHandler* pHandler,
                  int objnum,
                  uint32_t generation = 0);

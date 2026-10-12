@@ -41,6 +41,7 @@ class CPDF_ObjectStream {
                                      uint32_t archive_obj_index) const;
   const std::vector<ObjectInfo>& object_info() const { return object_info_; }
 
+  // EmbedPDF(save-traversal): the save's object stream cache budgets bytes.
   // Decoded bytes, backing stream bytes, and object-index storage. Used to
   // budget the temporary save cache, independently of the document cache.
   size_t GetRetainedSize() const;

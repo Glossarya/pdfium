@@ -262,6 +262,8 @@ float CPDF_TextObject::GetFontSize() const {
   return text_state().GetFontSize();
 }
 
+// EmbedPDF(redaction): redaction measures text with the spacing it was shown
+// with.
 float CPDF_TextObject::GetCharSpace() const {
   return text_state().GetCharSpace();
 }
@@ -351,6 +353,7 @@ float CPDF_TextObject::CalcPositionDataInternal(
     max_y = max_y * fontsize / 1000;
   }
 
+  // EmbedPDF(lean-page-objects): the original rect lives on this class.
   original_rect_ = CFX_FloatRect(min_x, min_y, max_x, max_y);
   CFX_FloatRect rect = GetTextMatrix().TransformRect(original_rect_);
   if (TextRenderingModeIsStrokeMode(text_state().GetTextMode())) {
@@ -364,6 +367,9 @@ float CPDF_TextObject::CalcPositionDataInternal(
   return curpos;
 }
 
+// EmbedPDF(faithful-content-rewrite, redaction): the kerning a TJ array put
+// before the next glyph, so a rewrite writes it back and redaction keeps the
+// spacing.
 bool CPDF_TextObject::GetSeparatorAdjustment(size_t index,
                                              float* out_thousandths) const {
   DCHECK(out_thousandths);

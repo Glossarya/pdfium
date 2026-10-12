@@ -31,7 +31,7 @@ inline constexpr char kVertices[] = "Vertices";
 // Entries for ink annotations
 inline constexpr char kInkList[] = "InkList";
 
-// EmbedPDF: measurement and dimension entries (ISO 32000-2).
+// EmbedPDF(measurement): measurement and dimension entries (ISO 32000-2).
 inline constexpr char kIT[] = "IT";
 inline constexpr char kMeasure[] = "Measure";
 inline constexpr char kLL[] = "LL";
@@ -44,6 +44,7 @@ inline constexpr char kCO[] = "CO";
 // Entries for line annotations
 inline constexpr char kL[] = "L";
 
+// EmbedPDF(epdf-api): keys added with EPDFAnnot_GetReplyType/SetReplyType.
 // Entries for markup annotations (comments/replies)
 // See ISO 32000-2, section 12.5.6.
 inline constexpr char kIRT[] = "IRT";  // In Reply To

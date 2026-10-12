@@ -10,7 +10,7 @@
 #include "core/fpdfapi/parser/cpdf_reference.h"
 #include "core/fpdfapi/parser/cpdf_string.h"
 #include "core/fpdfapi/parser/cpdf_test_document.h"
-#include "core/fpdfdoc/cpdf_generateap_dimension.h"
+#include "core/fpdfdoc/cpdf_appearancegenerator_dimension.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {

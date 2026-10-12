@@ -23,7 +23,8 @@ class IPDF_Page;
 
 class CPDF_AnnotContext {
  public:
-  // EmbedPDF: owned SDK measurement state; never part of the PDF graph.
+  // EmbedPDF(measurement): owned SDK measurement state; never part of the
+  // PDF graph.
   CPDF_MeasureStorage* GetMeasureStorage() const {
     return measure_storage_.get();
   }
@@ -31,6 +32,8 @@ class CPDF_AnnotContext {
     measure_storage_ = std::move(storage);
   }
 
+  // EmbedPDF(layer-door, annot-identity): the index the handle was found at
+  // locates an inline annotation in its page's /Annots.
   CPDF_AnnotContext(RetainPtr<CPDF_Dictionary> pAnnotDict,
                     IPDF_Page* pPage,
                     int annot_index = -1);
@@ -40,14 +43,16 @@ class CPDF_AnnotContext {
   bool HasForm() const { return !!annot_form_; }
   CPDF_Form* GetForm() const { return annot_form_.get(); }
 
+  // EmbedPDF(overlay-epoch, layer-door): both re-resolve when the overlay
+  // epoch moved; the mutable one copies up through the layer's door.
   // Never nullptr. After the handle became invalid, the last version it
   // resolved to; callers at the API boundary check IsValid() first.
   RetainPtr<CPDF_Dictionary> GetMutableAnnotDict();
   const CPDF_Dictionary* GetAnnotDict() const;
 
-  // EmbedPDF: whether the annotation this handle names is still there (fork
-  // plan L1): its object resolves, it is still in its page's /Annots (once
-  // it has been), and its page is still in the document. Checked again
+  // EmbedPDF(annot-identity): whether the annotation this handle names is
+  // still there: its object resolves, it is still in its page's /Annots
+  // (once it has been), and its page is still in the document. Checked again
   // whenever the overlay epoch moves, so an abort that brings the
   // annotation back makes the handle valid again. Always true for ordinary
   // documents, whose epoch never moves.
@@ -56,28 +61,37 @@ class CPDF_AnnotContext {
   // Never nullptr.
   IPDF_Page* GetPage() const { return page_; }
 
-  // Index at the time the annotation handle was created, or -1 when the
-  // handle was not created from a page annotation lookup.
+  // EmbedPDF(annot-identity): index at the time the annotation handle was
+  // created, or -1 when the handle was not created from a page annotation
+  // lookup.
   int GetAnnotIndex() const { return annot_index_; }
 
  private:
+  // EmbedPDF(measurement): see GetMeasureStorage().
   std::unique_ptr<CPDF_MeasureStorage> measure_storage_;
+  // EmbedPDF(overlay-epoch): re-resolve the annotation when the overlay
+  // epoch moved.
   void RefreshAnnotDictIfNeeded() const;
-  // The annotation this handle names, as the document has it now, or null
-  // when it is gone (L1). Follows a promotion through the birth list (L3).
+  // EmbedPDF(annot-identity): the annotation this handle names, as the
+  // document has it now, or null when it is gone. Follows a promotion
+  // through the birth list.
   RetainPtr<const CPDF_Dictionary> ResolveIdentity() const;
+  // EmbedPDF(layer-door): open an inline annotation's owner for writing.
   void EnsureMutableBackingForAnnotDict();
 
+  // EmbedPDF(overlay-epoch, layer-door): the dictionary and its form are
+  // re-read when the overlay epoch moves, and the dictionary is swapped for
+  // the layer's copy on a write.
   mutable std::unique_ptr<CPDF_Form> annot_form_;
   mutable RetainPtr<CPDF_Dictionary> annot_dict_;
   UnownedPtr<IPDF_Page> const page_;
   int annot_index_ = -1;
   mutable uint64_t annot_dict_epoch_ = 0;
 
-  // EmbedPDF identity (fork plan §4.14). An annotation with an object number
-  // is named by it. An inline one on an unpromoted page of a layer is named
-  // by its page and birth index: its position there, which promotion turns
-  // into an object number through the layer's birth list.
+  // EmbedPDF(annot-identity): an annotation with an object number is named
+  // by it. An inline one on an unpromoted page of a layer is named by its
+  // page and birth index: its position there, which promotion turns into an
+  // object number through the layer's birth list.
   uint32_t objnum_ = 0;
   uint32_t page_objnum_ = 0;
   int birth_index_ = -1;

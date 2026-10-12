@@ -25,7 +25,7 @@ time_t DefaultTimeFunction() {
 }
 
 struct tm* DefaultLocaltimeFunction(const time_t* tp) {
-  // EmbedPDF: thread-confined runtime. Plain localtime() returns a pointer to
+  // EmbedPDF(thread-confined-globals): plain localtime() returns a pointer to
   // shared static storage, which is a data race across worker threads. Fill a
   // thread_local tm via the reentrant localtime_r/localtime_s instead so each
   // thread gets its own result. struct tm is trivially destructible, so the

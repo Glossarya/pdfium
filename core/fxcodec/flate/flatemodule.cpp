@@ -66,6 +66,7 @@ uint32_t FlateGetPossiblyTruncatedTotalIn(z_stream* context) {
   return pdfium::saturated_cast<uint32_t>(context->total_in);
 }
 
+// EmbedPDF(redaction): at a zlib level, for the images a redaction rewrites.
 size_t FlateCompress(pdfium::span<const uint8_t> src_span,
                      pdfium::span<uint8_t> dest_span,
                      int level) {
@@ -496,7 +497,9 @@ uint32_t EstimateFlateUncompressBufferSize(uint32_t orig_size,
 
 DataAndBytesConsumed FlateUncompress(pdfium::span<const uint8_t> src_buf,
                                      uint32_t orig_size) {
-  // EmbedPDF: whole buffers at a time, as this always has.
+  // EmbedPDF(sliced-load): the loop moved into FlateUncompressor, which a
+  // caller can pause; here it runs whole buffers at a time, as this always
+  // has.
   FlateUncompressor uncompressor(src_buf, orig_size);
   while (uncompressor.Continue(std::numeric_limits<size_t>::max())) {
   }
@@ -645,6 +648,8 @@ bool FlatePredictorScanlineDecoder::Rewind() {
   }
 
   left_over_ = 0;
+  // EmbedPDF(bug-fix): upstream kept the last decoded row across a rewind, so
+  // an image decoded again (drawn twice) came out corrupt.
   // The first line predicts from zeros again, not from the last line decoded
   // before the rewind.
   std::ranges::fill(last_line_.span(), 0);
@@ -733,6 +738,8 @@ size_t FlatePredictorScanlineDecoder::CopyAndAdvanceLine(size_t bytes_to_go) {
 
 }  // namespace
 
+// EmbedPDF(sliced-load): FlateUncompressor is upstream's FlateUncompress() loop
+// split into pieces a caller can pause between.
 void FlateUncompressor::ContextDeleter::operator()(z_stream_s* context) const {
   FlateEnd(context);
 }
@@ -906,6 +913,7 @@ DataAndBytesConsumed FlateModule::FlateOrLZWDecode(
   }
 }
 
+// EmbedPDF(attachments): streams a large attachment out in bounded chunks.
 // static
 FlateModule::SinkDecodeStatus FlateModule::FlateDecodeToSink(
     pdfium::span<const uint8_t> src_span,
@@ -950,6 +958,7 @@ FlateModule::SinkDecodeStatus FlateModule::FlateDecodeToSink(
 
 // static
 DataVector<uint8_t> FlateModule::Encode(pdfium::span<const uint8_t> src_span) {
+  // EmbedPDF(redaction): the default level; a redaction asks for its own.
   return Encode(src_span, Z_DEFAULT_COMPRESSION);
 }
 

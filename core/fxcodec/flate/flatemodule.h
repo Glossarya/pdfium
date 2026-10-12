@@ -17,16 +17,18 @@
 #include "core/fxcrt/data_vector.h"
 #include "core/fxcrt/span.h"
 
+// EmbedPDF(sliced-load): FlateUncompressor below holds a zlib stream.
 struct z_stream_s;
 
 namespace fxcodec {
 
 class ScanlineDecoder;
 
-// EmbedPDF: inflates a FlateDecode stream the way FlateOrLZWDecode() does
-// without a predictor, a piece at a time, so a caller can pause between
-// pieces: a drawing's content can inflate to tens of megabytes. It is the
-// decoder FlateUncompress() runs to the end, so both give the same bytes.
+// EmbedPDF(sliced-load): inflates a FlateDecode stream the way
+// FlateOrLZWDecode() does without a predictor, a piece at a time, so a caller
+// can pause between pieces: a drawing's content can inflate to tens of
+// megabytes. It is the decoder FlateUncompress() runs to the end, so both give
+// the same bytes.
 class FlateUncompressor {
  public:
   // Inflates `src_buf`, which must outlive this, with the first output
@@ -93,16 +95,16 @@ class FlateModule {
       int Columns,
       uint32_t estimated_size);
 
-  // EmbedPDF: outcome of FlateDecodeToSink().
+  // EmbedPDF(attachments): outcome of FlateDecodeToSink().
   enum class SinkDecodeStatus : uint8_t {
     kSuccess,
     kLimitExceeded,
     kSinkError,
   };
 
-  // EmbedPDF: inflates |src_span| into |sink| one bounded chunk at a time,
-  // without materializing the full decoded output. Peak memory is one chunk
-  // regardless of the decoded size. |sink| returns false to abort.
+  // EmbedPDF(attachments): inflates |src_span| into |sink| one bounded chunk
+  // at a time, without materializing the full decoded output. Peak memory is
+  // one chunk regardless of the decoded size. |sink| returns false to abort.
   // |max_decoded_bytes| of 0 means unlimited; when the decoded output would
   // exceed it, decoding stops with kLimitExceeded (|sink| may already have
   // received earlier chunks). On return, |*total_out| holds the number of
@@ -116,7 +118,8 @@ class FlateModule {
       uint64_t* total_out);
 
   static DataVector<uint8_t> Encode(pdfium::span<const uint8_t> src_span);
-  // EmbedPDF: the same at zlib `level` (1, fastest, to 9, smallest).
+  // EmbedPDF(redaction): the same at zlib `level` (1, fastest, to 9,
+  // smallest), for the images a redaction rewrites.
   static DataVector<uint8_t> Encode(pdfium::span<const uint8_t> src_span,
                                     int level);
 

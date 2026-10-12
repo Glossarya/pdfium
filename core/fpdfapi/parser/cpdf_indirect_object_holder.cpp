@@ -37,6 +37,9 @@ RetainPtr<const CPDF_Object> CPDF_IndirectObjectHolder::GetIndirectObject(
 
 RetainPtr<CPDF_Object> CPDF_IndirectObjectHolder::GetMutableIndirectObject(
     uint32_t objnum) {
+  // EmbedPDF(layer-door): a mutable reference resolves here
+  // (CPDF_Reference::GetMutableDirect()), so parse on demand, as GetDirect()
+  // does. Upstream returns only objects already loaded.
   return pdfium::WrapRetain(
       const_cast<CPDF_Object*>(GetOrParseIndirectObjectInternal(objnum)));
 }
@@ -51,11 +54,14 @@ const CPDF_Object* CPDF_IndirectObjectHolder::GetIndirectObjectInternal(
   return FilterInvalidObjNum(it->second.Get());
 }
 
+// EmbedPDF(layer-door): a bare holder owns no storage a copy-up could share.
 bool CPDF_IndirectObjectHolder::SharesBackingStorageWith(
     const CPDF_Stream* stream) const {
   return false;
 }
 
+// EmbedPDF(layer-door): a layer's own object, without falling through to its
+// base.
 RetainPtr<CPDF_Object> CPDF_IndirectObjectHolder::FindLocalIndirectObject(
     uint32_t objnum) const {
   auto it = indirect_objs_.find(objnum);
@@ -67,6 +73,8 @@ RetainPtr<CPDF_Object> CPDF_IndirectObjectHolder::FindLocalIndirectObject(
       const_cast<CPDF_Object*>(FilterInvalidObjNum(it->second.Get())));
 }
 
+// EmbedPDF(layer-door): stores the copy a layer promotes from its base, at
+// the base object's number.
 void CPDF_IndirectObjectHolder::AddPromotedObject(
     uint32_t objnum,
     RetainPtr<CPDF_Object> object) {
@@ -86,6 +94,8 @@ RetainPtr<CPDF_Object> CPDF_IndirectObjectHolder::GetOrParseIndirectObject(
   return pdfium::WrapRetain(GetOrParseIndirectObjectInternal(objnum));
 }
 
+// EmbedPDF(write-generation): a base document's objects are frozen; every
+// layer over it shares them.
 void CPDF_IndirectObjectHolder::Freeze() {
   if (frozen_) {
     return;
@@ -119,6 +129,8 @@ CPDF_Object* CPDF_IndirectObjectHolder::GetOrParseIndirectObjectInternal(
 
   pNewObj->SetObjNum(objnum);
   last_obj_num_ = std::max(last_obj_num_, objnum);
+  // EmbedPDF(write-generation): an object parsed into a frozen holder
+  // arrives frozen.
   // "Frozen" means frozen against mutation, not closed to the parser: an
   // object parsed from the holder's own immutable bytes is a pure function
   // of those bytes, so it may still enter the cache - frozen on arrival.
@@ -138,6 +150,8 @@ RetainPtr<CPDF_Object> CPDF_IndirectObjectHolder::ParseIndirectObject(
 
 uint32_t CPDF_IndirectObjectHolder::AddIndirectObject(
     RetainPtr<CPDF_Object> pObj) {
+  // EmbedPDF(write-generation, reads-dont-write): a write to a frozen
+  // holder, or one during a read-only walk, is a bug.
   DCHECK_PDF_HOLDER_MUTABLE();
   DCHECK(!frozen_);
   CHECK(!pObj->GetObjNum());
@@ -146,6 +160,8 @@ uint32_t CPDF_IndirectObjectHolder::AddIndirectObject(
   return last_obj_num_;
 }
 
+// EmbedPDF(chosen-object-numbers): only a layer document stores an object at
+// a chosen number.
 bool CPDF_IndirectObjectHolder::CanAddIndirectObjectAt(uint32_t objnum) const {
   return false;
 }
@@ -170,6 +186,8 @@ bool CPDF_IndirectObjectHolder::ReplaceIndirectObjectIfHigherGeneration(
     return false;
   }
 
+  // EmbedPDF(write-generation, reads-dont-write): a write to a frozen
+  // holder, or one during a read-only walk, is a bug.
   DCHECK_PDF_HOLDER_MUTABLE();
   DCHECK(!frozen_);
   pObj->SetObjNum(objnum);
@@ -184,6 +202,8 @@ void CPDF_IndirectObjectHolder::DeleteIndirectObject(uint32_t objnum) {
     return;
   }
 
+  // EmbedPDF(write-generation, reads-dont-write): a write to a frozen
+  // holder, or one during a read-only walk, is a bug.
   DCHECK_PDF_HOLDER_MUTABLE();
   DCHECK(!frozen_);
   indirect_objs_.erase(it);

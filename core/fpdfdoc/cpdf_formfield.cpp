@@ -63,6 +63,9 @@ bool IsComboOrListField(CPDF_FormField::Type type) {
   }
 }
 
+// EmbedPDF(reads-dont-write): a field's name part, read through a referenced
+// /T in place (only a string counts). Upstream's form load wrote the resolved
+// /T back into the field dictionary.
 WideString GetFieldNameComponent(const CPDF_Dictionary* dict) {
   RetainPtr<const CPDF_Object> t_obj =
       dict->GetObjectFor(pdfium::form_fields::kT);
@@ -108,6 +111,8 @@ WideString CPDF_FormField::GetFullNameForDict(
   const CPDF_Dictionary* pLevel = pFieldDict;
   while (pLevel) {
     visited.insert(pLevel);
+    // EmbedPDF(reads-dont-write): a referenced /T is read in place, not
+    // rewritten.
     WideString short_name = GetFieldNameComponent(pLevel);
     if (!short_name.IsEmpty()) {
       if (full_name.IsEmpty()) {
@@ -342,6 +347,8 @@ void CPDF_FormField::SetFieldFlags(uint32_t dwFlags) {
                                 static_cast<int>(dwFlags));
 }
 
+// EmbedPDF(forms-model): the stored /V (or /DV) as text, without upstream's
+// check box and radio button mapping; GetValue() was split here.
 WideString CPDF_FormField::GetRawValue(bool bDefault) const {
   RetainPtr<const CPDF_Object> pValue =
       bDefault ? GetDefaultValueObject() : GetValueObject();
@@ -357,6 +364,7 @@ WideString CPDF_FormField::GetRawValue(bool bDefault) const {
   switch (pValue->GetType()) {
     case CPDF_Object::kString:
     case CPDF_Object::kStream:
+    // EmbedPDF(forms-model): a raw value can be a name (a check box's /V).
     case CPDF_Object::kName:
       return pValue->GetUnicodeText();
     case CPDF_Object::kArray: {
@@ -373,6 +381,8 @@ WideString CPDF_FormField::GetRawValue(bool bDefault) const {
   return WideString();
 }
 
+// EmbedPDF(forms-model): the raw value; GetValue() keeps upstream's mapping
+// for check boxes and radio buttons.
 WideString CPDF_FormField::GetRawValue() const {
   return GetRawValue(false);
 }

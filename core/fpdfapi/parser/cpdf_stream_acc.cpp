@@ -63,6 +63,8 @@ void CPDF_StreamAcc::LoadAllDataRaw() {
   LoadAllData(true, 0, false);
 }
 
+// EmbedPDF(sliced-load): a long content stream inflates in slices that can
+// pause between steps.
 bool CPDF_StreamAcc::LoadAllDataFilteredInSteps(PauseIndicatorIface* pause) {
   if (step_load_ == StepLoad::kNotStarted) {
     if (!StartInflating()) {

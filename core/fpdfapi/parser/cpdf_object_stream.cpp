@@ -73,6 +73,7 @@ CPDF_ObjectStream::CPDF_ObjectStream(RetainPtr<const CPDF_Stream> obj_stream)
 
 CPDF_ObjectStream::~CPDF_ObjectStream() = default;
 
+// EmbedPDF(save-traversal): the save's object stream cache budgets bytes.
 size_t CPDF_ObjectStream::GetRetainedSize() const {
   return stream_acc_->GetSize() + stream_acc_->GetStream()->GetRawSize() +
          object_info_.capacity() * sizeof(ObjectInfo);

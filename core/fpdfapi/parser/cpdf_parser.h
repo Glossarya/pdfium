@@ -30,6 +30,7 @@ class CPDF_Dictionary;
 class CPDF_LinearizedHeader;
 class CPDF_Object;
 class CPDF_ObjectStream;
+// EmbedPDF(save-traversal): a save's byte-budgeted object stream cache.
 class CPDF_ObjectStreamCache;
 class CPDF_ReadValidator;
 class CPDF_SecurityHandler;
@@ -100,6 +101,8 @@ class CPDF_Parser {
 
   RetainPtr<CPDF_Object> ParseIndirectObject(uint32_t objnum);
 
+  // EmbedPDF(save-traversal): a save reads objects without filling the live
+  // document's caches.
   // Parse from the loaded bytes without populating the document's caches.
   // References, including indirect stream lengths, resolve through `holder`.
   RetainPtr<CPDF_Object> ParseIndirectObjectForSave(
@@ -125,6 +128,8 @@ class CPDF_Parser {
   bool IsXRefStream() const { return xref_stream_; }
 
   FX_FILESIZE GetDocumentSize() const;
+  // EmbedPDF(layer-open): a layer reads the base file's bytes before its
+  // delta.
   RetainPtr<IFX_SeekableReadStream> GetFileAccess() const;
   uint32_t GetFirstPageNo() const;
   const CPDF_LinearizedHeader* GetLinearizedHeader() const {
@@ -136,9 +141,10 @@ class CPDF_Parser {
   std::vector<unsigned int> GetTrailerEnds();
   bool WriteToArchive(IFX_ArchiveStream* archive, FX_FILESIZE src_size);
 
-  // EmbedPDF: one cross-reference section of the chain reached from the final
-  // startxref through /Prev, recorded while parsing. Offsets are
-  // header-relative like every other parser offset (see GetFileHeaderOffset()).
+  // EmbedPDF(signatures): one cross-reference section of the chain reached
+  // from the final startxref through /Prev, recorded while parsing. Offsets
+  // are header-relative like every other parser offset (see
+  // GetFileHeaderOffset()).
   struct CrossRefSection {
     // Start of the section: a classic table or a cross-reference stream.
     FX_FILESIZE offset = 0;
@@ -148,21 +154,23 @@ class CPDF_Parser {
     FX_FILESIZE prev_offset = 0;
   };
 
-  // EmbedPDF: the chain, oldest section first. Empty when the table was
-  // rebuilt by scanning, when the document was loaded progressively
+  // EmbedPDF(signatures): the chain, oldest section first. Empty when the
+  // table was rebuilt by scanning, when the document was loaded progressively
   // (linearized path), or when nothing was parsed.
   const std::vector<CrossRefSection>& GetCrossRefSections() const {
     return cross_ref_sections_;
   }
 
-  // EmbedPDF: GetTrailerEnds() walks the whole document; this caches it.
-  // Positions are header-relative, like GetTrailerEnds().
+  // EmbedPDF(signatures): GetTrailerEnds() walks the whole document; this
+  // caches it. Positions are header-relative, like GetTrailerEnds().
   const std::vector<unsigned int>& GetCachedTrailerEnds();
 
-  // EmbedPDF: bytes preceding the %PDF header. Parser offsets are relative to
-  // it; file offsets (a signature's /ByteRange) are not.
+  // EmbedPDF(signatures): bytes preceding the %PDF header. Parser offsets are
+  // relative to it; file offsets (a signature's /ByteRange) are not.
   FX_FILESIZE GetFileHeaderOffset() const;
 
+  // EmbedPDF(layer-open, save-generations): delta ingest reads the delta's
+  // table, and a save reads each object's generation from it.
   const CPDF_CrossRefTable* GetCrossRefTable() const {
     return cross_ref_table_.get();
   }
@@ -172,6 +180,8 @@ class CPDF_Parser {
 
   CPDF_Dictionary* GetMutableTrailerForTesting();
 
+  // EmbedPDF(save-traversal): tests check a save leaves the parser's object
+  // stream cache alone.
   size_t GetCachedObjectStreamCountForTesting() const {
     return object_stream_map_.size();
   }
@@ -217,6 +227,8 @@ class CPDF_Parser {
   Error LoadLinearizedMainXRefTable();
 
   const CPDF_ObjectStream* GetObjectStream(uint32_t object_number);
+  // EmbedPDF(save-traversal): a save parses into its own holder and keeps its
+  // object streams in its own cache.
   RetainPtr<CPDF_Object> ParseIndirectObjectInternal(
       uint32_t objnum,
       CPDF_IndirectObjectHolder* holder,
@@ -233,6 +245,7 @@ class CPDF_Parser {
 
   RetainPtr<CPDF_Object> ParseIndirectObjectAt(FX_FILESIZE pos,
                                                uint32_t objnum);
+  // EmbedPDF(save-traversal): a save parses into its own holder.
   RetainPtr<CPDF_Object> ParseIndirectObjectAtWithHolder(
       FX_FILESIZE pos,
       uint32_t objnum,
@@ -255,6 +268,8 @@ class CPDF_Parser {
   std::unique_ptr<ParsedObjectsHolder> owned_objects_holder_;
   UnownedPtr<ParsedObjectsHolder> objects_holder_;
 
+  // EmbedPDF(save-traversal): a save's bounded index of each object's
+  // references.
   CPDF_ReferenceIndex save_reference_index_;
 
   bool has_parsed_ = false;
@@ -277,7 +292,7 @@ class CPDF_Parser {
 
   RetainPtr<CPDF_SecurityHandler> security_handler_;
 
-  // EmbedPDF: see GetCrossRefSections() / GetCachedTrailerEnds().
+  // EmbedPDF(signatures): see GetCrossRefSections() / GetCachedTrailerEnds().
   std::vector<CrossRefSection> cross_ref_sections_;
   std::optional<std::vector<unsigned int>> cached_trailer_ends_;
 };

@@ -15,6 +15,9 @@
 #include "core/fxcrt/fx_string.h"
 #include "core/fxcrt/numerics/safe_conversions.h"
 
+// EmbedPDF(render-speedup): content streams of vector-heavy pages are mostly
+// numbers; decoding the common forms directly gives the general code's exact
+// results, faster.
 namespace {
 
 // Powers of ten that a double holds exactly.
@@ -86,6 +89,7 @@ FX_Number::FX_Number(int32_t value) : value_(value) {}
 FX_Number::FX_Number(float value) : value_(value) {}
 
 FX_Number::FX_Number(ByteStringView strc) {
+  // EmbedPDF(render-speedup): common forms take the fast path, same results.
   if (strc.IsEmpty() || DecodeCommonForm(strc, value_)) {
     return;
   }

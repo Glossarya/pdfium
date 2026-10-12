@@ -12,6 +12,11 @@ source_set("fpdfsdk") {
     "epdf_action_helpers.h",
     # EmbedPDF: action creators and the field/widget event setters.
     "epdf_action_write.cpp",
+    # EmbedPDF: the annotation API (public/epdf_annot.h), and the annotation
+    # handle helpers our files share.
+    "epdf_annot.cpp",
+    "epdf_annot_helpers.cpp",
+    "epdf_annot_helpers.h",
     # EmbedPDF: cross-document appearance Form XObject cloning (shared).
     "epdf_appearance_exporter.h",
     "epdf_base_document.cpp",
@@ -58,7 +63,6 @@ source_set("fpdfsdk") {
     # EmbedPDF: what a parsed page costs, and whether it is still current.
     "epdf_page_residency.cpp",
     "epdf_png_shim.cpp",
-    "epdf_jpeg_shim.cpp",
     "epdf_redact.cpp",
     "epdf_threading.cpp",
     "epdf_wrapped_appearance.cpp",
@@ -123,7 +127,6 @@ source_set("fpdfsdk") {
   ]
   deps = [
     "//third_party:png",
-    "//third_party/libjpeg_turbo:libjpeg",
     "../:pdfium_public_headers",
     "../constants",
     "../core/fdrm",
@@ -188,6 +191,20 @@ pdfium_embeddertest_source_set("embeddertests") {
     "epdf_action_embeddertest.cpp",
     # EmbedPDF: covers the EPDFForm_* session-free form APIs.
     "epdf_form_embeddertest.cpp",
+    # EmbedPDF: covers the annotation API (public/epdf_annot.h).
+    "epdf_annot_embeddertest.cpp",
+    # EmbedPDF: covers attachments (public/epdf_attachment.h).
+    "epdf_attachment_embeddertest.cpp",
+    # EmbedPDF: covers flattening and annotation export (public/epdf_flatten.h).
+    "epdf_flatten_embeddertest.cpp",
+    # EmbedPDF: covers base documents and layers (public/epdf_layer.h).
+    "epdf_layer_embeddertest.cpp",
+    # EmbedPDF: covers saves (public/epdf_save.h).
+    "epdf_save_embeddertest.cpp",
+    # EmbedPDF: covers text geometry and text maps (public/epdf_text.h).
+    "epdf_text_embeddertest.cpp",
+    # EmbedPDF: covers what we add to public/fpdfview.h (public/epdf_view.h).
+    "epdf_view_embeddertest.cpp",
     # EmbedPDF: covers annotation calls that read a page's dictionaries
     # without loading the page.
     "epdf_annot_raw_embeddertest.cpp",
@@ -252,6 +269,9 @@ pdfium_embeddertest_source_set("embeddertests") {
     "fpdf_transformpage_embeddertest.cpp",
     "fpdf_view_c_api_test.c",
     "fpdf_view_c_api_test.h",
+    # EmbedPDF: our public headers compile and link as C.
+    "epdf_c_api_test.c",
+    "epdf_c_api_test.h",
     "fpdf_view_embeddertest.cpp",
   ]
   deps = [

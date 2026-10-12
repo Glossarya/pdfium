@@ -134,6 +134,7 @@ AGG_INLINE void outline_aa::add_cur_cell()
 {
     if(m_cur_cell.area | m_cur_cell.cover) {
         if((m_num_cells & cell_block_mask) == 0) {
+            // EmbedPDF(render-speedup): one rasterizer draws many paths.
             // Count the blocks this outline uses, not the ones allocated: an
             // outline reused after reset() keeps its blocks, and must reach
             // the limit exactly where a new outline would.

@@ -24,6 +24,7 @@ class CPDF_Page;
 class CPDF_Stream;
 class PauseIndicatorIface;
 class IFX_SeekableReadStream;
+// EmbedPDF(redaction): for OverwriteStreamInPlace().
 class CPDF_Dictionary;
 
 class CPDF_Image final : public Retainable {
@@ -43,6 +44,8 @@ class CPDF_Image final : public Retainable {
   // Never returns nullptr.
   CPDF_Document* GetDocument() const { return document_; }
 
+  // EmbedPDF(overlay-epoch): these return what the image derives from its
+  // stream, so they re-read the stream first if the overlay epoch moved.
   int32_t GetPixelHeight() const {
     RefreshStreamIfNeeded();
     return height_;
@@ -65,14 +68,18 @@ class CPDF_Image final : public Retainable {
   RetainPtr<CPDF_DIB> CreateNewDIB() const;
   RetainPtr<CFX_DIBBase> LoadDIBBase() const;
 
-  // Rebinds the image to the current stream object for its object number.
+  // EmbedPDF(overlay-epoch): rebinds the image to the current stream object
+  // for its object number.
   bool RebindStreamIfPromoted();
 
   void SetImage(const RetainPtr<CFX_DIBitmap>& pBitmap);
   void SetJpegImage(RetainPtr<IFX_SeekableReadStream> pFile);
   void SetJpegImageInline(RetainPtr<IFX_SeekableReadStream> pFile);
+  // EmbedPDF(codecs): an image from PNG bytes.
   void SetPng(const uint8_t* png_data, size_t png_size);
 
+  // EmbedPDF(redaction): replaces the stream's dictionary and bytes in place
+  // and drops the cached decode.
   bool OverwriteStreamInPlace(DataVector<uint8_t> new_data,
                               RetainPtr<CPDF_Dictionary> new_dict,
                               bool data_is_decoded);
@@ -102,19 +109,22 @@ class CPDF_Image final : public Retainable {
   CPDF_Image(CPDF_Document* doc, uint32_t dwStreamObjNum);
   ~CPDF_Image() override;
 
-  // Reads what the image needs from its stream's dictionary.
+  // EmbedPDF(overlay-epoch): reads what the image needs from its stream's
+  // dictionary; const, so RefreshStreamIfNeeded() can call it.
   void FinishInitialization() const;
-  // EmbedPDF: an indirect image is a view of one version of its stream (fork
-  // plan rule 5). When the document's overlay moved, look again by object
+  // EmbedPDF(overlay-epoch): an indirect image is a view of one version of
+  // its stream. When the document's overlay moved, look again by object
   // number: a layer transaction may have copied the stream up, or dropped
   // the copy this image was bound to.
   void RefreshStreamIfNeeded() const;
-  // Used only by explicit edit paths that need to promote this stream.
+  // EmbedPDF(reads-dont-write): used only by explicit edit paths that need
+  // to promote this stream.
   RetainPtr<CPDF_Stream> AcquireMutableStreamForEdit();
   RetainPtr<CPDF_Dictionary> InitJPEG(pdfium::span<uint8_t> src_span);
   RetainPtr<CPDF_Dictionary> CreateXObjectImageDict(int width, int height);
 
-  // Derived from the stream: refreshed with it (RefreshStreamIfNeeded()).
+  // EmbedPDF(overlay-epoch): derived from the stream: refreshed with it
+  // (RefreshStreamIfNeeded()).
   mutable int32_t height_ = 0;
   mutable int32_t width_ = 0;
   uint32_t matte_color_ = 0;
@@ -125,6 +135,8 @@ class CPDF_Image final : public Retainable {
   UnownedPtr<CPDF_Document> const document_;
   RetainPtr<CFX_DIBBase> dibbase_;
   RetainPtr<CFX_DIBBase> mask_;
+  // EmbedPDF(overlay-epoch, reads-dont-write): the stream is held const and
+  // re-read when the overlay epoch moves.
   mutable RetainPtr<const CPDF_Stream> stream_;
   mutable RetainPtr<const CPDF_Dictionary> oc_;
   mutable uint64_t stream_epoch_ = 0;

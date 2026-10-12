@@ -685,6 +685,7 @@ CPDFSDK_PageView* CPDFSDK_FormFillEnvironment::GetPageViewAtIndex(int nIndex) {
 }
 
 void CPDFSDK_FormFillEnvironment::ProcJavascriptAction() {
+  // EmbedPDF(reads-dont-write): read the name tree without mutable getters.
   auto name_tree = CPDF_NameTree::CreateForReading(cpdfdoc_, "JavaScript");
   if (!name_tree) {
     return;

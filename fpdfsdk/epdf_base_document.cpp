@@ -16,6 +16,7 @@
 #include "core/fxcrt/span.h"
 #include "fpdfsdk/cpdfsdk_customaccess.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
+#include "public/epdf_layer.h"
 
 namespace {
 

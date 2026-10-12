@@ -26,6 +26,8 @@ CPDF_Form::RecursionState::RecursionState() = default;
 
 CPDF_Form::RecursionState::~RecursionState() = default;
 
+// EmbedPDF(reads-dont-write): const, so choosing resources never calls a
+// mutable getter.
 // static
 const CPDF_Dictionary* CPDF_Form::ChooseResourcesDict(
     const CPDF_Dictionary* pResources,
@@ -37,6 +39,8 @@ const CPDF_Dictionary* CPDF_Form::ChooseResourcesDict(
   return pParentResources ? pParentResources : pPageResources;
 }
 
+// EmbedPDF(faithful-content-rewrite): where content looks up a name of `type`,
+// so a rewrite keeps the names a form uses from the page's resources.
 // static
 RetainPtr<const CPDF_Dictionary> CPDF_Form::ChooseResourcesOfType(
     const CPDF_Dictionary* resources,
@@ -62,6 +66,9 @@ CPDF_Form::CPDF_Form(CPDF_Document* doc,
                 std::move(pFormStream),
                 nullptr) {}
 
+// EmbedPDF(reads-dont-write, overlay-epoch): the form reads its dictionary and
+// resources without mutable getters; RebindFormStream() chooses them, and does
+// again whenever the stream's version changes.
 CPDF_Form::CPDF_Form(CPDF_Document* doc,
                      RetainPtr<CPDF_Dictionary> pPageResources,
                      RetainPtr<CPDF_Stream> pFormStream,
@@ -101,6 +108,8 @@ void CPDF_Form::ParseContentInternal(const CPDF_AllStates* pGraphicStates,
                                      const CFX_Matrix* pParentMatrix,
                                      CPDF_Type3Char* pType3Char,
                                      RecursionState* recursion_state) {
+  // EmbedPDF(view-scope, overlay-epoch): parse through the document's view.
+  // GetStream() goes first: a newer stream version drops the parsed objects.
   CPDF_DocumentViewScope document_view(GetDocument());
   RetainPtr<const CPDF_Stream> stream = GetStream();
 
@@ -109,6 +118,7 @@ void CPDF_Form::ParseContentInternal(const CPDF_AllStates* pGraphicStates,
   }
 
   if (GetParseState() == ParseState::kNotParsed) {
+    // EmbedPDF(page-residency): shared with StartParseContent().
     StartParseContentInternal(std::move(stream), pGraphicStates, pParentMatrix,
                               pType3Char, recursion_state);
   }
@@ -116,6 +126,8 @@ void CPDF_Form::ParseContentInternal(const CPDF_AllStates* pGraphicStates,
   ContinueParse(nullptr);
 }
 
+// EmbedPDF(page-residency): a nested form's parse starts in its own later
+// stage of the parser that placed it.
 void CPDF_Form::StartParseContent(const CPDF_AllStates* pGraphicStates,
                                   RecursionState* recursion_state) {
   CPDF_DocumentViewScope document_view(GetDocument());
@@ -161,6 +173,8 @@ CFX_FloatRect CPDF_Form::CalcBoundingBox() const {
   return CFX_FloatRect(left, bottom, right, top);
 }
 
+// EmbedPDF(faithful-content-rewrite, layer-door): content regeneration writes
+// a form into its own stream: the writable version the door gives.
 RetainPtr<CPDF_Stream> CPDF_Form::GetMutableFormStream() {
   CPDF_Document* doc = GetDocument();
   if (!doc || !form_stream_) {
@@ -184,6 +198,8 @@ RetainPtr<CPDF_Stream> CPDF_Form::GetMutableFormStream() {
   return form_stream_;
 }
 
+// EmbedPDF(layer-door): the form's dictionary and resources open for writing
+// on their first actual write, not when the form is made.
 void CPDF_Form::EnsureMutableBackingObjectForDict() {
   RetainPtr<CPDF_Stream> live_stream = GetMutableFormStream();
   if (live_stream) {
@@ -199,11 +215,11 @@ void CPDF_Form::EnsureMutableBackingObjectForResources() {
   }
   RetainPtr<CPDF_Dictionary> own = dict->GetMutableDictFor("Resources");
   if (!own) {
-    // EmbedPDF: a form without /Resources of its own borrows its parent's,
-    // which can't be written in place when they are frozen or belong to a
-    // committed version in a layer transaction. A write gets resources of
-    // the form's own, a copy of what it borrowed: adding to the parent's
-    // would change the page as well.
+    // EmbedPDF(layer-door): a form without /Resources of its own borrows its
+    // parent's, which can't be written in place when they are frozen or
+    // belong to a committed version in a layer transaction. A write gets
+    // resources of the form's own, a copy of what it borrowed: adding to the
+    // parent's would change the page as well.
     own = resources_ ? ToDictionary(resources_->Clone())
                      : pdfium::MakeRetain<CPDF_Dictionary>();
     dict->SetFor("Resources", own);
@@ -211,6 +227,8 @@ void CPDF_Form::EnsureMutableBackingObjectForResources() {
   resources_ = std::move(own);
 }
 
+// EmbedPDF(overlay-epoch): re-read the stream when the overlay epoch moved; a
+// new version drops the parsed objects.
 RetainPtr<const CPDF_Stream> CPDF_Form::GetStream() const {
   CPDF_Document* doc = GetDocument();
   if (!doc || !form_stream_) {
@@ -237,18 +255,23 @@ RetainPtr<const CPDF_Stream> CPDF_Form::GetStream() const {
   return form_stream_;
 }
 
+// EmbedPDF(page-residency): the version the page records as parsed.
 RetainPtr<const CPDF_Stream> CPDF_Form::GetParsedStream() const {
   return form_stream_;
 }
 
+// EmbedPDF(redaction, faithful-content-rewrite): a form placed more than once
+// is copied before its content is regenerated, so the other placements keep
+// what they draw.
 bool CPDF_Form::CloneBackingStreamForWrite() {
   CPDF_Document* doc = GetDocument();
   RetainPtr<const CPDF_Stream> source = GetStream();
   if (!doc || !source) {
     return false;
   }
-  // EmbedPDF: a form copied once already draws its own copy; a later write
-  // (redaction, then the Type3 glyphs it took) goes to the same one.
+  // EmbedPDF(redaction): a form copied once already draws its own copy; a
+  // later write (redaction, then the Type3 glyphs it took) goes to the same
+  // one.
   if (private_stream_objnum_ && source->GetObjNum() == private_stream_objnum_) {
     return true;
   }
@@ -267,10 +290,11 @@ bool CPDF_Form::CloneBackingStreamForWrite() {
     if (!cloned_resources) {
       return false;
     }
-    // EmbedPDF: a category (/Font, /XObject, /ExtGState...) that is an object
-    // of its own is shared with every other placement of this form, and
-    // content generation adds and prunes names in it. Copy it too. The fonts,
-    // images and forms it names stay shared: nothing here edits them.
+    // EmbedPDF(faithful-content-rewrite): a category (/Font, /XObject,
+    // /ExtGState...) that is an object of its own is shared with every other
+    // placement of this form, and content generation adds and prunes names
+    // in it. Copy it too. The fonts, images and forms it names stay shared:
+    // nothing here edits them.
     std::vector<ByteString> shared_categories;
     {
       CPDF_DictionaryLocker locker(cloned_resources.Get());
@@ -298,6 +322,8 @@ bool CPDF_Form::CloneBackingStreamForWrite() {
   return true;
 }
 
+// EmbedPDF(overlay-epoch): point the form at another version of its stream
+// and choose its dictionary and resources again.
 void CPDF_Form::RebindFormStream(RetainPtr<CPDF_Stream> stream,
                                  bool reset_parsed_content) {
   CHECK(stream);

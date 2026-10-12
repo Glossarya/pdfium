@@ -93,8 +93,8 @@ class CPDF_PageImageCache {
     RetainPtr<CFX_DIBBase> cached_bitmap_;
     RetainPtr<CFX_DIBBase> cached_mask_;
     bool cached_set_max_size_required_ = false;
-    // Where the decode in progress goes in the decoded image store, and the
-    // JPX resolution levels its request skips.
+    // EmbedPDF(decoded-image-store): where the decode in progress goes in the
+    // decoded image store, and the JPX resolution levels its request skips.
     std::optional<CPDF_DecodedImageStore::Key> store_key_;
     uint8_t store_levels_ = 0;
   };

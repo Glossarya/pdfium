@@ -67,6 +67,9 @@ void CPDF_ProgressiveRenderer::Continue(PauseIndicatorIface* pPause) {
       clip_rect_ = current_layer_->GetMatrix().GetInverse().TransformRect(
           CFX_FloatRect(device_->GetClipBox()));
     }
+    // EmbedPDF(render-speedup): pass over runs of objects whose bounds miss
+    // the clip; every object in them would fail the same test, so the output
+    // is unchanged.
     const CPDF_PageObjectHolder* holder = current_layer_->GetObjectHolder();
     CPDF_PageObjectHolder::const_iterator iter;
     CPDF_PageObjectHolder::const_iterator iterEnd = holder->end();
@@ -134,6 +137,7 @@ void CPDF_ProgressiveRenderer::Continue(PauseIndicatorIface* pPause) {
         nObjsToGo = kStepLimit;
       }
       ++iter;
+      // EmbedPDF(render-speedup): `index` follows `iter` for the run skip.
       ++index;
       if (is_mask && iter != iterEnd) {
         return;

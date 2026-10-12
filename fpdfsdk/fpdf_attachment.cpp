@@ -37,15 +37,17 @@
 #include "core/fxcrt/notreached.h"
 #include "core/fxcrt/numerics/safe_conversions.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
+#include "public/epdf_attachment.h"
 
 namespace {
 
-// EmbedPDF: the attachment a write may change. Null while a layer
-// transaction is open and |attachment| belongs to a committed version - read
-// before the transaction, or through FPDFAnnot_GetFileAttachment() - since a
-// write to it would land outside the transaction and survive an abort.
-// EPDFAnnot_GetFileAttachmentForWrite() gives a handle the transaction may
-// write. Outside transactions every attachment is writable, as before.
+// EmbedPDF(layer-transaction): the attachment a write may change. Null while
+// a layer transaction is open and |attachment| belongs to a committed
+// version - read before the transaction, or through
+// FPDFAnnot_GetFileAttachment() - since a write to it would land outside the
+// transaction and survive an abort. EPDFAnnot_GetFileAttachmentForWrite()
+// gives a handle the transaction may write. Outside transactions every
+// attachment is writable, as before.
 CPDF_Object* WritableAttachment(FPDF_ATTACHMENT attachment) {
   CPDF_Object* file = CPDFObjectFromFPDFAttachment(attachment);
   return file && file->IsWritable() ? file : nullptr;
@@ -53,6 +55,7 @@ CPDF_Object* WritableAttachment(FPDF_ATTACHMENT attachment) {
 
 constexpr char kChecksumKey[] = "CheckSum";
 
+// EmbedPDF(attachments): the streaming core of EPDFAttachment_ExtractFile*.
 // How EPDFAttachment_ExtractFile* decodes a given embedded file stream.
 enum class ExtractFilterPath {
   kUnfiltered,   // No filters — the raw stream bytes ARE the file.
@@ -152,18 +155,21 @@ ExtractOutcome CapOutcomeToUint32(ExtractOutcome outcome) {
 
 FPDF_EXPORT int FPDF_CALLCONV
 FPDFDoc_GetAttachmentCount(FPDF_DOCUMENT document) {
+  // EmbedPDF(view-scope): read through the document's view scope.
   ScopedFPDFDocumentView document_view(document);
   CPDF_Document* doc = document_view.Get();
   if (!doc) {
     return 0;
   }
 
+  // EmbedPDF(reads-dont-write): read the name tree without mutable getters.
   auto name_tree = CPDF_NameTree::CreateForReading(doc, "EmbeddedFiles");
   return name_tree ? pdfium::checked_cast<int>(name_tree->GetCount()) : 0;
 }
 
 FPDF_EXPORT FPDF_ATTACHMENT FPDF_CALLCONV
 FPDFDoc_AddAttachment(FPDF_DOCUMENT document, FPDF_WIDESTRING name) {
+  // EmbedPDF(view-scope): resolve through the document's view scope.
   ScopedFPDFDocumentView document_view(document);
   CPDF_Document* doc = document_view.Get();
   if (!doc) {
@@ -198,12 +204,14 @@ FPDFDoc_AddAttachment(FPDF_DOCUMENT document, FPDF_WIDESTRING name) {
 
 FPDF_EXPORT FPDF_ATTACHMENT FPDF_CALLCONV
 FPDFDoc_GetAttachment(FPDF_DOCUMENT document, int index) {
+  // EmbedPDF(view-scope): read through the document's view scope.
   ScopedFPDFDocumentView document_view(document);
   CPDF_Document* doc = document_view.Get();
   if (!doc || index < 0) {
     return nullptr;
   }
 
+  // EmbedPDF(reads-dont-write): read the name tree without mutable getters.
   auto name_tree = CPDF_NameTree::CreateForReading(doc, "EmbeddedFiles");
   if (!name_tree || static_cast<size_t>(index) >= name_tree->GetCount()) {
     return nullptr;
@@ -216,6 +224,8 @@ FPDFDoc_GetAttachment(FPDF_DOCUMENT document, int index) {
       name_tree->LookupValueAndName(index, &csName));
 }
 
+// EmbedPDF(epdf-api): EPDFDoc_GetAttachmentKey and
+// EPDFDoc_GetAttachmentIndexByKey.
 FPDF_EXPORT unsigned long FPDF_CALLCONV
 EPDFDoc_GetAttachmentKey(FPDF_DOCUMENT document,
                          int index,
@@ -269,6 +279,7 @@ EPDFDoc_GetAttachmentIndexByKey(FPDF_DOCUMENT document, FPDF_WIDESTRING key) {
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 FPDFDoc_DeleteAttachment(FPDF_DOCUMENT document, int index) {
+  // EmbedPDF(view-scope): resolve through the document's view scope.
   ScopedFPDFDocumentView document_view(document);
   CPDF_Document* doc = document_view.Get();
   if (!doc || index < 0) {
@@ -326,6 +337,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 FPDFAttachment_SetStringValue(FPDF_ATTACHMENT attachment,
                               FPDF_BYTESTRING key,
                               FPDF_WIDESTRING value) {
+  // EmbedPDF(layer-transaction): a committed version is not written in place.
   CPDF_Object* pFile = WritableAttachment(attachment);
   if (!pFile) {
     return false;
@@ -400,12 +412,15 @@ FPDFAttachment_SetFile(FPDF_ATTACHMENT attachment,
     return false;
   }
 
+  // EmbedPDF(layer-transaction): a committed version is not written in place.
   CPDF_Object* pFile = WritableAttachment(attachment);
+  // EmbedPDF(view-scope): resolve through the document's view scope.
   ScopedFPDFDocumentView document_view(document);
   CPDF_Document* doc = document_view.Get();
   if (!pFile || !pFile->IsDictionary() || !doc || len > INT_MAX) {
     return false;
   }
+  // EmbedPDF(layer-door): write the document's own version, through the door.
   RetainPtr<CPDF_Object> effective_file;
   if (pFile->GetObjNum() != 0) {
     // The version the document writes: its own, through the door.
@@ -509,6 +524,8 @@ FPDFAttachment_GetSubtype(FPDF_ATTACHMENT attachment,
       PDF_DecodeText(subtype.unsigned_span()), buffer_span);
 }
 
+// EmbedPDF(epdf-api): EPDFAttachment_* setters, getters and streaming
+// extraction.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAttachment_SetSubtype(FPDF_ATTACHMENT attachment, FPDF_BYTESTRING subtype) {
   CPDF_Object* file = WritableAttachment(attachment);

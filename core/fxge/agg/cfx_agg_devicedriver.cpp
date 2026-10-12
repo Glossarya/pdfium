@@ -273,6 +273,8 @@ void RgbByteOrderTransferBitmap(RetainPtr<CFX_DIBitmap> pBitmap,
   }
 }
 
+// EmbedPDF(render-speedup): the solid stroker comes from the device's reused
+// workspace.
 // `solid_stroke` must stroke `path_data`; it is used unless the dash pattern
 // applies.
 void RasterizeStroke(agg::rasterizer_scanline_aa* rasterizer,
@@ -364,6 +366,7 @@ void RasterizeStroke(agg::rasterizer_scanline_aa* rasterizer,
     rasterizer->add_path_transformed(stroke, pObject2Device);
     return;
   }
+  // EmbedPDF(render-speedup): the workspace's stroker, not a new one.
   agg::conv_stroke<agg::path_storage>& stroke = solid_stroke;
   stroke.line_join(join);
   stroke.line_cap(cap);
@@ -918,6 +921,8 @@ class RendererScanLineAaOffset {
   unsigned top_;
 };
 
+// EmbedPDF(render-speedup): fills the workspace's path storage instead of
+// returning a new one.
 // Appends `path` to `agg_path`, which the caller passes empty.
 void BuildAggPath(const CFX_Path& path,
                   const CFX_Matrix* pObject2Device,
@@ -966,6 +971,9 @@ void BuildAggPath(const CFX_Path& path,
   }
 }
 
+// EmbedPDF(render-speedup): the path memo composites a repeated small path's
+// recorded rasterizer output again, byte for byte;
+// SetPathMemoEnabledForTesting() turns it off.
 bool g_path_memo_enabled = true;
 
 // Paths with more points are not memoized, which keeps a miss cheap.
@@ -1035,6 +1043,8 @@ class RecordingRenderer {
 
 }  // namespace
 
+// EmbedPDF(render-speedup): one path storage, rasterizer, scanline and stroker
+// per device, reused for every path instead of built per path.
 class CFX_AggDeviceDriver::Workspace {
  public:
   Workspace() : solid_stroke_(path_) {}
@@ -1067,6 +1077,8 @@ class CFX_AggDeviceDriver::Workspace {
   agg::conv_stroke<agg::path_storage> solid_stroke_;
 };
 
+// EmbedPDF(render-speedup): the path memo: a repeated path's rasterizer output,
+// recorded once and composited again.
 class CFX_AggDeviceDriver::RecordedPass {
  public:
   struct Span {
@@ -1154,6 +1166,7 @@ class CFX_AggDeviceDriver::RecordedPass {
   bool too_large_ = false;
 };
 
+// EmbedPDF(render-speedup): recognizes a repeated path and keeps its passes.
 class CFX_AggDeviceDriver::PathMemo {
  public:
   struct Inputs {
@@ -1251,6 +1264,7 @@ class CFX_AggDeviceDriver::PathMemo {
   RecordedPass stroke_;
 };
 
+// EmbedPDF(render-speedup): the off switch the off/on comparisons use.
 // static
 void CFX_AggDeviceDriver::SetPathMemoEnabledForTesting(bool enabled) {
   g_path_memo_enabled = enabled;
@@ -1275,6 +1289,8 @@ CFX_AggDeviceDriver::~CFX_AggDeviceDriver() {
   DestroyPlatform();
 }
 
+// EmbedPDF(render-speedup): the device's reused workspace; one large path
+// doesn't keep its memory until the device goes.
 CFX_AggDeviceDriver::Workspace& CFX_AggDeviceDriver::GetWorkspace() {
   if (!workspace_) {
     workspace_ = std::make_unique<Workspace>();
@@ -1376,6 +1392,7 @@ void CFX_AggDeviceDriver::SetClipMask(agg::rasterizer_scanline_aa& rasterizer) {
     RendererScanLineAaOffset<agg::renderer_base<agg::pixfmt_gray8>>
         final_render(base_buf, path_rect.left, path_rect.top);
     final_render.color(agg::gray8(255));
+    // EmbedPDF(render-speedup): the workspace's scanline, not a new one.
     agg::render_scanlines(rasterizer, GetWorkspace().scanline(), final_render,
                           fill_options_.aliased_path);
   }
@@ -1404,6 +1421,7 @@ bool CFX_AggDeviceDriver::SetClip_PathFill(
     clip_rgn_->IntersectRect(rect);
     return true;
   }
+  // EmbedPDF(render-speedup): draws with the device's reused workspace.
   Workspace& workspace = GetWorkspace();
   agg::path_storage& path_data = workspace.EmptyPath();
   BuildAggPath(path, pObject2Device, path_data);
@@ -1426,6 +1444,7 @@ bool CFX_AggDeviceDriver::SetClip_PathStroke(
     clip_rgn_ = std::make_unique<CFX_AggClipRgn>(
         GetDeviceCaps(FXDC_PIXEL_WIDTH), GetDeviceCaps(FXDC_PIXEL_HEIGHT));
   }
+  // EmbedPDF(render-speedup): draws with the device's reused workspace.
   Workspace& workspace = GetWorkspace();
   agg::path_storage& path_data = workspace.EmptyPath();
   BuildAggPath(path, nullptr, path_data);
@@ -1457,6 +1476,8 @@ void CFX_AggDeviceDriver::Clear(uint32_t color) {
   bitmap_->Clear(color);
 }
 
+// EmbedPDF(render-speedup): the workspace's scanline; `record` keeps a copy of
+// the output for the path memo.
 void CFX_AggDeviceDriver::RenderRasterizer(
     agg::rasterizer_scanline_aa& rasterizer,
     uint32_t color,
@@ -1476,6 +1497,8 @@ void CFX_AggDeviceDriver::RenderRasterizer(
                         fill_options_.aliased_path);
 }
 
+// EmbedPDF(render-speedup): composites a recorded pass as RenderRasterizer()
+// composited it.
 void CFX_AggDeviceDriver::ReplayPass(const RecordedPass& pass,
                                      uint32_t color,
                                      bool bFullCover,
@@ -1497,6 +1520,9 @@ bool CFX_AggDeviceDriver::DrawPath(const CFX_Path& path,
   }
 
   fill_options_ = fill_options;
+  // EmbedPDF(render-speedup): a path object the content stream repeats
+  // composites its recorded passes again instead of rasterizing; the drawing
+  // itself moved to DrawPathPasses().
   if (!g_path_memo_enabled || path.GetPoints().size() > kMemoMaxPoints) {
     DrawPathPasses(path, pObject2Device, pGraphState, fill_color, stroke_color,
                    fill_options, nullptr);
@@ -1554,6 +1580,8 @@ bool CFX_AggDeviceDriver::DrawPath(const CFX_Path& path,
   return true;
 }
 
+// EmbedPDF(render-speedup): upstream's DrawPath() body, drawing with the
+// device's reused workspace and, given `record`, recording its passes.
 void CFX_AggDeviceDriver::DrawPathPasses(
     const CFX_Path& path,
     const CFX_Matrix* pObject2Device,
@@ -1609,6 +1637,8 @@ void CFX_AggDeviceDriver::DrawPathPasses(
     matrix1 = *pObject2Device * matrix2.GetInverse();
   }
 
+  // EmbedPDF(render-speedup): draws with the device's reused workspace, and
+  // records the pass when `record` is given.
   Workspace& workspace = GetWorkspace();
   agg::path_storage& path_data = workspace.EmptyPath();
   BuildAggPath(path, &matrix1, path_data);

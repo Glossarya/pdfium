@@ -29,6 +29,7 @@ class CPDF_Dest {
   const CPDF_Array* GetArray() const { return array_.Get(); }
 
   int GetDestPageIndex(CPDF_Document* doc) const;
+  // EmbedPDF(epdf-api): backs EPDFDest_GetPageObjectNumber.
   uint32_t GetPageObjectNumber(CPDF_Document* doc) const;
   std::vector<float> GetScrollPositionArray() const;
 

@@ -37,12 +37,13 @@ CPDF_ContentParser::CPDF_ContentParser(CPDF_Page* pPage)
     return;
   }
 
-  // EmbedPDF: the page's parse, nested forms included, counts what it adds
-  // and records the versions of the streams it reads.
+  // EmbedPDF(page-residency): the page's parse, nested forms included, counts
+  // what it adds and records the versions of the streams it reads.
   pPage->StartContentRecords();
   recursion_state_.parsed_size = pPage->mutable_parsed_size();
   recursion_state_.content_versions = pPage->mutable_content_versions();
 
+  // EmbedPDF(reads-dont-write): read without the mutable getter.
   RetainPtr<const CPDF_Object> pContent =
       pPage->GetDict()->GetDirectObjectFor(pdfium::page_object::kContents);
   if (!pContent) {
@@ -64,6 +65,8 @@ CPDF_ContentParser::CPDF_ContentParser(CPDF_Page* pPage)
   HandlePageContentFailure();
 }
 
+// EmbedPDF(sliced-load): a form's parse starts at the content stage too, so
+// its stream decodes in steps that can pause.
 CPDF_ContentParser::CPDF_ContentParser(
     RetainPtr<const CPDF_Stream> pStream,
     CPDF_PageObjectHolder* pPageObjectHolder,
@@ -100,6 +103,9 @@ CPDF_ContentParser::CPDF_ContentParser(
     }
   }
 
+  // EmbedPDF(reads-dont-write): parsing only reads the resources. Take them
+  // through const getters, cast to fit the parser's signature: the mutable
+  // getters copy them up on a layer.
   RetainPtr<const CPDF_Dictionary> pResources =
       page_object_holder_->GetDict()->GetDictFor("Resources");
   parser_ = std::make_unique<CPDF_StreamContentParser>(
@@ -111,6 +117,8 @@ CPDF_ContentParser::CPDF_ContentParser(
       pParentMatrix, page_object_holder_,
       pdfium::WrapRetain(const_cast<CPDF_Dictionary*>(pResources.Get())),
       form_bbox, pGraphicStates, recursion_state);
+  // EmbedPDF(faithful-content-rewrite): the content starts at the form's
+  // /Matrix; the parser records it for a rewrite of this form.
   parser_->SetCTMAtBeginningOfContent(form_matrix);
   if (ClipPath.HasRef()) {
     parser_->GetCurStates()->mutable_clip_path().AppendPathWithAutoMerge(
@@ -123,7 +131,7 @@ CPDF_ContentParser::CPDF_ContentParser(
     state.SetFillAlpha(1.0f);
     state.SetSoftMask(nullptr);
   }
-  // EmbedPDF: decoded in the content stage, which can pause.
+  // EmbedPDF(sliced-load): decoded in the content stage, which can pause.
   single_stream_ = pdfium::MakeRetain<CPDF_StreamAcc>(std::move(pStream));
 }
 
@@ -133,6 +141,8 @@ CPDF_PageObjectHolder::CTMMap CPDF_ContentParser::TakeAllCTMs() {
   return parser_ ? parser_->TakeAllCTMs() : CPDF_PageObjectHolder::CTMMap();
 }
 
+// EmbedPDF(faithful-content-rewrite): the CTM the content starts at: a
+// regenerated form writes its inverse first, so /Matrix applies once.
 CFX_Matrix CPDF_ContentParser::GetCTMAtBeginningOfContent() const {
   return parser_ ? parser_->ctm_at_beginning_of_content() : CFX_Matrix();
 }
@@ -142,6 +152,8 @@ CFX_Matrix CPDF_ContentParser::GetCTMAtBeginningOfContent() const {
 // completed the parse and Continue() is complete.
 bool CPDF_ContentParser::Continue(PauseIndicatorIface* pPause) {
   while (current_stage_ == Stage::kGetContent) {
+    // EmbedPDF(sliced-load): decoding takes the pause, so it can stop
+    // mid-stream.
     current_stage_ = GetContent(pPause);
     if (pPause && pPause->NeedToPauseNow()) {
       return true;
@@ -149,6 +161,7 @@ bool CPDF_ContentParser::Continue(PauseIndicatorIface* pPause) {
   }
 
   if (current_stage_ == Stage::kPrepareContent) {
+    // EmbedPDF(sliced-load): the stage can pause; the next call goes on.
     current_stage_ = PrepareContent(pPause);
     if (current_stage_ == Stage::kPrepareContent) {
       return true;
@@ -162,6 +175,8 @@ bool CPDF_ContentParser::Continue(PauseIndicatorIface* pPause) {
     }
   }
 
+  // EmbedPDF(page-residency, sliced-load): nested forms parse in a stage of
+  // their own, which can pause.
   if (current_stage_ == Stage::kParseForms) {
     current_stage_ = ParseForms(pPause);
     if (current_stage_ == Stage::kParseForms) {
@@ -170,6 +185,7 @@ bool CPDF_ContentParser::Continue(PauseIndicatorIface* pPause) {
   }
 
   if (current_stage_ == Stage::kCheckClip) {
+    // EmbedPDF(sliced-load): the stage can pause; the next call goes on.
     current_stage_ = CheckClip(pPause);
     if (current_stage_ == Stage::kCheckClip) {
       return true;
@@ -180,9 +196,9 @@ bool CPDF_ContentParser::Continue(PauseIndicatorIface* pPause) {
   return false;
 }
 
-// EmbedPDF: decodes the content a step at a time: a drawing's content can
-// inflate to tens of megabytes. One stream - a form's, or a page's - or the
-// next of a page's array.
+// EmbedPDF(sliced-load): decodes the content a step at a time: a drawing's
+// content can inflate to tens of megabytes. One stream - a form's, or a
+// page's - or the next of a page's array.
 CPDF_ContentParser::Stage CPDF_ContentParser::GetContent(
     PauseIndicatorIface* pPause) {
   DCHECK_EQ(current_stage_, Stage::kGetContent);
@@ -199,6 +215,7 @@ CPDF_ContentParser::Stage CPDF_ContentParser::GetContent(
             pdfium::page_object::kContents);
     RetainPtr<const CPDF_Stream> pStreamObj = ToStream(
         pContent ? pContent->GetDirectObjectAt(current_offset_) : nullptr);
+    // EmbedPDF(page-residency): record the version of the stream parsed.
     recursion_state_.content_versions->AddContentStream(pStreamObj);
     stream_array_[current_offset_] =
         pdfium::MakeRetain<CPDF_StreamAcc>(std::move(pStreamObj));
@@ -212,6 +229,8 @@ CPDF_ContentParser::Stage CPDF_ContentParser::GetContent(
                                      : Stage::kGetContent;
 }
 
+// EmbedPDF(sliced-load): takes the pause; a call that paused while joining
+// a page's streams leaves the rest to the next call.
 CPDF_ContentParser::Stage CPDF_ContentParser::PrepareContent(
     PauseIndicatorIface* pPause) {
   if (stream_array_.empty()) {
@@ -220,6 +239,7 @@ CPDF_ContentParser::Stage CPDF_ContentParser::PrepareContent(
     return Stage::kParse;
   }
 
+  // EmbedPDF(sliced-load): the buffer is made on the first call only.
   if (!is_owned()) {
     current_offset_ = 0;
     FX_SAFE_UINT32 safe_size = 0;
@@ -241,8 +261,8 @@ CPDF_ContentParser::Stage CPDF_ContentParser::PrepareContent(
     data_ = std::move(buffer);
   }
 
-  // EmbedPDF: the streams are joined, a space after each, a few megabytes
-  // at a time, so a parse can pause between them.
+  // EmbedPDF(sliced-load): the streams are joined, a space after each, a few
+  // megabytes at a time, so a parse can pause between them.
   static constexpr size_t kJoinStepBytes = 4 * 1024 * 1024;
   pdfium::span<uint8_t> buffer =
       std::get<FixedSizeDataVector<uint8_t>>(data_).span();
@@ -272,6 +292,9 @@ CPDF_ContentParser::Stage CPDF_ContentParser::PrepareContent(
 CPDF_ContentParser::Stage CPDF_ContentParser::Parse() {
   if (!parser_) {
     recursion_state_.parsed_set.clear();
+    // EmbedPDF(reads-dont-write): parsing only reads the resources. Take them
+    // through const getters, cast to fit the parser's signature: the mutable
+    // getters copy them up on a layer.
     parser_ = std::make_unique<CPDF_StreamContentParser>(
         page_object_holder_->GetDocument(),
         pdfium::WrapRetain(const_cast<CPDF_Dictionary*>(
@@ -283,6 +306,7 @@ CPDF_ContentParser::Stage CPDF_ContentParser::Parse() {
     parser_->GetCurStates()->mutable_color_state().SetDefault();
   }
   if (current_offset_ >= GetData().size()) {
+    // EmbedPDF(page-residency): nested forms parse next, in their own stage.
     return Stage::kParseForms;
   }
 
@@ -296,8 +320,10 @@ CPDF_ContentParser::Stage CPDF_ContentParser::Parse() {
   return Stage::kParse;
 }
 
-// The forms the content placed and left for now: clip checking needs their
-// bounds, and so does the holder of this content when it is itself a form.
+// EmbedPDF(page-residency, sliced-load): parses the forms the content placed
+// and left for now, in a stage of their own that can pause between them.
+// Clip checking needs their bounds, and so does the holder of this content
+// when it is itself a form.
 CPDF_ContentParser::Stage CPDF_ContentParser::ParseForms(
     PauseIndicatorIface* pPause) {
   if (parser_ && !parser_->ParseDeferredForms(pPause)) {
@@ -306,6 +332,8 @@ CPDF_ContentParser::Stage CPDF_ContentParser::ParseForms(
   return Stage::kCheckClip;
 }
 
+// EmbedPDF(sliced-load): takes the pause and resumes at check_clip_index_, so
+// the Type3 data is read on the first call only.
 CPDF_ContentParser::Stage CPDF_ContentParser::CheckClip(
     PauseIndicatorIface* pPause) {
   if (type3_char_ && check_clip_index_ == 0) {
@@ -313,8 +341,8 @@ CPDF_ContentParser::Stage CPDF_ContentParser::CheckClip(
                                           parser_->GetType3Data());
   }
 
-  // EmbedPDF: in steps, so a parse can pause in a page of a million objects.
-  // Each call checks one step at least.
+  // EmbedPDF(sliced-load): in steps, so a parse can pause in a page of a
+  // million objects. Each call checks one step at least.
   static constexpr size_t kCheckClipStepLimit = 10000;
   const size_t count = page_object_holder_->GetPageObjectCount();
   const size_t first = check_clip_index_;
@@ -356,9 +384,10 @@ CPDF_ContentParser::Stage CPDF_ContentParser::CheckClip(
 }
 
 void CPDF_ContentParser::HandlePageContentStream(const CPDF_Stream* pStream) {
+  // EmbedPDF(page-residency): record the version of the stream parsed.
   recursion_state_.content_versions->AddContentStream(
       pdfium::WrapRetain(pStream));
-  // EmbedPDF: decoded in the content stage, which can pause.
+  // EmbedPDF(sliced-load): decoded in the content stage, which can pause.
   single_stream_ =
       pdfium::MakeRetain<CPDF_StreamAcc>(pdfium::WrapRetain(pStream));
 }

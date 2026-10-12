@@ -22,7 +22,7 @@
 
 namespace {
 
-// EmbedPDF: thread-confined runtime - each worker thread owns its own font
+// EmbedPDF(thread-confined-globals): each worker thread owns its own font
 // globals (stock fonts + predefined CMaps), created/destroyed on that thread.
 EPDF_TLS CPDF_FontGlobals* g_FontGlobals = nullptr;
 

@@ -42,7 +42,8 @@ class CPDF_ContentParser {
   ~CPDF_ContentParser();
 
   CPDF_PageObjectHolder::CTMMap TakeAllCTMs();
-  // EmbedPDF: see CPDF_StreamContentParser::ctm_at_beginning_of_content().
+  // EmbedPDF(faithful-content-rewrite): see
+  // CPDF_StreamContentParser::ctm_at_beginning_of_content().
   CFX_Matrix GetCTMAtBeginningOfContent() const;
 
   // Returns whether to continue or not.
@@ -53,11 +54,14 @@ class CPDF_ContentParser {
     kGetContent = 1,
     kPrepareContent,
     kParse,
+    // EmbedPDF(page-residency): nested forms parse after the page's content.
     kParseForms,
     kCheckClip,
     kComplete,
   };
 
+  // EmbedPDF(sliced-load, page-residency): stages take the pause so they can
+  // stop between steps; ParseForms is the nested forms' own stage.
   Stage GetContent(PauseIndicatorIface* pPause);
   Stage PrepareContent(PauseIndicatorIface* pPause);
   Stage Parse();
@@ -83,8 +87,9 @@ class CPDF_ContentParser {
       data_;
   uint32_t streams_ = 0;
   uint32_t current_offset_ = 0;
-  // EmbedPDF: how far joining the page's content streams has got, and the
-  // next object clip checking looks at.
+  // EmbedPDF(sliced-load): how far joining the page's content streams has
+  // got, and the next object clip checking looks at: a paused load resumes
+  // there.
   size_t joined_streams_ = 0;
   size_t joined_bytes_ = 0;
   size_t check_clip_index_ = 0;

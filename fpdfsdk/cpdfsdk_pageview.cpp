@@ -107,6 +107,9 @@ std::unique_ptr<CPDFSDK_Annot> CPDFSDK_PageView::NewAnnot(CPDF_Annot* annot) {
 
     auto ret = std::make_unique<CPDFSDK_Widget>(annot, this, form);
     form->AddMap(form_control, ret.get());
+    // EmbedPDF(reads-dont-write): opening a page view no longer writes missing
+    // widget appearances (upstream's NeedConstructAP reset); they are drawn
+    // from memory.
     return ret;
   }
 

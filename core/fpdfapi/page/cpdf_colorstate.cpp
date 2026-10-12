@@ -33,6 +33,7 @@ FX_COLORREF CPDF_ColorState::GetFillColorRef() const {
 }
 
 void CPDF_ColorState::SetFillColorRef(FX_COLORREF colorref) {
+  // EmbedPDF(faithful-content-rewrite): same test as upstream's `!ref_`.
   if (!ref_.GetObject() || GetFillColorRef() != colorref) {
     ref_.GetPrivateCopy()->fill_color_ref_ = colorref;
   }
@@ -43,6 +44,7 @@ FX_COLORREF CPDF_ColorState::GetStrokeColorRef() const {
 }
 
 void CPDF_ColorState::SetStrokeColorRef(FX_COLORREF colorref) {
+  // EmbedPDF(faithful-content-rewrite): same test as upstream's `!ref_`.
   if (!ref_.GetObject() || GetStrokeColorRef() != colorref) {
     ref_.GetPrivateCopy()->stroke_color_ref_ = colorref;
   }
@@ -145,6 +147,7 @@ FX_COLORREF CPDF_ColorState::SetPattern(RetainPtr<CPDF_Pattern> pattern,
 
 CPDF_ColorState::ColorData::ColorData() = default;
 
+// EmbedPDF(faithful-content-rewrite): a copy keeps the resource names.
 CPDF_ColorState::ColorData::ColorData(const ColorData& src)
     : fill_color_ref_(src.fill_color_ref_),
       stroke_color_ref_(src.stroke_color_ref_),
@@ -171,6 +174,8 @@ RetainPtr<CPDF_ColorState::ColorData> CPDF_ColorState::ColorData::Clone()
   return pdfium::MakeRetain<CPDF_ColorState::ColorData>(*this);
 }
 
+// EmbedPDF(faithful-content-rewrite): the resource names the content
+// generator writes colour spaces and patterns under.
 const ByteString& CPDF_ColorState::GetFillColorSpaceResName() const {
   return ref_.GetObject()->fill_colorspace_res_name_;
 }

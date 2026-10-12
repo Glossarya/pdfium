@@ -196,6 +196,9 @@ source_set("embedder_test_support") {
     "embedder_test_environment.h",
     "embedder_test_mock_delegate.h",
     "embedder_test_timer_handling_delegate.h",
+    # EmbedPDF(layer-mode): run the embedder tests through layer documents.
+    "embedpdf_layer_mode.cpp",
+    "embedpdf_layer_mode.h",
     "fake_file_access.cpp",
     "fake_file_access.h",
     "range_set.cpp",

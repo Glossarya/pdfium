@@ -11,6 +11,8 @@
 
 #include "core/fxcrt/fx_coordinates.h"
 
+// EmbedPDF(render-speedup): a process-wide count of bounds changes to held
+// objects, so a holder knows when its object groups are stale.
 namespace {
 
 std::atomic<uint64_t> g_held_bounds_generation{0};
@@ -103,9 +105,13 @@ void CPDF_PageObject::SetDefaultStates() {
 
 void CPDF_PageObject::CopyData(const CPDF_PageObject* pSrc) {
   graphic_states_ = pSrc->graphic_states_;
+  // EmbedPDF(render-speedup): every rect write goes through SetRect(), which
+  // tells holders when a held object's bounds change.
   SetRect(pSrc->rect_);
   dirty_ = true;
 }
+// EmbedPDF(lean-page-objects): InitializeOriginalMatrix() moved to
+// CPDF_ImageObject, the only object with an original matrix.
 
 void CPDF_PageObject::SetIsActive(bool value) {
   if (is_active_ != value) {

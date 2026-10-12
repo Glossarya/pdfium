@@ -20,9 +20,12 @@
 #include "core/fxge/cfx_renderdevice.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "fpdfsdk/cpdfsdk_pauseadapter.h"
+#include "public/epdf_view.h"
 
 namespace {
 
+// EmbedPDF(sliced-render): takes any pause indicator, so a sliced render can
+// pause on a time budget.
 void RenderPageImpl(CPDF_PageRenderContext* context,
                     CPDF_Page* pPage,
                     const CFX_Matrix& matrix,
@@ -63,6 +66,8 @@ void RenderPageImpl(CPDF_PageRenderContext* context,
   context->device_->SaveState();
   context->device_->SetBaseClip(clipping_rect);
   context->device_->SetClip_Rect(clipping_rect);
+  // EmbedPDF(reads-dont-write): a render reads the page's resources without
+  // the mutable getter, which would promote them on a layer.
   context->context_ = std::make_unique<CPDF_RenderContext>(
       pPage->GetDocument(),
       pdfium::WrapRetain(
@@ -71,9 +76,10 @@ void RenderPageImpl(CPDF_PageRenderContext* context,
 
   context->context_->AppendLayer(pPage, matrix);
 
-  // EmbedPDF: annotations (FPDF_ANNOT) and form field widgets
-  // (EPDF_RENDER_WIDGETS) are drawn independently, so a page picture can hold
-  // either, both or neither: a viewer paints its own layers over the rest.
+  // EmbedPDF(annot-appearance): annotations (FPDF_ANNOT) and form field
+  // widgets (EPDF_RENDER_WIDGETS) are drawn independently, so a page picture
+  // can hold either, both or neither: a viewer paints its own layers over the
+  // rest.
   const bool bShowAnnots = !!(flags & FPDF_ANNOT);
   const bool bShowWidget = !!(flags & EPDF_RENDER_WIDGETS);
   if (bShowAnnots || bShowWidget) {
@@ -109,6 +115,8 @@ void CPDFSDK_RenderPage(CPDF_PageRenderContext* context,
                  /*need_to_restore=*/true, /*pause=*/nullptr);
 }
 
+// EmbedPDF(sliced-render): a render that pauses between slices; the context
+// keeps it until the caller continues or cancels it.
 void CPDFSDK_StartRenderPage(CPDF_PageRenderContext* context,
                              CPDF_Page* pPage,
                              const CFX_Matrix& matrix,

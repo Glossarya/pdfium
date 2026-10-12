@@ -65,6 +65,8 @@ class CFX_Path {
   void AppendLine(const CFX_PointF& pt1, const CFX_PointF& pt2);
   void AppendPoint(const CFX_PointF& point, Point::Type type);
   void AppendPointAndClose(const CFX_PointF& point, Point::Type type);
+  // EmbedPDF(render-speedup): the content parser hands over a path's points at
+  // once.
   // Appends `points` as given, in a single allocation when the path is empty.
   void AppendPoints(pdfium::span<const Point> points);
   void ClosePath();

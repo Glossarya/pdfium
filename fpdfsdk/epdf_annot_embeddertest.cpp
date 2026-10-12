@@ -122,7 +122,7 @@ std::vector<uint8_t> LoadNotoSansSCFontData() {
 
 std::vector<uint8_t> LoadAmiriFontData() {
   std::string font_path = PathService::GetThirdPartyFilePath(
-      "harfbuzz-ng/src/perf/fonts/Amiri-Regular.ttf");
+      "harfbuzz/src/perf/fonts/Amiri-Regular.ttf");
   if (font_path.empty()) {
     ADD_FAILURE() << "Failed to find Amiri test font";
     return {};
@@ -132,7 +132,7 @@ std::vector<uint8_t> LoadAmiriFontData() {
 
 std::vector<uint8_t> LoadRobotoVariableAbcFontData() {
   std::string font_path = PathService::GetThirdPartyFilePath(
-      "harfbuzz-ng/src/test/subset/data/fonts/Roboto-Variable.ABC.ttf");
+      "harfbuzz/src/test/subset/data/fonts/Roboto-Variable.ABC.ttf");
   if (font_path.empty()) {
     ADD_FAILURE() << "Failed to find Roboto-Variable.ABC test font";
     return {};
@@ -143,7 +143,7 @@ std::vector<uint8_t> LoadRobotoVariableAbcFontData() {
 std::vector<uint8_t> LoadCffLatinFontData() {
   // A small OpenType/CFF font (no CIDFont operators) with A, B, C.
   std::string font_path = PathService::GetThirdPartyFilePath(
-      "harfbuzz-ng/src/test/subset/data/fonts/gpos1_2_font.otf");
+      "harfbuzz/src/test/subset/data/fonts/gpos1_2_font.otf");
   if (font_path.empty()) {
     ADD_FAILURE() << "Failed to find gpos1_2_font.otf";
     return {};
@@ -153,7 +153,7 @@ std::vector<uint8_t> LoadCffLatinFontData() {
 
 std::vector<uint8_t> LoadRobotoFontData() {
   std::string font_path = PathService::GetThirdPartyFilePath(
-      "harfbuzz-ng/src/perf/fonts/Roboto-Regular.ttf");
+      "harfbuzz/src/perf/fonts/Roboto-Regular.ttf");
   if (font_path.empty()) {
     ADD_FAILURE() << "Failed to find Roboto test font";
     return {};
@@ -3163,8 +3163,8 @@ TEST_F(EPDFAnnotEmbedderTest, RegistrationRefusesUnsupportedProgramFormats) {
             CFX_FontRegistry::DetectProgramFormat(ttc));
   {
     CFX_Font font;  // the refusal is policy, not an unloadable file
-    EXPECT_TRUE(font.LoadFaceFromSpan(ttc, /*force_vertical=*/false,
-                                      /*object_tag=*/0));
+    EXPECT_TRUE(font.LoadFaceZeroFromSpan(ttc, /*force_vertical=*/false,
+                                          /*object_tag=*/0));
   }
   EXPECT_EQ(0u, EPDFFont_RegisterMemFont64("Roboto TTC", 400, 0, ttc.data(),
                                            ttc.size()));

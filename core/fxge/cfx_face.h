@@ -22,15 +22,21 @@
 #include "core/fxge/freetype/fx_freetype.h"
 #include "core/fxge/fx_font.h"
 
+#if defined(PDF_USE_SKIA)
+#include "third_party/skia/include/core/SkRefCnt.h"  // nogncheck
+#endif
+
 namespace fxge {
 enum class FontEncoding : uint32_t;
 }
 
-class CFX_Font;
-class CFX_FontMgr;
 class CFX_GlyphBitmap;
 class CFX_Path;
 class CFX_SubstFont;
+
+#if defined(PDF_USE_SKIA)
+class SkTypeface;
+#endif
 
 class CFX_Face final : public Retainable, public Observable {
  public:
@@ -51,17 +57,9 @@ class CFX_Face final : public Retainable, public Observable {
   static constexpr CharMapId kWindowsSymbolCmapId{3, 0};
   static constexpr CharMapId kWindowsUnicodeCmapId{3, 1};
 
-  static RetainPtr<CFX_Face> New(CFX_FontMgr* font_mgr,
-                                 RetainPtr<Retainable> desc,
-                                 pdfium::span<const uint8_t> data,
+  static RetainPtr<CFX_Face> New(RetainPtr<Retainable> cache_entry,
+                                 RetainPtr<CFX_ReadOnlySpanStream> font_stream,
                                  uint32_t face_index);
-
-#if defined(PDF_ENABLE_XFA) || BUILDFLAG(IS_ANDROID)
-  static RetainPtr<CFX_Face> NewFromSpanStream(
-      CFX_FontMgr* font_mgr,
-      const RetainPtr<CFX_ReadOnlySpanStream>& font_stream,
-      uint32_t face_index);
-#endif  // defined(PDF_ENABLE_XFA) || BUILDFLAG(IS_ANDROID)
 
   bool HasGlyphNames() const;
   bool IsTtOt() const;
@@ -86,7 +84,7 @@ class CFX_Face final : public Retainable, public Observable {
   int16_t GetAscender() const;
   int16_t GetDescender() const;
 
-  pdfium::span<uint8_t> GetData() const;
+  pdfium::span<const uint8_t> GetData() const;
 
   // Returns the size of the data, or 0 on failure. Only write into `buffer` if
   // it is large enough to hold the data.
@@ -96,12 +94,13 @@ class CFX_Face final : public Retainable, public Observable {
   // TODO(crbug.com/42271048): Can this method be private?
   FX_RECT GetGlyphBBox() const;
   std::optional<FX_RECT> GetFontGlyphBBox(uint32_t glyph_index);
-  std::unique_ptr<CFX_GlyphBitmap> RenderGlyph(const CFX_Font* font,
-                                               uint32_t glyph_index,
-                                               bool bFontStyle,
+  std::unique_ptr<CFX_GlyphBitmap> RenderGlyph(uint32_t glyph_index,
+                                               bool font_style,
+                                               bool is_vertical,
                                                const CFX_Matrix& matrix,
                                                int dest_width,
-                                               FontAntiAliasingMode anti_alias);
+                                               FontAntiAliasingMode anti_alias,
+                                               const CFX_SubstFont* subst_font);
   std::unique_ptr<CFX_Path> LoadGlyphPath(uint32_t glyph_index,
                                           int dest_width,
                                           bool is_vertical,
@@ -159,10 +158,15 @@ class CFX_Face final : public Retainable, public Observable {
   bool CanEmbed();
 #endif
 
-  bool HasFaceRec() const { return !!GetRec(); }
+#if defined(PDF_USE_SKIA)
+  SkTypeface* GetOrCreateSkTypeface();
+#endif
 
  private:
-  CFX_Face(FT_FaceRec* pRec, RetainPtr<Retainable> pDesc);
+  CFX_Face(RetainPtr<Retainable> cache_entry,
+           RetainPtr<CFX_ReadOnlySpanStream> font_stream,
+           FT_FaceRec* rec);
+
   ~CFX_Face() override;
 
   FT_FaceRec* GetRec() { return rec_.get(); }
@@ -177,10 +181,21 @@ class CFX_Face final : public Retainable, public Observable {
   std::optional<std::array<uint8_t, 2>> GetOs2Panose();
 #endif
 
-  // `owned_font_stream_` must outlive `rec_`.
-  RetainPtr<CFX_ReadOnlySpanStream> owned_font_stream_;
+  // `cache_entry_` must outlive `font_stream_`. Faces managed by a cache
+  // and sharing the same `font_stream_` keep the cache entry that indexes
+  // that stream alive via this member while there is at least one face
+  // using it. This may be nullptr for faces not managed by a cache.
+  RetainPtr<Retainable> cache_entry_;
+
+  // `font_stream_` must outlive `rec_` and `skia_typeface_`. Faces keep
+  // the actual data backing the `rec_` and `skia_typeface_` alive via
+  // this member while the `rec_` and `skia_typeface_` is still using it.
+  RetainPtr<CFX_ReadOnlySpanStream> font_stream_;
+
   ScopedFXFTFaceRec const rec_;
-  RetainPtr<Retainable> const desc_;
+#if defined(PDF_USE_SKIA)
+  sk_sp<SkTypeface> skia_typeface_;
+#endif  // defined(PDF_USE_SKIA)
 };
 
 #endif  // CORE_FXGE_CFX_FACE_H_

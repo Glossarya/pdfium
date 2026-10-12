@@ -14,22 +14,15 @@
 #include "core/fxcrt/bytestring.h"
 #include "core/fxcrt/observed_ptr.h"
 #include "core/fxcrt/retain_ptr.h"
+#include "core/fxcrt/span.h"
 #include "core/fxge/cfx_face.h"
 #include "core/fxge/fx_font.h"
-
-#if defined(PDF_USE_SKIA)
-#include "third_party/skia/include/core/SkRefCnt.h"  // nogncheck
-#endif
 
 class CFX_Font;
 class CFX_GlyphBitmap;
 class CFX_Matrix;
 class CFX_Path;
 struct CFX_TextRenderOptions;
-
-#if defined(PDF_USE_SKIA)
-class SkTypeface;
-#endif
 
 class CFX_GlyphCache final : public Retainable, public Observable {
  public:
@@ -50,29 +43,23 @@ class CFX_GlyphCache final : public Retainable, public Observable {
                     int dest_width,
                     int weight);
 
-#if defined(PDF_USE_SKIA)
-  enum class FontBackend { kFreeType, kFontations };
-  SkTypeface* GetSkTypeface(const CFX_Font* font);
-  static void InitializeGlobals(FontBackend backend);
-  static void DestroyGlobals();
-#endif
-
  private:
   explicit CFX_GlyphCache(RetainPtr<CFX_Face> face);
   ~CFX_GlyphCache() override;
 
-  using SizeGlyphCache = std::map<uint32_t, std::unique_ptr<CFX_GlyphBitmap>>;
+  using SizeToGlyphMap = std::map<uint32_t, std::unique_ptr<CFX_GlyphBitmap>>;
   // <glyph_index, width, weight, angle, vertical>
   using PathMapKey = std::tuple<uint32_t, int, int, int, bool>;
   // <glyph_index, dest_width, weight>
   using WidthMapKey = std::tuple<uint32_t, int, int>;
 
-  std::unique_ptr<CFX_GlyphBitmap> RenderGlyph(const CFX_Font* font,
-                                               uint32_t glyph_index,
-                                               bool bFontStyle,
+  std::unique_ptr<CFX_GlyphBitmap> RenderGlyph(uint32_t glyph_index,
+                                               bool font_style,
+                                               bool is_vertical,
                                                const CFX_Matrix& matrix,
                                                int dest_width,
-                                               FontAntiAliasingMode anti_alias);
+                                               FontAntiAliasingMode anti_alias,
+                                               const CFX_SubstFont* subst_font);
   CFX_GlyphBitmap* LookUpGlyphBitmap(const CFX_Font* font,
                                      const CFX_Matrix& matrix,
                                      const ByteString& FaceGlyphsKey,
@@ -82,12 +69,9 @@ class CFX_GlyphCache final : public Retainable, public Observable {
                                      FontAntiAliasingMode anti_alias);
 
   RetainPtr<CFX_Face> const face_;
-  std::map<ByteString, SizeGlyphCache> size_map_;
+  std::map<ByteString, SizeToGlyphMap> size_map_;
   std::map<PathMapKey, std::unique_ptr<CFX_Path>> path_map_;
   std::map<WidthMapKey, int> width_map_;
-#if defined(PDF_USE_SKIA)
-  sk_sp<SkTypeface> typeface_;
-#endif
 };
 
 #endif  //  CORE_FXGE_CFX_GLYPHCACHE_H_

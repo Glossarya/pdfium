@@ -182,6 +182,8 @@ FPDFEditEmbedderTest.AddMarkCompressedStream 3
 FPDFEditEmbedderTest.Bug1549 4
 FPDFEditEmbedderTest.Bug1574 3
 FPDFEditEmbedderTest.Bug1893 3
+FPDFEditEmbedderTest.Bug410996566 3
+FPDFEditEmbedderTest.Bug461845674 7
 FPDFEditEmbedderTest.EditOverExistingContent 6
 FPDFEditEmbedderTest.FormModifyObject 5
 FPDFEditEmbedderTest.GetAndSetMatrixForFormWithText 3

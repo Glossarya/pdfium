@@ -57,7 +57,7 @@ source_set("edit") {
     "../font",
     "../page",
     "../parser",
-    "//third_party/harfbuzz-ng",
+    "//third_party/harfbuzz",
   ]
   if (pdf_use_skia) {
     deps += [ "../../../skia" ]

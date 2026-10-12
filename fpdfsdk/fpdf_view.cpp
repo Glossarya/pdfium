@@ -118,9 +118,9 @@ static_assert(
 
 #if defined(PDF_USE_SKIA)
 // These checks are here because core/ and public/ cannot depend on each other.
-static_assert(static_cast<int>(CFX_DefaultRenderDevice::RendererType::kAgg) ==
+static_assert(static_cast<int>(CFX_GEModule::RendererType::kAgg) ==
               FPDF_RENDERERTYPE_AGG);
-static_assert(static_cast<int>(CFX_DefaultRenderDevice::RendererType::kSkia) ==
+static_assert(static_cast<int>(CFX_GEModule::RendererType::kSkia) ==
               FPDF_RENDERERTYPE_SKIA);
 #endif  // defined(PDF_USE_SKIA)
 
@@ -130,34 +130,6 @@ namespace {
 // tracks its own library-initialized state so per-thread Init/Destroy don't
 // race.
 EPDF_TLS bool g_bLibraryInitialized = false;
-
-void SetRendererType(FPDF_RENDERER_TYPE public_type) {
-  // Internal definition of renderer types must stay updated with respect to
-  // the public definition, such that all public definitions can be mapped to
-  // an internal definition in `CFX_DefaultRenderDevice`. A public definition
-  // value might not be meaningful for a particular build configuration, which
-  // would mean use of that value is an error for that build.
-
-  // AGG is always present in a build. `FPDF_RENDERERTYPE_SKIA` is valid to use
-  // only if it is included in the build.
-#if defined(PDF_USE_SKIA)
-  // This build configuration has the option for runtime renderer selection.
-  CHECK(public_type == FPDF_RENDERERTYPE_AGG ||
-        public_type == FPDF_RENDERERTYPE_SKIA);
-  CFX_DefaultRenderDevice::SetRendererType(
-      static_cast<CFX_DefaultRenderDevice::RendererType>(public_type));
-#else
-  // AGG-only builds should always use `FPDF_RENDERERTYPE_AGG`.
-  CHECK_EQ(public_type, FPDF_RENDERERTYPE_AGG);
-#endif
-}
-
-void ResetRendererType() {
-#if defined(PDF_USE_SKIA)
-  CFX_DefaultRenderDevice::SetRendererType(
-      CFX_DefaultRenderDevice::kDefaultRenderer);
-#endif
-}
 
 RetainPtr<const CPDF_Object> GetXFAEntryFromDocument(const CPDF_Document* doc) {
   const CPDF_Dictionary* root = doc->GetRoot();
@@ -246,22 +218,41 @@ FPDF_InitLibraryWithConfig(const FPDF_LIBRARY_CONFIG* config) {
   if (g_bLibraryInitialized) {
     return;
   }
-
-  FX_InitializeMemoryAllocators();
   CFX_Timer::InitializeGlobals();
-  CFX_GEModule::Create(config ? config->m_pUserFontPaths : nullptr);
-  pdfium::InitializePageModule();
 
+  CFX_GEModule::RendererType renderer_type =
+      CFX_GEModule::RendererType::kDefault;
+  if (config && config->version >= 4) {
 #if defined(PDF_USE_SKIA)
-  CFX_GlyphCache::FontBackend backend = CFX_GlyphCache::FontBackend::kFreeType;
-  if (config && config->version >= 5 &&
-      config->m_FontLibraryType != FPDF_FONTBACKENDTYPE_FREETYPE) {
-    CHECK_EQ(config->m_FontLibraryType, FPDF_FONTBACKENDTYPE_FONTATIONS);
-    CHECK_EQ(config->m_RendererType, FPDF_RENDERERTYPE_SKIA);
-    backend = CFX_GlyphCache::FontBackend::kFontations;
-  }
-  CFX_GlyphCache::InitializeGlobals(backend);
+    CHECK(config->m_RendererType == FPDF_RENDERERTYPE_AGG ||
+          config->m_RendererType == FPDF_RENDERERTYPE_SKIA);
+    renderer_type =
+        static_cast<CFX_GEModule::RendererType>(config->m_RendererType);
+#else
+    // AGG-only builds should always use `FPDF_RENDERERTYPE_AGG`.
+    CHECK_EQ(config->m_RendererType, FPDF_RENDERERTYPE_AGG);
 #endif
+  }
+
+  CFX_FontMgr::FontBackend backend = CFX_FontMgr::FontBackend::kFreeType;
+  if (config && config->version >= 5) {
+#if defined(PDF_USE_SKIA)
+    CHECK(config->m_FontLibraryType == FPDF_FONTBACKENDTYPE_FREETYPE ||
+          config->m_FontLibraryType == FPDF_FONTBACKENDTYPE_FONTATIONS);
+    if (config->m_FontLibraryType == FPDF_FONTBACKENDTYPE_FONTATIONS) {
+      CHECK_EQ(renderer_type, CFX_GEModule::RendererType::kSkia);
+      backend = CFX_FontMgr::FontBackend::kFontations;
+    }
+#else
+    // AGG-only builds should always use `FPDF_FONTBACKENDTYPE_FREETYPE`.
+    CHECK_EQ(config->m_FontLibraryType, FPDF_FONTBACKENDTYPE_FREETYPE);
+#endif
+  }
+
+  CFX_GEModule::Create(config ? config->m_pUserFontPaths : nullptr,
+                       renderer_type, backend);
+
+  pdfium::InitializePageModule();
 
 #ifdef PDF_ENABLE_XFA
   CPDFXFA_ModuleInit();
@@ -272,11 +263,6 @@ FPDF_InitLibraryWithConfig(const FPDF_LIBRARY_CONFIG* config) {
     IJS_Runtime::Initialize(config->m_v8EmbedderSlot, config->m_pIsolate,
                             platform);
   }
-
-  if (config && config->version >= 4) {
-    SetRendererType(config->m_RendererType);
-  }
-
   g_bLibraryInitialized = true;
 }
 
@@ -286,17 +272,11 @@ FPDF_EXPORT void FPDF_CALLCONV FPDF_DestroyLibrary() {
   }
 
   // Note: we teardown/destroy things in reverse order.
-  ResetRendererType();
-
   IJS_Runtime::Destroy();
 
 #ifdef PDF_ENABLE_XFA
   CPDFXFA_ModuleDestroy();
 #endif  // PDF_ENABLE_XFA
-
-#if defined(PDF_USE_SKIA)
-  CFX_GlyphCache::DestroyGlobals();
-#endif
 
   // EmbedPDF(fonts, per-thread-init): registered runtime fonts are
   // global/TLS-backed PDFium state, so tear them down with the rest of the
@@ -305,7 +285,6 @@ FPDF_EXPORT void FPDF_CALLCONV FPDF_DestroyLibrary() {
   pdfium::DestroyPageModule();
   CFX_GEModule::Destroy();
   CFX_Timer::DestroyGlobals();
-  FX_DestroyMemoryAllocators();
 
   g_bLibraryInitialized = false;
 }
@@ -1159,11 +1138,12 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDF_RenderPage(HDC dc,
   if (!pBitmap->Create(size_x, size_y, FXDIB_Format::kBgra)) {
     return false;
   }
-  if (!CFX_DefaultRenderDevice::UseSkiaRenderer()) {
+#if defined(PDF_USE_SKIA)
+  if (!CFX_GEModule::Get()->UseSkiaRenderer()) {
     // Not needed by Skia. Call it for AGG to preserve pre-existing behavior.
     pBitmap->Clear(0x00ffffff);
   }
-
+#endif
   auto device = std::make_unique<CFX_DefaultRenderDevice>();
   device->Attach(pBitmap);
   context->device_ = std::move(device);
@@ -1714,8 +1694,8 @@ FPDF_EXPORT int FPDF_CALLCONV FPDFBitmap_GetFormat(FPDF_BITMAP bitmap) {
       return FPDFBitmap_BGRA;
 #if defined(PDF_USE_SKIA)
     case FXDIB_Format::kBgraPremul:
-      return CFX_DefaultRenderDevice::UseSkiaRenderer() ? FPDFBitmap_BGRA_Premul
-                                                        : FPDFBitmap_Unknown;
+      return CFX_GEModule::Get()->UseSkiaRenderer() ? FPDFBitmap_BGRA_Premul
+                                                    : FPDFBitmap_Unknown;
 #endif
     default:
       return FPDFBitmap_Unknown;

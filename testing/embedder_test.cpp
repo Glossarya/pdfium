@@ -21,7 +21,7 @@
 #include "core/fxcrt/numerics/safe_conversions.h"
 #include "core/fxcrt/span_util.h"
 #include "core/fxcrt/zip.h"
-#include "core/fxge/cfx_defaultrenderdevice.h"
+#include "core/fxge/cfx_gemodule.h"
 #include "core/fxge/dib/fx_dib.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "public/cpp/fpdf_scopers.h"
@@ -315,11 +315,17 @@ std::string GetEmbedderTestExpectationPath(
 std::vector<std::string> GetEmbedderTestExpectationsWithSuffixPath(
     std::string_view expectation_png_name) {
   const std::string basename(expectation_png_name);
-  const std::string renderer =
-      CFX_DefaultRenderDevice::UseSkiaRenderer() ? "_skia" : "_agg";
   const std::string platform_suffix(GetPlatformNameSuffix());
   const std::string cpu_arch_suffix(GetCpuArchSuffix());
   const bool has_cpu_arch_suffix = !cpu_arch_suffix.empty();
+
+  std::string renderer = "_agg";
+#if defined(PDF_USE_SKIA)
+  if (CFX_GEModule::Get()->UseSkiaRenderer()) {
+    renderer = "_skia";
+  }
+#endif
+
   std::vector<std::string> expectation_names;
   expectation_names.reserve(has_cpu_arch_suffix ? 6 : 4);
 
@@ -481,9 +487,20 @@ std::string EncodeBase64Png(FPDF_BITMAP bitmap) {
   return EncodeBase64(EncodePng(bitmap));
 }
 
-void CompareBitmapToPngData(FPDF_BITMAP bitmap,
-                            pdfium::span<const uint8_t> png_data,
+void ReportMissingExpectation(FPDF_BITMAP bitmap) {
+  ADD_FAILURE() << "No matching expectation file!\n"
+                << "Actual pixels (open in browser):\n"
+                << EncodeBase64Png(bitmap);
+}
+
+void CompareBitmapToPngFile(FPDF_BITMAP bitmap,
+                            const std::string& png_path,
                             int max_pixel_per_channel_delta) {
+  std::vector<uint8_t> png_data = GetFileContents(png_path.c_str());
+  if (png_data.empty()) {
+    ReportMissingExpectation(bitmap);
+    return;
+  }
   DecodedPng decoded_png = DecodePngData(png_data);
   ASSERT_GT(decoded_png.width, 0);
   ASSERT_GT(decoded_png.height, 0);
@@ -528,10 +545,11 @@ void CompareBitmapToPngData(FPDF_BITMAP bitmap,
       // Support other formats as-needed.
       NOTREACHED();
   }
-  EXPECT_EQ(pixels_different, 0)
-      << ", Actual pixels (open in browser):\n"
-      << EncodeBase64Png(bitmap) << "\nExpected pixels (open in browser):\n"
-      << EncodeBase64(png_data);
+  EXPECT_EQ(pixels_different, 0) << "Pixels do not match!\n"
+                                 << "Actual pixels (open in browser):\n"
+                                 << EncodeBase64Png(bitmap) << "\n"
+                                 << "Expected pixels (open in browser):\n"
+                                 << EncodeBase64(png_data) << "\n";
 }
 
 }  // namespace
@@ -1165,13 +1183,8 @@ void EmbedderTest::WriteBitmapToPng(FPDF_BITMAP bitmap,
 void EmbedderTest::CompareBitmap(FPDF_BITMAP bitmap,
                                  std::string_view expectation_png_name) {
   std::string png_path = GetEmbedderTestExpectationPath(expectation_png_name);
-  std::vector<uint8_t> png_data = GetFileContents(png_path.c_str());
-  ASSERT_FALSE(png_data.empty())
-      << "No expectation file matching " << expectation_png_name
-      << ", Actual pixels (open in browser):\n"
-      << EncodeBase64Png(bitmap);
   SCOPED_TRACE(testing::Message() << "CompareBitmap() with " << png_path);
-  CompareBitmapToPngData(bitmap, png_data, /*max_pixel_per_channel_delta=*/0);
+  CompareBitmapToPngFile(bitmap, png_path, /*max_pixel_per_channel_delta=*/0);
   if (EmbedderTestEnvironment::GetInstance()->write_pngs()) {
     WriteBitmapToPng(bitmap, png_path);
   }
@@ -1191,17 +1204,14 @@ void EmbedderTest::CompareBitmapWithExpectationSuffix(
 
     SCOPED_TRACE(testing::Message()
                  << "CompareBitmapWithExpectationSuffix() with " << png_path);
-    CompareBitmapToPngData(bitmap, GetFileContents(png_path.c_str()),
-                           max_pixel_per_channel_delta);
+    CompareBitmapToPngFile(bitmap, png_path, max_pixel_per_channel_delta);
     if (EmbedderTestEnvironment::GetInstance()->write_pngs()) {
       WriteBitmapToPng(bitmap, png_path);
     }
     return;
   }
 
-  ADD_FAILURE() << "No expectation file matching " << expectation_png_name
-                << ", Actual pixels (open in browser):\n"
-                << EncodeBase64Png(bitmap);
+  ReportMissingExpectation(bitmap);
 }
 
 // static

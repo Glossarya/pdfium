@@ -959,7 +959,7 @@ TEST_F(EPDFMeasureEmbedderTest,
   } fonts;
   auto bytes =
       GetFileContents(PathService::GetThirdPartyFilePath(
-                          "harfbuzz-ng/src/perf/fonts/Roboto-Regular.ttf")
+                          "harfbuzz/src/perf/fonts/Roboto-Regular.ttf")
                           .c_str());
   ASSERT_FALSE(bytes.empty());
   auto id = EPDFFont_RegisterMemFont64("Roboto", 400, false, bytes.data(),

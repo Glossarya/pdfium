@@ -32,6 +32,9 @@ class TestLoader;
 // loaded. So, if a test suite has a lot of tests that need a font manager they
 // can end up executing very, very slowly.
 
+// Helper macro for common equality assertions with a fixed tolerance of 0.001.
+#define EXPECT_NEAR_THREE_PLACES(a, b) EXPECT_NEAR((a), (b), 0.001)
+
 // This class is used to load a PDF document, and then run programatic
 // API tests against it.
 class EmbedderTest : public ::testing::Test,
@@ -399,14 +402,15 @@ class EmbedderTest : public ::testing::Test,
   // Same as GetPageNumberForLoadedPage(), but with `saved_page_map_`.
   int GetPageNumberForSavedPage(FPDF_PAGE page) const;
 
-  // Helpers for opening saved documents. These are intended for internal use only. Callers
-  // should use the Scoped methods that manage lifetime automatically.
+  // Helpers for opening saved documents. These are intended for internal use
+  // only. Callers should use the Scoped methods that manage lifetime
+  // automatically.
   FPDF_DOCUMENT OpenSavedDocument();
   FPDF_DOCUMENT OpenSavedDocumentWithPassword(const char* password);
 
-  // Closes a document opened via OpenSavedDocument(). This must only be invoked in documents
-  // opened by the helpers above. This is intended for internal use in the destructor of the
-  // scoped methods.
+  // Closes a document opened via OpenSavedDocument(). This must only be invoked
+  // in documents opened by the helpers above. This is intended for internal use
+  // in the destructor of the scoped methods.
   void CloseSavedDocument();
 
   void UnloadPageCommon(FPDF_PAGE page, bool do_events);

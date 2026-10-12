@@ -206,8 +206,8 @@ std::unique_ptr<CFX_Font> LoadFont(pdfium::span<const uint8_t> data) {
   }
 
   auto font = std::make_unique<CFX_Font>();
-  if (!font->LoadFaceFromSpan(data, /*force_vertical=*/false,
-                              /*object_tag=*/0)) {
+  if (!font->LoadFaceZeroFromSpan(data, /*force_vertical=*/false,
+                                  /*object_tag=*/0)) {
     return nullptr;
   }
   return font;

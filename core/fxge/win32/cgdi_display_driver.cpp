@@ -14,7 +14,6 @@
 #include "core/fxcrt/fx_system.h"
 #include "core/fxge/dib/cfx_dibbase.h"
 #include "core/fxge/dib/cfx_dibitmap.h"
-#include "core/fxge/render_defines.h"
 #include "core/fxge/win32/cwin32_platform.h"
 
 CGdiDisplayDriver::CGdiDisplayDriver(HDC hDC)
@@ -22,18 +21,12 @@ CGdiDisplayDriver::CGdiDisplayDriver(HDC hDC)
   auto* pPlatform =
       static_cast<CWin32Platform*>(CFX_GEModule::Get()->GetPlatform());
   if (pPlatform->gdiplus_ext_.IsAvailable()) {
-    render_caps_ |= FXRC_ALPHA_PATH | FXRC_ALPHA_IMAGE;
+    render_cap_alpha_path_ = true;
+    render_cap_alpha_image_ = true;
   }
 }
 
 CGdiDisplayDriver::~CGdiDisplayDriver() = default;
-
-int CGdiDisplayDriver::GetDeviceCaps(int caps_id) const {
-  if (caps_id == FXDC_HORZ_SIZE || caps_id == FXDC_VERT_SIZE) {
-    return 0;
-  }
-  return CGdiDeviceDriver::GetDeviceCaps(caps_id);
-}
 
 bool CGdiDisplayDriver::GetDIBits(RetainPtr<CFX_DIBitmap> bitmap,
                                   int left,

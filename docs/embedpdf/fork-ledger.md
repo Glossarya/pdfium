@@ -84,8 +84,9 @@ layer sees.
 `fpdfsdk/`. Every function in `epdf_annot.cpp` opens one before it walks the document's objects.
 **Guarded by.** `cpdf_base_document_unittest.cpp`, `cpdf_layer_document_unittest.cpp`,
 `EPDFAnnotEmbedderTest.ReadsResolveThroughTheLayer`.
-**When upstream touches this.** A new read entry point that walks a document's objects opens a
-scope. Without one, a base page with layer `/Annots` crashes the view detector.
+**When upstream touches this.** A new entry point that walks objects beyond its own page opens a
+scope, whether it reads or writes: `FPDFPage_Flatten()` writes one page but reads every page's
+`/Annots`. Without a scope, a base page with layer `/Annots` crashes the view detector.
 
 ### overlay-epoch
 **Rule.** Anything that caches an object pointer, or something derived from one, re-reads it when
@@ -116,7 +117,8 @@ saved.
 edits, and the copy happens outside any transaction. On a frozen base it writes shared state.
 **Where.** Const walks in the content parser, `cpdf_interactiveform.cpp`, `cpdf_nametree.cpp`
 (`CreateForReading`), `cpdf_linklist.cpp` and `cpdf_annotlist.cpp`; in-memory appearances in
-`cpdf_annot.cpp`.
+`cpdf_annot.cpp`. Writes that read first: the field pruning in `fpdf_flatten.cpp` compares fields
+read const and takes an array mutable only when an entry goes.
 **Guarded by.** `cpdf_read_only_graph_guard_unittest.cpp`,
 `EPDFAnnotEmbedderTest.DrawingARedactionMarkWithoutAppearanceWritesNone`; layer mode's list of
 tests that write (`testing/embedpdf_layer_mode_writers.txt`): a test that only reads must leave
@@ -182,7 +184,9 @@ filling the live document's caches.
 **Why.** Full rewrites of large files kept every object parsed in memory, and stale cross-reference
 and encryption objects leaked into saves.
 **Where.** `cpdf_save_trailer`, `cpdf_reference_index`, `cpdf_save_object_reader`,
-`cpdf_object_stream_cache`, `CPDF_Parser::ParseIndirectObjectForSave`.
+`cpdf_object_stream_cache`, `CPDF_Parser::ParseIndirectObjectForSave`, and
+`ByteStringPool::Clear()`: the save reader empties its own pool between objects. Upstream removed
+`Clear()` as unused; we put it back.
 **Guarded by.** `cpdf_save_trailer_unittest.cpp`, `cpdf_reference_index_unittest.cpp`,
 `cpdf_object_stream_cache_unittest.cpp`.
 **When upstream touches this.** The creator's traversal and the parser's object stream access.

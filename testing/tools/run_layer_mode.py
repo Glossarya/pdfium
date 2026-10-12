@@ -24,7 +24,8 @@ Usage:
   run_layer_mode.py <build_dir> [--filter GTEST_FILTER] [--jobs N]
                     [--out DIR] [--record-writers]
 
-  --record-writers  rewrite the writers file from this run (review the diff).
+  --record-writers  rewrite the writers file from this run (review the diff);
+                    the comment lines at its top are kept.
 Exit status 1 when anything is reported as an error.
 """
 
@@ -127,6 +128,18 @@ def read_list(path):
   return entries
 
 
+def read_header(path):
+  """The comment lines at the top of a list file, kept when it is rewritten."""
+  header = []
+  if os.path.exists(path):
+    with open(path) as f:
+      for line in f:
+        if not line.startswith('#'):
+          break
+        header.append(line)
+  return header
+
+
 def main():
   parser = argparse.ArgumentParser(
       description=__doc__.split('\n\n')[0],
@@ -190,10 +203,12 @@ def main():
       warnings.append(f'expected to fail in layer mode, but passes: {pattern}')
 
   if args.record_writers:
+    header = read_header(WRITERS) or [
+        '# Embedder tests that leave objects in a layer: they write.\n',
+        '# Written by run_layer_mode.py --record-writers; review the diff.\n',
+    ]
     with open(WRITERS, 'w') as f:
-      f.write('# Embedder tests that leave objects in a layer: they write.\n'
-              '# Written by run_layer_mode.py --record-writers; review the '
-              'diff.\n')
+      f.writelines(header)
       for test, _, objects, _ in sorted(results):
         if objects:
           f.write(f'{test} {objects}\n')

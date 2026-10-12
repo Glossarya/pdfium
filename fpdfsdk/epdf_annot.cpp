@@ -68,6 +68,13 @@
 using epdf::GetAnnotDictFromFPDFAnnotation;
 using epdf::GetMutableAnnotDictFromFPDFAnnotation;
 
+// Every function here opens a view scope on its document before it walks any
+// of the document's objects; only argument checks come first. That is
+// ScopedFPDF*View, or CPDF_DocumentViewScope once it has the document. On a
+// layer, references then resolve to the versions the layer sees, and an
+// annotation reaches the fonts and resources its base still holds
+// (docs/embedpdf/fork-ledger.md, rule view-scope).
+
 namespace {
 
 // These checks ensure the consistency of annotation border style values
@@ -699,6 +706,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetNumberValue(FPDF_ANNOTATION annot,
                          FPDF_BYTESTRING key,
                          float value) {
+  ScopedFPDFAnnotationView annot_view(annot);
   // Refused before the dictionary is opened for writing, so a refused call
   // changes nothing, and on a layer copies nothing up.
   if (!key || !key[0] || !std::isfinite(value)) {
@@ -723,11 +731,13 @@ EPDFAnnot_SetNumberValue(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_HasEmbedMetadata(FPDF_ANNOTATION annot) {
+  ScopedFPDFAnnotationView annot_view(annot);
   return !!fpdfdoc::GetEmbedMetadata(GetAnnotDictFromFPDFAnnotation(annot));
 }
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_ClearEmbedMetadata(FPDF_ANNOTATION annot) {
+  ScopedFPDFAnnotationView annot_view(annot);
   RetainPtr<CPDF_Dictionary> annot_dict =
       GetMutableAnnotDictFromFPDFAnnotation(annot);
   if (!annot_dict) {
@@ -740,6 +750,7 @@ EPDFAnnot_ClearEmbedMetadata(FPDF_ANNOTATION annot) {
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_ClearEmbedMetadataKey(FPDF_ANNOTATION annot, FPDF_BYTESTRING key) {
+  ScopedFPDFAnnotationView annot_view(annot);
   RetainPtr<CPDF_Dictionary> annot_dict =
       GetMutableAnnotDictFromFPDFAnnotation(annot);
   if (!annot_dict || !key) {
@@ -754,6 +765,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetEmbedMetadataString(FPDF_ANNOTATION annot,
                                  FPDF_BYTESTRING key,
                                  FPDF_WIDESTRING value) {
+  ScopedFPDFAnnotationView annot_view(annot);
   RetainPtr<CPDF_Dictionary> annot_dict =
       GetMutableAnnotDictFromFPDFAnnotation(annot);
   if (!annot_dict || !key) {
@@ -771,6 +783,7 @@ EPDFAnnot_GetEmbedMetadataString(FPDF_ANNOTATION annot,
                                  FPDF_BYTESTRING key,
                                  FPDF_WCHAR* buffer,
                                  unsigned long buflen) {
+  ScopedFPDFAnnotationView annot_view(annot);
   const CPDF_Dictionary* annot_dict = GetAnnotDictFromFPDFAnnotation(annot);
   if (!annot_dict || !key) {
     return 0;
@@ -788,6 +801,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetEmbedMetadataNumber(FPDF_ANNOTATION annot,
                                  FPDF_BYTESTRING key,
                                  float value) {
+  ScopedFPDFAnnotationView annot_view(annot);
   RetainPtr<CPDF_Dictionary> annot_dict =
       GetMutableAnnotDictFromFPDFAnnotation(annot);
   if (!annot_dict || !key) {
@@ -802,6 +816,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_GetEmbedMetadataNumber(FPDF_ANNOTATION annot,
                                  FPDF_BYTESTRING key,
                                  float* value) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (!key || !value) {
     return false;
   }
@@ -815,6 +830,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetEmbedMetadataBoolean(FPDF_ANNOTATION annot,
                                   FPDF_BYTESTRING key,
                                   FPDF_BOOL value) {
+  ScopedFPDFAnnotationView annot_view(annot);
   RetainPtr<CPDF_Dictionary> annot_dict =
       GetMutableAnnotDictFromFPDFAnnotation(annot);
   if (!annot_dict || !key) {
@@ -829,6 +845,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_GetEmbedMetadataBoolean(FPDF_ANNOTATION annot,
                                   FPDF_BYTESTRING key,
                                   FPDF_BOOL* value) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (!key || !value) {
     return false;
   }
@@ -847,6 +864,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetEmbedMetadataRect(FPDF_ANNOTATION annot,
                                FPDF_BYTESTRING key,
                                const FS_RECTF* rect) {
+  ScopedFPDFAnnotationView annot_view(annot);
   RetainPtr<CPDF_Dictionary> annot_dict =
       GetMutableAnnotDictFromFPDFAnnotation(annot);
   if (!annot_dict || !key) {
@@ -867,6 +885,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_GetEmbedMetadataRect(FPDF_ANNOTATION annot,
                                FPDF_BYTESTRING key,
                                FS_RECTF* rect) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (!key || !rect) {
     return false;
   }
@@ -883,6 +902,7 @@ EPDFAnnot_GetEmbedMetadataRect(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetEmbedMetadataJSON(FPDF_ANNOTATION annot, FPDF_WIDESTRING json) {
+  ScopedFPDFAnnotationView annot_view(annot);
   return EPDFAnnot_SetEmbedMetadataString(
       annot, fpdfdoc::kEmbedMetadataCustomJSONKey, json);
 }
@@ -891,12 +911,14 @@ FPDF_EXPORT unsigned long FPDF_CALLCONV
 EPDFAnnot_GetEmbedMetadataJSON(FPDF_ANNOTATION annot,
                                FPDF_WCHAR* buffer,
                                unsigned long buflen) {
+  ScopedFPDFAnnotationView annot_view(annot);
   return EPDFAnnot_GetEmbedMetadataString(
       annot, fpdfdoc::kEmbedMetadataCustomJSONKey, buffer, buflen);
 }
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFDocument_ClearEmbedMetadata(FPDF_DOCUMENT document) {
+  ScopedFPDFDocumentView doc_view(document);
   CPDF_Document* pdf = CPDFDocumentFromFPDFDocument(document);
   if (!pdf) {
     return false;
@@ -966,6 +988,7 @@ EPDFDocument_ClearEmbedMetadata(FPDF_DOCUMENT document) {
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_SetAction(FPDF_ANNOTATION annot,
                                                         FPDF_ACTION action) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (!action || FPDFAnnot_GetSubtype(annot) != FPDF_ANNOT_LINK) {
     return false;
   }
@@ -1022,16 +1045,19 @@ FPDF_BOOL RemoveLinkDictEntry(FPDF_ANNOTATION annot, const char* key) {
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_RemoveAction(FPDF_ANNOTATION annot) {
+  ScopedFPDFAnnotationView annot_view(annot);
   return RemoveLinkDictEntry(annot, "A");
 }
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_RemoveDest(FPDF_ANNOTATION annot) {
+  ScopedFPDFAnnotationView annot_view(annot);
   return RemoveLinkDictEntry(annot, "Dest");
 }
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_RemoveKey(FPDF_ANNOTATION annot, FPDF_BYTESTRING key) {
+  ScopedFPDFAnnotationView annot_view(annot);
   RetainPtr<CPDF_Dictionary> annot_dict =
       GetMutableAnnotDictFromFPDFAnnotation(annot);
   if (!annot_dict || !key) {
@@ -1082,6 +1108,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_SetColor(FPDF_ANNOTATION annot,
                                                        unsigned int R,
                                                        unsigned int G,
                                                        unsigned int B) {
+  ScopedFPDFAnnotationView annot_view(annot);
   RetainPtr<CPDF_Dictionary> pAnnotDict =
       GetMutableAnnotDictFromFPDFAnnotation(annot);
   if (!pAnnotDict || R > 255 || G > 255 || B > 255) {
@@ -1115,6 +1142,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_GetColor(FPDF_ANNOTATION annot,
                                                        unsigned int* R,
                                                        unsigned int* G,
                                                        unsigned int* B) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (!R || !G || !B) {
     return false;
   }
@@ -1159,6 +1187,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_GetColor(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_ClearColor(FPDF_ANNOTATION annot, FPDFANNOT_COLORTYPE type) {
+  ScopedFPDFAnnotationView annot_view(annot);
   RetainPtr<CPDF_Dictionary> dict =
       GetMutableAnnotDictFromFPDFAnnotation(annot);
   if (!dict) {
@@ -1179,6 +1208,7 @@ EPDFAnnot_ClearColor(FPDF_ANNOTATION annot, FPDFANNOT_COLORTYPE type) {
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_SetOpacity(FPDF_ANNOTATION annot,
                                                          float opacity) {
+  ScopedFPDFAnnotationView annot_view(annot);
   RetainPtr<CPDF_Dictionary> dict =
       GetMutableAnnotDictFromFPDFAnnotation(annot);
   // Written this way round, a NaN is refused too.
@@ -1196,6 +1226,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_SetOpacity(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_GetOpacity(FPDF_ANNOTATION annot,
                                                          float* opacity) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (!opacity) {
     return false;
   }
@@ -1211,6 +1242,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_GetOpacity(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_GetBorderEffect(FPDF_ANNOTATION annot, float* intensity) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (!intensity) {
     return false;
   }
@@ -1244,6 +1276,7 @@ EPDFAnnot_GetBorderEffect(FPDF_ANNOTATION annot, float* intensity) {
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetBorderEffect(FPDF_ANNOTATION annot, float intensity) {
+  ScopedFPDFAnnotationView annot_view(annot);
   FPDF_ANNOTATION_SUBTYPE subtype = FPDFAnnot_GetSubtype(annot);
   if (subtype != FPDF_ANNOT_SQUARE && subtype != FPDF_ANNOT_CIRCLE &&
       subtype != FPDF_ANNOT_POLYGON && subtype != FPDF_ANNOT_FREETEXT) {
@@ -1265,6 +1298,7 @@ EPDFAnnot_SetBorderEffect(FPDF_ANNOTATION annot, float intensity) {
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_ClearBorderEffect(FPDF_ANNOTATION annot) {
+  ScopedFPDFAnnotationView annot_view(annot);
   FPDF_ANNOTATION_SUBTYPE subtype = FPDFAnnot_GetSubtype(annot);
   if (subtype != FPDF_ANNOT_SQUARE && subtype != FPDF_ANNOT_CIRCLE &&
       subtype != FPDF_ANNOT_POLYGON && subtype != FPDF_ANNOT_FREETEXT) {
@@ -1287,6 +1321,7 @@ EPDFAnnot_GetRectangleDifferences(FPDF_ANNOTATION annot,
                                   float* bottom,
                                   float* right,
                                   float* top) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (!left || !bottom || !right || !top) {
     return false;
   }
@@ -1322,6 +1357,7 @@ EPDFAnnot_GetRectangleDifferences(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_ClearRectangleDifferences(FPDF_ANNOTATION annot) {
+  ScopedFPDFAnnotationView annot_view(annot);
   FPDF_ANNOTATION_SUBTYPE subtype = FPDFAnnot_GetSubtype(annot);
   if (subtype != FPDF_ANNOT_SQUARE && subtype != FPDF_ANNOT_CIRCLE &&
       subtype != FPDF_ANNOT_CARET && subtype != FPDF_ANNOT_FREETEXT &&
@@ -1362,6 +1398,7 @@ RetainPtr<const CPDF_Array> GetExplicitBorderDashArray(
 
 FPDF_EXPORT unsigned long FPDF_CALLCONV
 EPDFAnnot_GetBorderDashPatternCount(FPDF_ANNOTATION annot) {
+  ScopedFPDFAnnotationView annot_view(annot);
   const CPDF_Dictionary* pAnnotDict = GetAnnotDictFromFPDFAnnotation(annot);
   if (!pAnnotDict) {
     return 0;
@@ -1376,6 +1413,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_GetBorderDashPattern(FPDF_ANNOTATION annot,
                                float* dash_array,
                                unsigned long count) {
+  ScopedFPDFAnnotationView annot_view(annot);
   const CPDF_Dictionary* pAnnotDict = GetAnnotDictFromFPDFAnnotation(annot);
   if (!pAnnotDict || !dash_array) {
     return false;
@@ -1398,6 +1436,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetBorderDashPattern(FPDF_ANNOTATION annot,
                                const float* dash_array,
                                unsigned long count) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (!annot) {
     return false;
   }
@@ -1443,6 +1482,7 @@ EPDFAnnot_SetBorderDashPattern(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT FPDF_ANNOT_BORDER_STYLE FPDF_CALLCONV
 EPDFAnnot_GetBorderStyle(FPDF_ANNOTATION annot, float* width) {
+  ScopedFPDFAnnotationView annot_view(annot);
   const CPDF_Dictionary* pAnnotDict = GetAnnotDictFromFPDFAnnotation(annot);
   if (!pAnnotDict) {
     if (width) {
@@ -1485,6 +1525,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetBorderStyle(FPDF_ANNOTATION annot,
                          FPDF_ANNOT_BORDER_STYLE style,
                          float width) {
+  ScopedFPDFAnnotationView annot_view(annot);
   RetainPtr<CPDF_Dictionary> pAnnotDict =
       GetMutableAnnotDictFromFPDFAnnotation(annot);
   if (!pAnnotDict) {
@@ -1520,8 +1561,6 @@ EPDFAnnot_SetBorderStyle(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_GenerateAppearance(FPDF_ANNOTATION annot) {
-  // Resolve through the document's view scope; a
-  // layer's annotation reaches fonts and resources its base still holds.
   ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* pContext = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!pContext) {
@@ -1552,8 +1591,6 @@ EPDFAnnot_GenerateAppearance(FPDF_ANNOTATION annot) {
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_GenerateAppearanceWithBlend(FPDF_ANNOTATION annot,
                                       FPDF_BLENDMODE blend) {
-  // Resolve through the document's view scope; a
-  // layer's annotation reaches fonts and resources its base still holds.
   ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* ctx = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!ctx) {
@@ -1582,6 +1619,7 @@ EPDFAnnot_GenerateAppearanceWithBlend(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT FPDF_BLENDMODE FPDF_CALLCONV
 EPDFAnnot_GetBlendMode(FPDF_ANNOTATION annot) {
+  ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* ctx = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!ctx) {
     return FPDF_BLENDMODE_Normal;
@@ -1594,6 +1632,7 @@ EPDFAnnot_GetBlendMode(FPDF_ANNOTATION annot) {
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetIntent(FPDF_ANNOTATION annot, FPDF_BYTESTRING intent) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (!annot || !intent || !*intent) {
     return false;
   }
@@ -1623,6 +1662,7 @@ FPDF_EXPORT unsigned long FPDF_CALLCONV
 EPDFAnnot_GetIntent(FPDF_ANNOTATION annot,
                     FPDF_WCHAR* buffer,
                     unsigned long buflen) {
+  ScopedFPDFAnnotationView annot_view(annot);
   const CPDF_Dictionary* dict = GetAnnotDictFromFPDFAnnotation(annot);
   if (!dict) {
     return 0;
@@ -1647,6 +1687,7 @@ FPDF_EXPORT unsigned long FPDF_CALLCONV
 EPDFAnnot_GetRichContent(FPDF_ANNOTATION annot,
                          FPDF_WCHAR* buffer,
                          unsigned long buflen) {
+  ScopedFPDFAnnotationView annot_view(annot);
   const CPDF_Dictionary* dict = GetAnnotDictFromFPDFAnnotation(annot);
   if (!dict) {
     return 0;
@@ -1685,8 +1726,6 @@ FPDF_EXPORT unsigned long FPDF_CALLCONV
 EPDFAnnot_GetRichTextJSON(FPDF_ANNOTATION annot,
                           char* buffer,
                           unsigned long buflen) {
-  // Resolve through the document's view scope; a
-  // layer's annotation reaches fonts and resources its base still holds.
   ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* context = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!context) {
@@ -1740,8 +1779,6 @@ RetainPtr<const CPDF_Dictionary> AcroFormDictOf(FPDF_ANNOTATION annot) {
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetRichTextJSON(FPDF_ANNOTATION annot, FPDF_BYTESTRING json_utf8) {
-  // Resolve through the document's view scope; a
-  // layer's annotation reaches fonts and resources its base still holds.
   ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* context = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!context || !json_utf8) {
@@ -1770,8 +1807,6 @@ EPDFAnnot_SetRichTextJSON(FPDF_ANNOTATION annot, FPDF_BYTESTRING json_utf8) {
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetRichTextXHTML(FPDF_ANNOTATION annot, FPDF_WIDESTRING xhtml) {
-  // Resolve through the document's view scope; a
-  // layer's annotation reaches fonts and resources its base still holds.
   ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* context = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!context || !xhtml) {
@@ -1800,6 +1835,7 @@ EPDFAnnot_SetRichTextXHTML(FPDF_ANNOTATION annot, FPDF_WIDESTRING xhtml) {
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFDoc_SetTypographicFeatures(FPDF_DOCUMENT document, FPDF_BOOL enabled) {
+  ScopedFPDFDocumentView doc_view(document);
   CPDF_Document* doc = CPDFDocumentFromFPDFDocument(document);
   if (!doc) {
     return false;
@@ -1810,6 +1846,7 @@ EPDFDoc_SetTypographicFeatures(FPDF_DOCUMENT document, FPDF_BOOL enabled) {
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFDoc_GetTypographicFeatures(FPDF_DOCUMENT document) {
+  ScopedFPDFDocumentView doc_view(document);
   const CPDF_Document* doc = CPDFDocumentFromFPDFDocument(document);
   return doc && doc->GetTypographicFeaturesEnabled();
 }
@@ -1818,6 +1855,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetLineEndings(FPDF_ANNOTATION annot,
                          FPDF_ANNOT_LINE_END start_style,
                          FPDF_ANNOT_LINE_END end_style) {
+  ScopedFPDFAnnotationView annot_view(annot);
   FPDF_ANNOTATION_SUBTYPE subtype = FPDFAnnot_GetSubtype(annot);
   if (subtype != FPDF_ANNOT_LINE && subtype != FPDF_ANNOT_POLYLINE &&
       subtype != FPDF_ANNOT_FREETEXT) {
@@ -1897,6 +1935,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_GetLineEndings(FPDF_ANNOTATION annot,
                          FPDF_ANNOT_LINE_END* start_style,
                          FPDF_ANNOT_LINE_END* end_style) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (!start_style || !end_style) {
     return false;
   }
@@ -1944,6 +1983,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetVertices(FPDF_ANNOTATION annot,
                       const FS_POINTF* points,
                       unsigned long count) {
+  ScopedFPDFAnnotationView annot_view(annot);
   // Accept only Polygon / Polyline annotations.
   FPDF_ANNOTATION_SUBTYPE subtype = FPDFAnnot_GetSubtype(annot);
   if (subtype != FPDF_ANNOT_POLYGON && subtype != FPDF_ANNOT_POLYLINE) {
@@ -1985,6 +2025,7 @@ EPDFAnnot_SetVertices(FPDF_ANNOTATION annot,
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_SetLine(FPDF_ANNOTATION annot,
                                                       const FS_POINTF* start,
                                                       const FS_POINTF* end) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (!annot || !start || !end) {
     return false;
   }
@@ -2023,8 +2064,6 @@ EPDFAnnot_SetDefaultAppearance(FPDF_ANNOTATION annot,
                                unsigned int R,
                                unsigned int G,
                                unsigned int B) {
-  // Resolve through the document's view scope; a
-  // layer's annotation reaches fonts and resources its base still holds.
   ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* context = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!context) {
@@ -2071,8 +2110,6 @@ EPDFAnnot_SetDefaultAppearanceRegisteredFont(FPDF_ANNOTATION annot,
                                              unsigned int R,
                                              unsigned int G,
                                              unsigned int B) {
-  // Resolve through the document's view scope; a
-  // layer's annotation reaches fonts and resources its base still holds.
   ScopedFPDFAnnotationView annot_view(annot);
   // Annotation-specific bridge from public API to the
   // registered font AP pipeline. Generic EPDFFont_* registration lives in
@@ -2115,8 +2152,6 @@ EPDFAnnot_GetDefaultAppearance(FPDF_ANNOTATION annot,
                                unsigned int* R,
                                unsigned int* G,
                                unsigned int* B) {
-  // Resolve through the document's view scope; a
-  // layer's annotation reaches fonts and resources its base still holds.
   ScopedFPDFAnnotationView annot_view(annot);
   // Standard validation for output parameters and annotation handle.
   if (!font || !font_size || !R || !G || !B) {
@@ -2202,8 +2237,6 @@ EPDFAnnot_GetDefaultAppearanceFontFace(FPDF_ANNOTATION annot,
                                        unsigned long buflen,
                                        int* weight,
                                        FPDF_BOOL* italic) {
-  // Resolve through the document's view scope; a
-  // layer's annotation reaches fonts and resources its base still holds.
   ScopedFPDFAnnotationView annot_view(annot);
   if (!weight || !italic) {
     return 0;
@@ -2253,6 +2286,7 @@ EPDFAnnot_GetDefaultAppearanceFontFace(FPDF_ANNOTATION annot,
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetTextAlignment(FPDF_ANNOTATION annot,
                            FPDF_TEXT_ALIGNMENT alignment) {
+  ScopedFPDFAnnotationView annot_view(annot);
   RetainPtr<CPDF_Dictionary> annot_dict =
       GetMutableAnnotDictFromFPDFAnnotation(annot);
   if (!annot_dict) {
@@ -2282,6 +2316,7 @@ EPDFAnnot_SetTextAlignment(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT FPDF_TEXT_ALIGNMENT FPDF_CALLCONV
 EPDFAnnot_GetTextAlignment(FPDF_ANNOTATION annot) {
+  ScopedFPDFAnnotationView annot_view(annot);
   // The default alignment is left (0) if not specified.
   constexpr FPDF_TEXT_ALIGNMENT kDefaultAlignment = FPDF_TEXT_ALIGNMENT_LEFT;
 
@@ -2456,6 +2491,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetLinkedAnnot(FPDF_ANNOTATION annot,
                          FPDF_BYTESTRING key,
                          FPDF_ANNOTATION linked_annot) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (!annot || !key) {
     return false;
   }
@@ -2548,6 +2584,7 @@ FPDF_EXPORT int FPDF_CALLCONV
 EPDFPage_GetAnnotIndexByNameRaw(FPDF_DOCUMENT doc,
                                 int page_index,
                                 FPDF_WIDESTRING nm) {
+  ScopedFPDFDocumentView doc_view(doc);
   if (!nm || !*nm) {
     return -1;
   }
@@ -2564,6 +2601,7 @@ FPDF_EXPORT int FPDF_CALLCONV
 EPDFPage_GetAnnotIndexByObjectNumberRaw(FPDF_DOCUMENT doc,
                                         int page_index,
                                         unsigned int object_number) {
+  ScopedFPDFDocumentView doc_view(doc);
   if (object_number == 0) {
     return -1;
   }
@@ -2717,11 +2755,13 @@ FPDF_EXPORT int FPDF_CALLCONV EPDFPage_PromoteInlineAnnotsRaw(FPDF_DOCUMENT doc,
 }
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_IsValid(FPDF_ANNOTATION annot) {
+  ScopedFPDFAnnotationView annot_view(annot);
   return !!CPDFAnnotContextFromFPDFAnnotation(annot);
 }
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_SetName(FPDF_ANNOTATION annot,
                                                       FPDF_BYTESTRING name) {
+  ScopedFPDFAnnotationView annot_view(annot);
   RetainPtr<CPDF_Dictionary> dict =
       GetMutableAnnotDictFromFPDFAnnotation(annot);
   if (!dict || !name || !*name) {
@@ -2741,6 +2781,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_SetName(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT unsigned long FPDF_CALLCONV
 EPDFAnnot_GetName(FPDF_ANNOTATION annot, char* buffer, unsigned long buflen) {
+  ScopedFPDFAnnotationView annot_view(annot);
   const CPDF_Dictionary* dict = GetAnnotDictFromFPDFAnnotation(annot);
   if (!dict) {
     return 0;
@@ -2975,8 +3016,6 @@ static bool RefitPlacedAppearance(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_UpdateAppearanceToRect(FPDF_ANNOTATION annot, EPDF_STAMP_FIT fit) {
-  // Resolve through the document's view scope; a
-  // layer's annotation reaches fonts and resources its base still holds.
   ScopedFPDFAnnotationView annot_view(annot);
   return RefitPlacedAppearance(
       annot, fit, EpdfGetAnnotOpacity(GetAnnotDictFromFPDFAnnotation(annot)));
@@ -2986,8 +3025,6 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetStampOpacity(FPDF_ANNOTATION annot,
                           EPDF_STAMP_FIT fit,
                           float opacity) {
-  // Resolve through the document's view scope; a
-  // layer's annotation reaches fonts and resources its base still holds.
   ScopedFPDFAnnotationView annot_view(annot);
   RetainPtr<CPDF_Dictionary> dict = GetMutableAnnotDictFromFPDFAnnotation(annot);
   if (!dict || !(opacity >= 0.f && opacity <= 1.f)) {
@@ -3012,6 +3049,7 @@ EPDFAnnot_SetStampOpacity(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT FPDF_ANNOTATION FPDF_CALLCONV
 EPDFPage_CreateAnnot(FPDF_PAGE page, FPDF_ANNOTATION_SUBTYPE subtype) {
+  ScopedFPDFPageView page_view(page);
   CPDF_Page* pPage = CPDFPageFromFPDFPage(page);
   if (!pPage || !FPDFAnnot_IsSupportedSubtype(subtype)) {
     return nullptr;
@@ -3042,6 +3080,7 @@ EPDFPage_CreateAnnot(FPDF_PAGE page, FPDF_ANNOTATION_SUBTYPE subtype) {
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_SetRotate(FPDF_ANNOTATION annot,
                                                         float rotation) {
+  ScopedFPDFAnnotationView annot_view(annot);
   RetainPtr<CPDF_Dictionary> dict =
       GetMutableAnnotDictFromFPDFAnnotation(annot);
   if (!dict) {
@@ -3059,6 +3098,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_SetRotate(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_GetRotate(FPDF_ANNOTATION annot,
                                                         float* rotation) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (!rotation) {
     return false;
   }
@@ -3115,6 +3155,7 @@ EPDFAnnot_GetAppearanceTransform(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT FPDF_ANNOT_REPLY_TYPE FPDF_CALLCONV
 EPDFAnnot_GetReplyType(FPDF_ANNOTATION annot) {
+  ScopedFPDFAnnotationView annot_view(annot);
   const CPDF_Dictionary* dict = GetAnnotDictFromFPDFAnnotation(annot);
   if (!dict) {
     return FPDF_ANNOT_RT_UNKNOWN;
@@ -3129,6 +3170,7 @@ EPDFAnnot_GetReplyType(FPDF_ANNOTATION annot) {
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetReplyType(FPDF_ANNOTATION annot, FPDF_ANNOT_REPLY_TYPE rt) {
+  ScopedFPDFAnnotationView annot_view(annot);
   RetainPtr<CPDF_Dictionary> dict =
       GetMutableAnnotDictFromFPDFAnnotation(annot);
   if (!dict) {
@@ -3156,6 +3198,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_GetBooleanValue(FPDF_ANNOTATION annot,
                           FPDF_BYTESTRING key,
                           FPDF_BOOL* value) {
+  ScopedFPDFAnnotationView annot_view(annot);
   const CPDF_Dictionary* annot_dict = GetAnnotDictFromFPDFAnnotation(annot);
   if (!annot_dict || !key || !value) {
     return false;
@@ -3172,6 +3215,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetBooleanValue(FPDF_ANNOTATION annot,
                           FPDF_BYTESTRING key,
                           FPDF_BOOL value) {
+  ScopedFPDFAnnotationView annot_view(annot);
   RetainPtr<CPDF_Dictionary> annot_dict =
       GetMutableAnnotDictFromFPDFAnnotation(annot);
   if (!annot_dict || !key) {
@@ -3183,6 +3227,7 @@ EPDFAnnot_SetBooleanValue(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetOverlayText(FPDF_ANNOTATION annot, FPDF_WIDESTRING text) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (FPDFAnnot_GetSubtype(annot) != FPDF_ANNOT_REDACT) {
     return false;
   }
@@ -3208,6 +3253,7 @@ FPDF_EXPORT unsigned long FPDF_CALLCONV
 EPDFAnnot_GetOverlayText(FPDF_ANNOTATION annot,
                          FPDF_WCHAR* buffer,
                          unsigned long buflen) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (FPDFAnnot_GetSubtype(annot) != FPDF_ANNOT_REDACT) {
     return 0;
   }
@@ -3225,6 +3271,7 @@ EPDFAnnot_GetOverlayText(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetOverlayTextRepeat(FPDF_ANNOTATION annot, FPDF_BOOL repeat) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (FPDFAnnot_GetSubtype(annot) != FPDF_ANNOT_REDACT) {
     return false;
   }
@@ -3245,6 +3292,7 @@ EPDFAnnot_SetOverlayTextRepeat(FPDF_ANNOTATION annot, FPDF_BOOL repeat) {
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_GetOverlayTextRepeat(FPDF_ANNOTATION annot) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (FPDFAnnot_GetSubtype(annot) != FPDF_ANNOT_REDACT) {
     return false;
   }
@@ -3611,8 +3659,6 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetAppearanceFromPage(FPDF_ANNOTATION annot,
                                 FPDF_DOCUMENT src_doc_handle,
                                 int page_index) {
-  // Resolve through the document's view scope; a
-  // layer's annotation reaches fonts and resources its base still holds.
   ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* ctx = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!ctx) {
@@ -3648,8 +3694,6 @@ FPDF_EXPORT FPDF_DOCUMENT FPDF_CALLCONV
 EPDFAnnot_ExportAppearance(FPDF_ANNOTATION annot,
                            float degrees,
                            const FS_RECTF* unrotated_box) {
-  // Resolve through the document's view scope; a
-  // layer's annotation reaches fonts and resources its base still holds.
   ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* ctx = CPDFAnnotContextFromFPDFAnnotation(annot);
   IPDF_Page* annot_page = ctx ? ctx->GetPage() : nullptr;
@@ -3728,6 +3772,7 @@ EPDFAnnot_ExportAppearance(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT FPDF_DOCUMENT FPDF_CALLCONV
 EPDFDoc_CanonicalDrawing(FPDF_DOCUMENT src_doc, int page_index) {
+  ScopedFPDFDocumentView doc_view(src_doc);
   CPDF_Document* src = CPDFDocumentFromFPDFDocument(src_doc);
   if (!src) {
     return nullptr;
@@ -3753,6 +3798,7 @@ EPDFDoc_CanonicalDrawing(FPDF_DOCUMENT src_doc, int page_index) {
 
 FPDF_EXPORT unsigned int FPDF_CALLCONV
 EPDFDoc_ImportDrawing(FPDF_DOCUMENT document, FPDF_DOCUMENT canonical_doc) {
+  ScopedFPDFDocumentView doc_view(document);
   CPDF_Document* doc = CPDFDocumentFromFPDFDocument(document);
   CPDF_Document* src = CPDFDocumentFromFPDFDocument(canonical_doc);
   if (!doc || !src || src->GetPageCount() != 1) {
@@ -3826,6 +3872,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetStampDrawing(FPDF_ANNOTATION annot,
                           unsigned int drawing,
                           EPDF_STAMP_FIT fit) {
+  ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* ctx = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!ctx || drawing == 0 || FPDFAnnot_GetSubtype(annot) != FPDF_ANNOT_STAMP) {
     return false;
@@ -3852,6 +3899,7 @@ EPDFAnnot_SetStampDrawing(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT unsigned int FPDF_CALLCONV
 EPDFAnnot_GetStampDrawing(FPDF_ANNOTATION annot) {
+  ScopedFPDFAnnotationView annot_view(annot);
   RetainPtr<const CPDF_Stream> drawing =
       StampDrawingOf(GetAnnotDictFromFPDFAnnotation(annot));
   return drawing ? drawing->GetObjNum() : 0;
@@ -3859,6 +3907,7 @@ EPDFAnnot_GetStampDrawing(FPDF_ANNOTATION annot) {
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_GetRect(FPDF_ANNOTATION annot,
                                                       FS_RECTF* rect) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (!FPDFAnnot_GetRect(annot, rect)) {
     return false;
   }
@@ -3874,6 +3923,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_GetRect(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_SetRect(FPDF_ANNOTATION annot,
                                                       const FS_RECTF* rect) {
+  ScopedFPDFAnnotationView annot_view(annot);
   RetainPtr<CPDF_Dictionary> annot_dict =
       GetMutableAnnotDictFromFPDFAnnotation(annot);
   if (!annot_dict || !rect) {
@@ -3889,6 +3939,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetAPMatrix(FPDF_ANNOTATION annot,
                       FPDF_ANNOT_APPEARANCEMODE appearanceMode,
                       const FS_MATRIX* matrix) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (!matrix) {
     return false;
   }
@@ -3929,6 +3980,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_GetAPMatrix(FPDF_ANNOTATION annot,
                       FPDF_ANNOT_APPEARANCEMODE appearanceMode,
                       FS_MATRIX* matrix) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (!matrix) {
     return false;
   }
@@ -3966,8 +4018,6 @@ EPDFAnnot_GetAPMatrix(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT int FPDF_CALLCONV
 EPDFAnnot_GetAvailableAppearanceModes(FPDF_ANNOTATION annot) {
-  // Resolve through the document's view scope; a
-  // layer's annotation reaches fonts and resources its base still holds.
   ScopedFPDFAnnotationView annot_view(annot);
   const CPDF_Dictionary* pAnnotDict = GetAnnotDictFromFPDFAnnotation(annot);
   if (!pAnnotDict) {
@@ -4034,8 +4084,6 @@ static std::vector<ByteString> GetAppearanceStateNames(
 FPDF_EXPORT int FPDF_CALLCONV
 EPDFAnnot_GetAppearanceStateCount(FPDF_ANNOTATION annot,
                                   FPDF_ANNOT_APPEARANCEMODE appearanceMode) {
-  // Resolve through the document's view scope; a
-  // layer's annotation reaches fonts and resources its base still holds.
   ScopedFPDFAnnotationView annot_view(annot);
   return pdfium::checked_cast<int>(
       GetAppearanceStateNames(annot, appearanceMode).size());
@@ -4047,8 +4095,6 @@ EPDFAnnot_GetAppearanceStateName(FPDF_ANNOTATION annot,
                                  int index,
                                  void* buffer,
                                  unsigned long buflen) {
-  // Resolve through the document's view scope; a
-  // layer's annotation reaches fonts and resources its base still holds.
   ScopedFPDFAnnotationView annot_view(annot);
   std::vector<ByteString> names =
       GetAppearanceStateNames(annot, appearanceMode);
@@ -4064,8 +4110,6 @@ FPDF_EXPORT unsigned long FPDF_CALLCONV
 EPDFAnnot_GetAppearanceState(FPDF_ANNOTATION annot,
                              void* buffer,
                              unsigned long buflen) {
-  // Resolve through the document's view scope; a
-  // layer's annotation reaches fonts and resources its base still holds.
   ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* context = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!context) {
@@ -4089,8 +4133,6 @@ EPDFAnnot_GetAppearanceState(FPDF_ANNOTATION annot,
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_HasAppearanceStream(FPDF_ANNOTATION annot,
                               FPDF_ANNOT_APPEARANCEMODE appearanceMode) {
-  // Resolve through the document's view scope; a
-  // layer's annotation reaches fonts and resources its base still holds.
   ScopedFPDFAnnotationView annot_view(annot);
   const CPDF_Dictionary* pAnnotDict = GetAnnotDictFromFPDFAnnotation(annot);
   if (!pAnnotDict) {
@@ -4105,6 +4147,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_GetDrawingRect(FPDF_ANNOTATION annot,
                          FPDF_ANNOT_APPEARANCEMODE appearanceMode,
                          FS_RECTF* rect) {
+  ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* context = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!context || !rect) {
     return false;
@@ -4141,6 +4184,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_SetMKColor(FPDF_ANNOTATION annot,
                                                          unsigned int R,
                                                          unsigned int G,
                                                          unsigned int B) {
+  ScopedFPDFAnnotationView annot_view(annot);
   RetainPtr<CPDF_Dictionary> pAnnotDict =
       GetMutableAnnotDictFromFPDFAnnotation(annot);
   if (!pAnnotDict || R > 255 || G > 255 || B > 255) {
@@ -4169,6 +4213,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_GetMKColor(FPDF_ANNOTATION annot,
                                                          unsigned int* R,
                                                          unsigned int* G,
                                                          unsigned int* B) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (!R || !G || !B) {
     return false;
   }
@@ -4198,6 +4243,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_GetMKColor(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_ClearMKColor(FPDF_ANNOTATION annot, EPDF_MK_COLORTYPE type) {
+  ScopedFPDFAnnotationView annot_view(annot);
   RetainPtr<CPDF_Dictionary> pAnnotDict =
       GetMutableAnnotDictFromFPDFAnnotation(annot);
   if (!pAnnotDict) {
@@ -4278,6 +4324,7 @@ FPDF_BOOL SetMKNumber(FPDF_ANNOTATION annot,
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_SetMKText(FPDF_ANNOTATION annot,
                                                         int which,
                                                         FPDF_WIDESTRING text) {
+  ScopedFPDFAnnotationView annot_view(annot);
   const char* key = MKTextKey(which);
   if (!key || FPDFAnnot_GetSubtype(annot) != FPDF_ANNOT_WIDGET) {
     return false;
@@ -4312,6 +4359,7 @@ EPDFAnnot_GetMKText(FPDF_ANNOTATION annot,
                     int which,
                     FPDF_WCHAR* buffer,
                     unsigned long buflen) {
+  ScopedFPDFAnnotationView annot_view(annot);
   const char* key = MKTextKey(which);
   RetainPtr<const CPDF_Dictionary> mk =
       key ? WidgetMKFromFPDFAnnotation(annot) : nullptr;
@@ -4326,6 +4374,7 @@ EPDFAnnot_GetMKText(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetMKTextPosition(FPDF_ANNOTATION annot, int position) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (position < 0 || position > 6) {
     return false;
   }
@@ -4334,6 +4383,7 @@ EPDFAnnot_SetMKTextPosition(FPDF_ANNOTATION annot, int position) {
 
 FPDF_EXPORT int FPDF_CALLCONV
 EPDFAnnot_GetMKTextPosition(FPDF_ANNOTATION annot) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (FPDFAnnot_GetSubtype(annot) != FPDF_ANNOT_WIDGET) {
     return -1;
   }
@@ -4343,6 +4393,7 @@ EPDFAnnot_GetMKTextPosition(FPDF_ANNOTATION annot) {
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetMKRotation(FPDF_ANNOTATION annot, int degrees) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (degrees < 0 || degrees > 270 || degrees % 90 != 0) {
     return false;
   }
@@ -4351,6 +4402,7 @@ EPDFAnnot_SetMKRotation(FPDF_ANNOTATION annot, int degrees) {
 }
 
 FPDF_EXPORT int FPDF_CALLCONV EPDFAnnot_GetMKRotation(FPDF_ANNOTATION annot) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (FPDFAnnot_GetSubtype(annot) != FPDF_ANNOT_WIDGET) {
     return -1;
   }
@@ -4360,8 +4412,6 @@ FPDF_EXPORT int FPDF_CALLCONV EPDFAnnot_GetMKRotation(FPDF_ANNOTATION annot) {
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_GenerateFormFieldAP(FPDF_ANNOTATION annot) {
-  // Resolve through the document's view scope; a
-  // layer's annotation reaches fonts and resources its base still holds.
   ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* pContext = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!pContext) {
@@ -4440,6 +4490,7 @@ EPDFAnnot_GenerateFormFieldAP(FPDF_ANNOTATION annot) {
 
 FPDF_EXPORT unsigned long FPDF_CALLCONV
 EPDFAnnot_GetCalloutLineCount(FPDF_ANNOTATION annot) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (FPDFAnnot_GetSubtype(annot) != FPDF_ANNOT_FREETEXT) {
     return 0;
   }
@@ -4469,6 +4520,7 @@ FPDF_EXPORT unsigned long FPDF_CALLCONV
 EPDFAnnot_GetCalloutLine(FPDF_ANNOTATION annot,
                          FS_POINTF* buffer,
                          unsigned long length) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (FPDFAnnot_GetSubtype(annot) != FPDF_ANNOT_FREETEXT) {
     return 0;
   }
@@ -4507,6 +4559,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetCalloutLine(FPDF_ANNOTATION annot,
                          const FS_POINTF* points,
                          unsigned long count) {
+  ScopedFPDFAnnotationView annot_view(annot);
   if (FPDFAnnot_GetSubtype(annot) != FPDF_ANNOT_FREETEXT) {
     return false;
   }
@@ -4545,6 +4598,7 @@ EPDFAnnot_SetCalloutLine(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT unsigned int FPDF_CALLCONV
 EPDFAnnot_GetObjectNumber(FPDF_ANNOTATION annot) {
+  ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* pCtx = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!pCtx) {
     return 0;
@@ -4690,6 +4744,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFPage_MoveAnnots(FPDF_PAGE page,
                                                         const int* from_indices,
                                                         int from_indices_len,
                                                         int to_index) {
+  ScopedFPDFPageView page_view(page);
   CPDF_Page* pPage = CPDFPageFromFPDFPage(page);
   if (!pPage) {
     return false;

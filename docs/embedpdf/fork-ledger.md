@@ -81,8 +81,9 @@ effective view (the base as a layer sees it) or the frozen base. Read entry poin
 **Why.** One frozen base serves many layers, and a reference must resolve to the version this
 layer sees.
 **Where.** `cpdf_document_view_scope.{h,cpp}`, `CPDF_BaseDocument`, read entry points in
-`fpdfsdk/`.
-**Guarded by.** `cpdf_base_document_unittest.cpp`, `cpdf_layer_document_unittest.cpp`.
+`fpdfsdk/`. Every function in `epdf_annot.cpp` opens one before it walks the document's objects.
+**Guarded by.** `cpdf_base_document_unittest.cpp`, `cpdf_layer_document_unittest.cpp`,
+`EPDFAnnotEmbedderTest.ReadsResolveThroughTheLayer`.
 **When upstream touches this.** A new read entry point that walks a document's objects opens a
 scope. Without one, a base page with layer `/Annots` crashes the view detector.
 

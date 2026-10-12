@@ -9,7 +9,11 @@
 
 #include "core/fpdfapi/page/cpdf_annotcontext.h"
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
+#include "core/fpdfapi/parser/cpdf_document.h"
 #include "core/fpdfapi/parser/cpdf_number.h"
+#include "core/fpdfapi/parser/cpdf_reference.h"
+#include "core/fpdfapi/parser/cpdf_stream.h"
+#include "core/fxcrt/fx_coordinates.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "public/cpp/fpdf_scopers.h"
 #include "public/fpdf_annot.h"
@@ -117,6 +121,55 @@ TEST_F(EPDFAnnotEmbedderTest, RefusedSetNumberValueCopiesNothingUp) {
 
     EXPECT_TRUE(EPDFAnnot_SetNumberValue(annot.get(), "CA", 0.5f));
     EXPECT_TRUE(EPDFLayer_IsObjectPromoted(layer.get(), obj_num));
+  }
+  EPDF_ReleaseBaseDocument(base);
+}
+
+// A read on a layer sees the layer's version of what an annotation names. Here
+// the annotation is still the base's, while its appearance stream has been
+// changed in the layer: the matrix read back is the layer's.
+TEST_F(EPDFAnnotEmbedderTest, ReadsResolveThroughTheLayer) {
+  FileAccessForTesting base_access("annotation_highlight_square_with_ap.pdf");
+  EPDF_BASE_DOCUMENT base = EPDF_LoadBaseDocument(&base_access, nullptr);
+  ASSERT_TRUE(base);
+  {
+    ScopedFPDFDocument layer(
+        EPDFLayer_OpenLayer(base, nullptr, nullptr, nullptr));
+    ASSERT_TRUE(layer);
+    ScopedFPDFPage page(FPDF_LoadPage(layer.get(), 0));
+    ASSERT_TRUE(page);
+    ScopedFPDFAnnotation annot(FPDFPage_GetAnnot(page.get(), 0));
+    ASSERT_TRUE(annot);
+
+    // The normal appearance's object number, read without resolving it.
+    RetainPtr<const CPDF_Dictionary> ap =
+        CPDFAnnotContextFromFPDFAnnotation(annot.get())
+            ->GetAnnotDict()
+            ->GetDictFor("AP");
+    ASSERT_TRUE(ap);
+    RetainPtr<const CPDF_Reference> normal = ToReference(ap->GetObjectFor("N"));
+    ASSERT_TRUE(normal);
+    const uint32_t stream_num = normal->GetRefObjNum();
+
+    RetainPtr<CPDF_Stream> stream =
+        ToStream(CPDFDocumentFromFPDFDocument(layer.get())
+                     ->GetMutableIndirectObject(stream_num));
+    ASSERT_TRUE(stream);
+    stream->GetMutableDict()->SetMatrixFor("Matrix",
+                                           CFX_Matrix(2, 0, 0, 2, 10, 20));
+    ASSERT_TRUE(EPDFLayer_IsObjectPromoted(layer.get(), stream_num));
+    ASSERT_FALSE(EPDFLayer_IsObjectPromoted(
+        layer.get(), EPDFAnnot_GetObjectNumber(annot.get())));
+
+    FS_MATRIX matrix;
+    ASSERT_TRUE(EPDFAnnot_GetAPMatrix(
+        annot.get(), FPDF_ANNOT_APPEARANCEMODE_NORMAL, &matrix));
+    EXPECT_EQ(2, matrix.a);
+    EXPECT_EQ(0, matrix.b);
+    EXPECT_EQ(0, matrix.c);
+    EXPECT_EQ(2, matrix.d);
+    EXPECT_EQ(10, matrix.e);
+    EXPECT_EQ(20, matrix.f);
   }
   EPDF_ReleaseBaseDocument(base);
 }

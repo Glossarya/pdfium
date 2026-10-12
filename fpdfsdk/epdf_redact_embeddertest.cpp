@@ -355,6 +355,48 @@ constexpr char kProgressiveExifJpeg[] =
     "110051A1F141C1FFDA0008010100013F109B203ACD900CD901D66C80EB366033"
     "640759B203ACD900CD900CD901D7C58F831F063E2CFAF831FFD9";
 
+// A 40 x 20 gray JPEG 2000, in hex.
+constexpr char kGrayJpx[] =
+    "0000000C6A5020200D0A870A00000014667479706A703220000000006A703220"
+    "0000002D6A703268000000166968647200000014000000280001070700000000"
+    "000F636F6C7201000000000011000000B46A703263FF4FFF5100290000000000"
+    "2800000014000000000000000000000028000000140000000000000000000107"
+    "0101FF52000C00000001000404040000FF5C001D426F206F006F006EE0675067"
+    "50676850055005504757D357D35762FF64002500014372656174656420627920"
+    "4F70656E4A5045472076657273696F6E20322E352E32FF90000A000000000029"
+    "0001FF93C3E90E07CC180D6C9A2F80901880075A0519C1C280182C37D40F80FF"
+    "D9";
+
+// A 40 x 20 RGB JPEG 2000, in hex.
+constexpr char kRgbJpx[] =
+    "0000000C6A5020200D0A870A00000014667479706A703220000000006A703220"
+    "0000002D6A703268000000166968647200000014000000280003070700000000"
+    "000F636F6C7201000000000010000000EC6A703263FF4FFF51002F0000000000"
+    "2800000014000000000000000000000028000000140000000000000000000307"
+    "0101070101070101FF52000C00000001000404040000FF5C001D426F206F006F"
+    "006EE067506750676850055005504757D357D35762FF64002500014372656174"
+    "6564206279204F70656E4A5045472076657273696F6E20322E352E32FF90000A"
+    "00000000005B0001FF93C3E30A08F3103ECBC3E6080694B0B0C3E90C0250D63C"
+    "B0B0C04200028080C0E1507C028003EC7E3D6F075A05701E8080C32211C15012"
+    "B91FAB89E72CC910BBA910961650D538144B8080808080FFD9";
+
+// A 40 x 20 RGB JPEG 2000 with its own alpha: opaque on the left half,
+// transparent on the right (read with /SMaskInData 1), in hex.
+constexpr char kRgbaJpx[] =
+    "0000000C6A5020200D0A870A00000014667479706A703220000000006A703220"
+    "0000004F6A703268000000166968647200000014000000280004070700000000"
+    "000F636F6C720100000000001000000022636465660004000000000001000100"
+    "0000020002000000030003000100000000012D6A703263FF4FFF510032000000"
+    "0000280000001400000000000000000000002800000014000000000000000000"
+    "04070101070101070101070101FF52000C00000001000404040000FF5C001D42"
+    "6F206F006F006EE067506750676850055005504757D357D35762FF6400250001"
+    "43726561746564206279204F70656E4A5045472076657273696F6E20322E352E"
+    "32FF90000A0000000000990001FF93C3E30A08F3103ECBC3E6080694B0B0C3E9"
+    "0C0250D63CB0B0CFA430023A4193EC01C04200028080C3E60A000E04FD678DC0"
+    "E1604507C02803EC7E3D6F050B075A05701E8080C1C280168FB5E102C3C5C3C5"
+    "415012B91FAB89E72CC933607910BBA92281E512A8CBE410961650D538144B80"
+    "C12012B91FD5CF9838273AEC103F6483808080C7080040E0C62CFFD9";
+
 // A 300 x 300 page drawing `image` (an image's stream object) at x 50..250,
 // y 100..200 after `before`, with `more` objects from 6 on. Rendered at
 // 600 x 600 the image is x 100..500, y 200..400: a sample of a 20 x 10 image
@@ -1659,8 +1701,9 @@ TEST_F(EPDFRedactEmbedderTest, AJpegSoftMaskStaysAJpeg) {
 }
 
 // A JPEG libjpeg reads only with a warning is decoded and written from its
-// pixels instead. Here three bytes in the middle of its coded data become a
-// run of one bits, a Huffman code no table has.
+// pixels instead, as a JPEG again (it was lossy already). Here three bytes in
+// the middle of its coded data become a run of one bits, a Huffman code no
+// table has.
 TEST_F(EPDFRedactEmbedderTest, AJpegReadWithAWarningIsRewrittenFromItsPixels) {
   std::string hex(kGrayJpeg);
   size_t scan = 0;
@@ -1688,8 +1731,9 @@ TEST_F(EPDFRedactEmbedderTest, AJpegReadWithAWarningIsRewrittenFromItsPixels) {
   EXPECT_TRUE(AtLeast(Pixel(after.get(), 135, 305), 0xf0));
   RetainPtr<const CPDF_Stream> kept = OnlyImage(opened.doc.get());
   ASSERT_TRUE(kept);
-  EXPECT_NE("DCTDecode", kept->GetDict()->GetNameFor("Filter"));
-  EXPECT_EQ("DeviceRGB", kept->GetDict()->GetNameFor("ColorSpace"));
+  // A new JPEG of what it showed, gray as it was.
+  EXPECT_EQ("DCTDecode", kept->GetDict()->GetNameFor("Filter"));
+  EXPECT_EQ("DeviceGray", kept->GetDict()->GetNameFor("ColorSpace"));
 }
 
 // An image that can't be decoded at all (here: a JPEG cut short) fails the
@@ -1819,4 +1863,146 @@ TEST_F(EPDFRedactEmbedderTest, MarksOnOneImageApplyInOneCall) {
   EXPECT_EQ(0xffffffu, Pixel(after.get(), 470, 300));
   EXPECT_NE(0xffffffu, Pixel(after.get(), 300, 300));
   EXPECT_EQ(0, FPDFPage_GetAnnotCount(page.get()));
+}
+
+// A redacted JPEG 2000 is written as a JPEG of what it showed: gray stays
+// gray, RGB stays RGB, compressed when the redaction is applied.
+TEST_F(EPDFRedactEmbedderTest, ARedactedJpeg2000IsWrittenAsAJpeg) {
+  struct JpxCase {
+    const char* name;
+    const char* hex;
+    const char* color_space;
+  };
+  const JpxCase cases[] = {
+      {"gray", kGrayJpx, "DeviceGray"},
+      {"RGB", kRgbJpx, "DeviceRGB"},
+  };
+  for (const JpxCase& jpx : cases) {
+    const std::string input = ImagePage(StreamObject(
+        std::string("/Type /XObject /Subtype /Image /Width 40 /Height 20 "
+                    "/BitsPerComponent 8 /ColorSpace /") +
+            jpx.color_space + " /Filter [/ASCIIHexDecode /JPXDecode]",
+        std::string(jpx.hex) + ">"));
+    for (bool layer : {false, true}) {
+      SCOPED_TRACE(std::string(jpx.name) +
+                   (layer ? ", layer transaction" : ", document"));
+      OpenedPdf opened = OpenPdf(input, layer);
+      ASSERT_TRUE(opened.doc);
+      ScopedFPDFPage page(FPDF_LoadPage(opened.doc.get(), 0));
+      ASSERT_TRUE(page);
+      auto before = Render(page.get());
+      ASSERT_NO_FATAL_FAILURE(MarkAndApply(opened.doc.get(), page.get(), layer,
+                                           {50, 200, 115, 100}));
+      auto after = Render(page.get());
+      for (int y : {215, 305, 385}) {
+        EXPECT_TRUE(AtLeast(Pixel(after.get(), 135, y), 0xf0)) << y;
+      }
+      for (int x : {360, 420, 480}) {
+        EXPECT_TRUE(
+            Near(Pixel(before.get(), x, 300), Pixel(after.get(), x, 300), 40))
+            << x;
+      }
+      RetainPtr<const CPDF_Stream> kept = OnlyImage(opened.doc.get());
+      ASSERT_TRUE(kept);
+      RetainPtr<const CPDF_Dictionary> dict = kept->GetDict();
+      EXPECT_EQ("DCTDecode", dict->GetNameFor("Filter"));
+      EXPECT_EQ(jpx.color_space, dict->GetNameFor("ColorSpace"));
+      EXPECT_EQ(8, dict->GetIntegerFor("BitsPerComponent"));
+      EXPECT_FALSE(dict->KeyExist("SMask"));
+
+      ClearString();
+      ASSERT_TRUE(FPDF_SaveAsCopy(opened.doc.get(), this, FPDF_NO_INCREMENTAL));
+      ASSERT_TRUE(OpenSavedDocument());
+      FPDF_PAGE reloaded = LoadSavedPage(0);
+      ASSERT_TRUE(reloaded);
+      auto saved = Render(reloaded);
+      ExpectSamePixels(after.get(), saved.get(), 100, 200, 500, 400);
+      CloseSavedPage(reloaded);
+      CloseSavedDocument();
+    }
+  }
+}
+
+// A JPEG 2000's own transparency becomes a soft mask beside the JPEG: what it
+// left transparent stays so, and the hole is opaque paper.
+TEST_F(EPDFRedactEmbedderTest, AJpeg2000sOwnTransparencyBecomesASoftMask) {
+  const std::string input = ImagePage(
+      StreamObject("/Type /XObject /Subtype /Image /Width 40 /Height 20 "
+                   "/ColorSpace /DeviceRGB /SMaskInData 1 /Filter "
+                   "[/ASCIIHexDecode /JPXDecode]",
+                   std::string(kRgbaJpx) + ">"),
+      "1 0 0 rg 50 100 200 100 re f");
+  for (bool layer : {false, true}) {
+    SCOPED_TRACE(layer ? "layer transaction" : "document");
+    OpenedPdf opened = OpenPdf(input, layer);
+    ASSERT_TRUE(opened.doc);
+    ScopedFPDFPage page(FPDF_LoadPage(opened.doc.get(), 0));
+    ASSERT_TRUE(page);
+    // The right half (x 300..500) is transparent: the red square shows.
+    auto before = Render(page.get());
+    EXPECT_EQ(0xff0000u, Pixel(before.get(), 420, 300));
+    ASSERT_NO_FATAL_FAILURE(
+        MarkAndApply(opened.doc.get(), page.get(), layer, {50, 200, 90, 100}));
+    auto after = Render(page.get());
+    EXPECT_TRUE(AtLeast(Pixel(after.get(), 130, 300), 0xf0));
+    EXPECT_EQ(0xff0000u, Pixel(after.get(), 420, 300));
+    RetainPtr<const CPDF_Stream> kept = OnlyImage(opened.doc.get());
+    ASSERT_TRUE(kept);
+    EXPECT_EQ("DCTDecode", kept->GetDict()->GetNameFor("Filter"));
+    EXPECT_FALSE(kept->GetDict()->KeyExist("SMaskInData"));
+    CPDF_Document* pdf = CPDFDocumentFromFPDFDocument(opened.doc.get());
+    CPDF_DocumentViewScope document_view(pdf);
+    RetainPtr<const CPDF_Stream> mask = kept->GetDict()->GetStreamFor("SMask");
+    ASSERT_TRUE(mask);
+    EXPECT_EQ("FlateDecode", mask->GetDict()->GetNameFor("Filter"));
+    EXPECT_EQ("DeviceGray", mask->GetDict()->GetNameFor("ColorSpace"));
+    // The colours were blended with white where the image is see-through.
+    RetainPtr<const CPDF_Array> matte = mask->GetDict()->GetArrayFor("Matte");
+    ASSERT_TRUE(matte);
+    ASSERT_EQ(3u, matte->size());
+    for (size_t i = 0; i < matte->size(); ++i) {
+      EXPECT_EQ(1, matte->GetFloatAt(i));
+    }
+  }
+}
+
+// An image stored losslessly whose soft mask can't keep its format (a JPEG
+// 2000) is decoded, and written losslessly again: gray as it was. Its soft
+// mask is decoded on its own grid.
+TEST_F(EPDFRedactEmbedderTest,
+       ALosslessImageWhoseSoftMaskCannotBeKeptStaysLossless) {
+  const std::string input = ImagePage(
+      StreamObject(
+          "/Type /XObject /Subtype /Image /Width 20 /Height 10 "
+          "/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter "
+          "/FlateDecode /SMask 6 0 R",
+          Flate(Samples(1, 8, [](int x, int, int) { return 20u + x * 5; }))),
+      "0 0 1 rg 50 100 200 100 re f",
+      {StreamObject("/Type /XObject /Subtype /Image /Width 40 /Height 20 "
+                    "/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter "
+                    "[/ASCIIHexDecode /JPXDecode]",
+                    std::string(kGrayJpx) + ">")});
+  for (bool layer : {false, true}) {
+    SCOPED_TRACE(layer ? "layer transaction" : "document");
+    OpenedPdf opened = OpenPdf(input, layer);
+    ASSERT_TRUE(opened.doc);
+    ScopedFPDFPage page(FPDF_LoadPage(opened.doc.get(), 0));
+    ASSERT_TRUE(page);
+    auto before = Render(page.get());
+    ASSERT_NO_FATAL_FAILURE(
+        MarkAndApply(opened.doc.get(), page.get(), layer, {50, 200, 90, 100}));
+    auto after = Render(page.get());
+    EXPECT_TRUE(AtLeast(Pixel(after.get(), 130, 300), 0xf0));
+    ExpectSamePixels(before.get(), after.get(), 350, 200, 500, 400);
+    RetainPtr<const CPDF_Stream> kept = OnlyImage(opened.doc.get());
+    ASSERT_TRUE(kept);
+    EXPECT_EQ("FlateDecode", kept->GetDict()->GetNameFor("Filter"));
+    EXPECT_EQ("DeviceGray", kept->GetDict()->GetNameFor("ColorSpace"));
+    CPDF_Document* pdf = CPDFDocumentFromFPDFDocument(opened.doc.get());
+    CPDF_DocumentViewScope document_view(pdf);
+    RetainPtr<const CPDF_Stream> mask = kept->GetDict()->GetStreamFor("SMask");
+    ASSERT_TRUE(mask);
+    EXPECT_EQ("FlateDecode", mask->GetDict()->GetNameFor("Filter"));
+    EXPECT_EQ(40, mask->GetDict()->GetIntegerFor("Width"));
+  }
 }

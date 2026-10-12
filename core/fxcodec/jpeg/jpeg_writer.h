@@ -1,11 +1,12 @@
 // Copyright 2026 CloudPDF LTD
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef CORE_FXCODEC_JPEG_JPEG_COEFFICIENTS_H_
-#define CORE_FXCODEC_JPEG_JPEG_COEFFICIENTS_H_
+#ifndef CORE_FXCODEC_JPEG_JPEG_WRITER_H_
+#define CORE_FXCODEC_JPEG_JPEG_WRITER_H_
 
 #include <stdint.h>
 
+#include <functional>
 #include <optional>
 
 #include "core/fxcrt/data_vector.h"
@@ -48,6 +49,17 @@ std::optional<DataVector<uint8_t>> FillJpegRects(
     pdfium::span<const JpegRect> rects,
     pdfium::span<const uint8_t> fill);
 
+// A JPEG of `width` x `height` pixels with `components` 8-bit components
+// (1: gray, 3: RGB) at `quality` (1 to 100), with Huffman tables made for it.
+// `row(y, out)` writes row `y` from the top into `out`. Nullopt if libjpeg
+// fails.
+std::optional<DataVector<uint8_t>> EncodeJpeg(
+    int width,
+    int height,
+    int components,
+    int quality,
+    const std::function<void(int y, pdfium::span<uint8_t> out)>& row);
+
 }  // namespace fxcodec
 
-#endif  // CORE_FXCODEC_JPEG_JPEG_COEFFICIENTS_H_
+#endif  // CORE_FXCODEC_JPEG_JPEG_WRITER_H_

@@ -1,7 +1,7 @@
 // Copyright 2026 CloudPDF LTD
 // SPDX-License-Identifier: Apache-2.0
 
-#include "core/fxcodec/jpeg/jpeg_coefficients.h"
+#include "core/fxcodec/jpeg/jpeg_writer.h"
 
 #include <setjmp.h>
 #include <stdlib.h>
@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <functional>
 #include <vector>
 
 #include "core/fxcodec/jpeg/jpeg_common.h"
@@ -339,6 +340,55 @@ bool FillAndWrite(Transcoder* t,
   return true;
 }
 
+// The libjpeg state of one encode, released as Transcoder's is.
+struct Encoder {
+  ~Encoder() {
+    if (created) {
+      jpeg_destroy_compress(&cinfo);
+    }
+    free(output);
+  }
+
+  ErrorManager errors = {};
+  jpeg_compress_struct cinfo = {};
+  bool created = false;
+  unsigned char* output = nullptr;
+  unsigned long output_size = 0;
+};
+
+// Compresses the rows `row` writes into `e->output`, each through `line` (the
+// caller's buffer: nothing with a destructor lives in this frame). False on a
+// libjpeg error.
+bool Compress(Encoder* e,
+              int width,
+              int height,
+              int components,
+              int quality,
+              const std::function<void(int, pdfium::span<uint8_t>)>& row,
+              pdfium::span<uint8_t> line) {
+  if (setjmp(e->errors.jump)) {
+    return false;
+  }
+  jpeg_create_compress(&e->cinfo);
+  e->created = true;
+  jpeg_mem_dest(&e->cinfo, &e->output, &e->output_size);
+  e->cinfo.image_width = static_cast<JDIMENSION>(width);
+  e->cinfo.image_height = static_cast<JDIMENSION>(height);
+  e->cinfo.input_components = components;
+  e->cinfo.in_color_space = components == 1 ? JCS_GRAYSCALE : JCS_RGB;
+  jpeg_set_defaults(&e->cinfo);
+  jpeg_set_quality(&e->cinfo, quality, TRUE);
+  e->cinfo.optimize_coding = TRUE;
+  jpeg_start_compress(&e->cinfo, TRUE);
+  while (e->cinfo.next_scanline < e->cinfo.image_height) {
+    row(static_cast<int>(e->cinfo.next_scanline), line);
+    JSAMPROW pointer = line.data();
+    jpeg_write_scanlines(&e->cinfo, &pointer, 1);
+  }
+  jpeg_finish_compress(&e->cinfo);
+  return true;
+}
+
 }  // namespace
 
 std::optional<DataVector<uint8_t>> FillJpegRects(
@@ -386,6 +436,31 @@ std::optional<DataVector<uint8_t>> FillJpegRects(
   // SAFETY: jpeg_mem_dest() wrote `output_size` bytes at `output`.
   pdfium::span<const uint8_t> written =
       UNSAFE_BUFFERS(pdfium::span(t.output, t.output_size));
+  return DataVector<uint8_t>(written.begin(), written.end());
+}
+
+std::optional<DataVector<uint8_t>> EncodeJpeg(
+    int width,
+    int height,
+    int components,
+    int quality,
+    const std::function<void(int y, pdfium::span<uint8_t> out)>& row) {
+  if (width <= 0 || height <= 0 || (components != 1 && components != 3) ||
+      quality < 1 || quality > 100) {
+    return std::nullopt;
+  }
+  Encoder e;
+  e.cinfo.err = jpeg_std_error(&e.errors.pub);
+  e.errors.pub.error_exit = ExitOnError;
+  e.errors.pub.emit_message = NoteMessage;
+  e.errors.pub.output_message = SilenceOutput;
+  DataVector<uint8_t> line(static_cast<size_t>(width) * components);
+  if (!Compress(&e, width, height, components, quality, row, line)) {
+    return std::nullopt;
+  }
+  // SAFETY: jpeg_mem_dest() wrote `output_size` bytes at `output`.
+  pdfium::span<const uint8_t> written =
+      UNSAFE_BUFFERS(pdfium::span(e.output, e.output_size));
   return DataVector<uint8_t>(written.begin(), written.end());
 }
 

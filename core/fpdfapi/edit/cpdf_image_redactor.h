@@ -24,7 +24,10 @@ class CPDF_Page;
 // plain samples (Flate, LZW, RunLength, the ASCII filters, and 1-bit CCITT or
 // JBIG2) is written with Flate here, so a save copies its bytes; a JPEG stays
 // a JPEG, its blocks away from the hole untouched (FillJpegRects()). Others
-// (JPEG 2000, a JPEG libjpeg reads with a warning) are rewritten as RGB.
+// (JPEG 2000, a JPEG libjpeg reads with a warning, an image whose masks or
+// colour space can't be kept) are decoded and written as gray or RGB: as a
+// JPEG when the image was lossy already, else with Flate. Either way it is
+// compressed here.
 //
 // A failure once the image is known to be hit (a decode that fails) is
 // reported as a failure, so the caller never paints an overlay over pixels

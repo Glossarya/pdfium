@@ -28,7 +28,7 @@ FPDFFlattenEmbedderTest.Bug896366 Pixel test of a form; layer mode doesn't draw 
 FPDFAnnotEmbedderTest.SetFormFieldFlags FPDFAnnot_SetFormFieldFlags writes the field dictionary in place.
 FPDFEditEmbedderTest.TransformAnnot FPDFPage_TransformAnnots writes /Rect in place.
 FPDFTransformEmbedderTest.TransFormWithClipWithPatterns FPDFPage_TransFormWithClip writes pattern matrices in place.
-FPDFAttachmentEmbedderTest.SetNameKeepsTheRestOfTheFileSpec A base attachment must be opened for write first; the engine only describes attachments it added or opened with EPDFAnnot_GetFileAttachmentForWrite.
+EPDFAttachmentEmbedderTest.SetNameKeepsTheRestOfTheFileSpec A base attachment must be opened for write first; the engine only describes attachments it added or opened with EPDFAnnot_GetFileAttachmentForWrite.
 
 # --- Layer behaviour by design.
 FPDFDocEmbedderTest.DeletePageAndSaveWithBookmarks A layer save appends: the base's bytes, deleted page included, stay in the file.

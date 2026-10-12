@@ -47,6 +47,14 @@ class CPDF_Form final : public CPDF_PageObjectHolder,
       const CPDF_Dictionary* pParentResources,
       const CPDF_Dictionary* pPageResources);
 
+  // EmbedPDF: the dictionary of `type` (/Font, /ColorSpace, ...) content
+  // looks names up in: that of `resources`, the ones ChooseResourcesDict()
+  // chose, or when they have none of that type, the page's.
+  static RetainPtr<const CPDF_Dictionary> ChooseResourcesOfType(
+      const CPDF_Dictionary* resources,
+      const CPDF_Dictionary* page_resources,
+      ByteStringView type);
+
   CPDF_Form(CPDF_Document* document,
             RetainPtr<CPDF_Dictionary> pPageResources,
             RetainPtr<CPDF_Stream> pFormStream);
@@ -88,6 +96,7 @@ class CPDF_Form final : public CPDF_PageObjectHolder,
   // Rebinds this parsed form to a private clone of its backing stream. Call
   // before serializing per-placement edits so another use of the same Form
   // XObject cannot be changed or overwrite this form's sanitized content.
+  // A form already drawing its clone keeps it.
   bool CloneBackingStreamForWrite();
 
  private:
@@ -111,6 +120,8 @@ class CPDF_Form final : public CPDF_PageObjectHolder,
   RetainPtr<CPDF_Dictionary> const fallback_resources_;
   mutable RetainPtr<CPDF_Stream> form_stream_;
   mutable uint64_t form_stream_epoch_ = 0;
+  // The object number of the clone CloneBackingStreamForWrite() made, if any.
+  uint32_t private_stream_objnum_ = 0;
 };
 
 #endif  // CORE_FPDFAPI_PAGE_CPDF_FORM_H_

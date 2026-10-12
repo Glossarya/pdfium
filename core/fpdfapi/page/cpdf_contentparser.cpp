@@ -111,8 +111,7 @@ CPDF_ContentParser::CPDF_ContentParser(
       pParentMatrix, page_object_holder_,
       pdfium::WrapRetain(const_cast<CPDF_Dictionary*>(pResources.Get())),
       form_bbox, pGraphicStates, recursion_state);
-  parser_->GetCurStates()->set_current_transformation_matrix(form_matrix);
-  parser_->GetCurStates()->set_parent_matrix(form_matrix);
+  parser_->SetCTMAtBeginningOfContent(form_matrix);
   if (ClipPath.HasRef()) {
     parser_->GetCurStates()->mutable_clip_path().AppendPathWithAutoMerge(
         ClipPath, CFX_FillRenderOptions::FillType::kWinding);
@@ -132,6 +131,10 @@ CPDF_ContentParser::~CPDF_ContentParser() = default;
 
 CPDF_PageObjectHolder::CTMMap CPDF_ContentParser::TakeAllCTMs() {
   return parser_ ? parser_->TakeAllCTMs() : CPDF_PageObjectHolder::CTMMap();
+}
+
+CFX_Matrix CPDF_ContentParser::GetCTMAtBeginningOfContent() const {
+  return parser_ ? parser_->ctm_at_beginning_of_content() : CFX_Matrix();
 }
 
 // Returning |true| means that there is more content to be processed and

@@ -42,6 +42,8 @@ class CPDF_ContentParser {
   ~CPDF_ContentParser();
 
   CPDF_PageObjectHolder::CTMMap TakeAllCTMs();
+  // EmbedPDF: see CPDF_StreamContentParser::ctm_at_beginning_of_content().
+  CFX_Matrix GetCTMAtBeginningOfContent() const;
 
   // Returns whether to continue or not.
   bool Continue(PauseIndicatorIface* pPause);

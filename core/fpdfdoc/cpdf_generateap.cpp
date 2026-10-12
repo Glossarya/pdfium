@@ -369,6 +369,7 @@ bool SupportsEphemeralAnnotAP(CPDF_Annot::Subtype subtype) {
     case CPDF_Annot::Subtype::LINK:
     case CPDF_Annot::Subtype::POLYGON:
     case CPDF_Annot::Subtype::POLYLINE:
+    case CPDF_Annot::Subtype::REDACT:
     case CPDF_Annot::Subtype::SQUARE:
     case CPDF_Annot::Subtype::SQUIGGLY:
     case CPDF_Annot::Subtype::STRIKEOUT:
@@ -3968,11 +3969,9 @@ CFX_FloatRect GetRedactOverlayBBox(const CPDF_Dictionary* annot_dict) {
   return bbox;
 }
 
-RetainPtr<CPDF_Stream> MakeRedactFormStream(
-    CPDF_Document* doc,
+RetainPtr<CPDF_Dictionary> MakeRedactFormDict(
     const CFX_FloatRect& bbox,
-    RetainPtr<CPDF_Dictionary> resources,
-    fxcrt::ostringstream* ops) {
+    RetainPtr<CPDF_Dictionary> resources) {
   auto stream_dict = pdfium::MakeRetain<CPDF_Dictionary>();
   stream_dict->SetNewFor<CPDF_Number>("FormType", 1);
   stream_dict->SetNewFor<CPDF_Name>("Type", "XObject");
@@ -3982,7 +3981,16 @@ RetainPtr<CPDF_Stream> MakeRedactFormStream(
   if (resources) {
     stream_dict->SetFor("Resources", std::move(resources));
   }
-  auto stream = doc->NewIndirect<CPDF_Stream>(std::move(stream_dict));
+  return stream_dict;
+}
+
+RetainPtr<CPDF_Stream> MakeRedactFormStream(
+    CPDF_Document* doc,
+    const CFX_FloatRect& bbox,
+    RetainPtr<CPDF_Dictionary> resources,
+    fxcrt::ostringstream* ops) {
+  auto stream = doc->NewIndirect<CPDF_Stream>(
+      MakeRedactFormDict(bbox, std::move(resources)));
   stream->SetDataFromStringstream(ops);
   return stream;
 }
@@ -4173,9 +4181,10 @@ bool AppendRedactOverlayOps(CPDF_Document* doc,
   return !!*out_font_resources;
 }
 
-bool GenerateRedactAP(CPDF_Document* doc,
+bool GenerateRedactAP(APGenerationTarget* target,
                       CPDF_Dictionary* annot_dict,
                       const ByteString& blend_name) {
+  CPDF_Document* const doc = target->doc;
   // Normal (marking-stage) appearance: border-only outline in /C, default
   // red. The filled preview is NOT drawn here — R/D and /RO all share the
   // final overlay from BuildRedactOverlayForm, so hovering a marked
@@ -4204,6 +4213,15 @@ bool GenerateRedactAP(CPDF_Document* doc,
   auto gs_dict = GenerateExtGStateDict(*annot_dict, blend_name);
   auto resources_dict = GenerateResourcesDict(doc, std::move(gs_dict), nullptr);
   const CFX_FloatRect bbox = GetRedactOverlayBBox(annot_dict);
+  if (!target->IsPersistent()) {
+    // EmbedPDF: drawing a mark without an appearance (one another producer
+    // wrote) builds the outline in memory and writes nothing: not the
+    // appearance streams, /AP or /RO.
+    target->normal_stream = pdfium::MakeRetain<CPDF_Stream>(
+        MakeRedactFormDict(bbox, std::move(resources_dict)));
+    target->normal_stream->SetDataFromStringstream(&normal_stream);
+    return true;
+  }
   RetainPtr<CPDF_Stream> normal_pdf_stream = MakeRedactFormStream(
       doc, bbox, std::move(resources_dict), &normal_stream);
 
@@ -5244,6 +5262,8 @@ bool GenerateAnnotAPToTarget(APGenerationTarget* target,
       return GenerateLinkAP(target, annot_dict, blend_name);
     case CPDF_Annot::Subtype::CARET:
       return GenerateCaretAP(target, annot_dict, blend_name);
+    case CPDF_Annot::Subtype::REDACT:
+      return GenerateRedactAP(target, annot_dict, blend_name);
     default:
       return false;
   }
@@ -5273,8 +5293,6 @@ bool CPDF_GenerateAP::GenerateAnnotAP(CPDF_Document* doc,
       return GenerateFreeTextAP(&target, annot_dict, blend_name);
     case CPDF_Annot::Subtype::POPUP:
       return GeneratePopupAP(doc, annot_dict, blend_name);
-    case CPDF_Annot::Subtype::REDACT:
-      return GenerateRedactAP(doc, annot_dict, blend_name);
     default:
       return false;
   }

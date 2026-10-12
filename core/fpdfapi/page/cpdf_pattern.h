@@ -30,6 +30,11 @@ class CPDF_Pattern : public Retainable, public Observable {
   // Returns the underlying PDF object (stream or dict) that defines this pattern.
   RetainPtr<CPDF_Object> pattern_obj() const { return pattern_obj_; }
 
+  // EmbedPDF: the CTM in effect where the pattern was selected; loading
+  // another pattern object for the same use takes it
+  // (CPDF_DocPageData::GetPattern()).
+  const CFX_Matrix& parent_matrix() const { return parent_matrix_; }
+
  protected:
   CPDF_Pattern(CPDF_Document* doc,
                RetainPtr<CPDF_Object> pObj,
@@ -38,7 +43,6 @@ class CPDF_Pattern : public Retainable, public Observable {
 
   // All the getters that return pointers return non-NULL pointers.
   CPDF_Document* document() const { return document_; }
-  const CFX_Matrix& parent_matrix() const { return parent_matrix_; }
 
   void SetPatternToFormMatrix();
 

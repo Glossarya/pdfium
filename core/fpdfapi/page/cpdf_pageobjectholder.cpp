@@ -262,6 +262,7 @@ void CPDF_PageObjectHolder::ContinueParse(PauseIndicatorIface* pPause) {
   parse_state_ = ParseState::kParsed;
   document_->IncrementParsedPageCount();
   all_ctms_ = parser_->TakeAllCTMs();
+  ctm_at_beginning_of_content_ = parser_->GetCTMAtBeginningOfContent();
 
   parser_.reset();
 }
@@ -272,6 +273,7 @@ void CPDF_PageObjectHolder::ResetParsedContent() {
   page_object_list_.clear();
   object_groups_.reset();
   all_ctms_.clear();
+  ctm_at_beginning_of_content_ = CFX_Matrix();
   mask_bounding_boxes_.clear();
   dirty_streams_.clear();
   graphics_map_.clear();
@@ -378,7 +380,7 @@ CFX_Matrix CPDF_PageObjectHolder::GetCTMAtBeginningOfStream(int32_t stream) {
   CHECK(stream >= 0 || stream == CPDF_PageObject::kNoContentStream);
 
   if (stream == 0 || all_ctms_.empty()) {
-    return CFX_Matrix();
+    return ctm_at_beginning_of_content_;
   }
 
   if (stream == CPDF_PageObject::kNoContentStream) {
@@ -397,7 +399,7 @@ CFX_Matrix CPDF_PageObjectHolder::GetCTMAtEndOfStream(int32_t stream) {
   CHECK_GE(stream, 0);
 
   if (all_ctms_.empty()) {
-    return CFX_Matrix();
+    return ctm_at_beginning_of_content_;
   }
 
   const auto it = all_ctms_.lower_bound(stream);

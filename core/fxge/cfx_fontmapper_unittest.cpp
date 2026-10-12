@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "core/fxcrt/fx_codepage.h"
+#include "core/fxge/cfx_fontmgr.h"
 #include "core/fxge/cfx_gemodule.h"
 #include "core/fxge/cfx_substfont.h"
 #include "core/fxge/systemfontinfo_iface.h"
@@ -303,4 +304,42 @@ TEST(CFXFontMapperTest, LoadInstalledFontsCalledOnlyOnce) {
   font_mapper.LoadInstalledFonts();
   font_mapper.LoadInstalledFonts();
   font_mapper.LoadInstalledFonts();
+}
+
+// EmbedPDF: a standard font draws with the built-in face even where the
+// system has a font of that name, so every engine draws it the same.
+TEST_F(CFXFontMapperSystemFontInfoTest, StandardFontUsesBuiltInFace) {
+  EXPECT_CALL(system_font_info(), MapFont).Times(0);
+  EXPECT_CALL(system_font_info(), GetFont).Times(0);
+  struct Case {
+    const char* name;
+    bool is_truetype;
+    CFX_FontMapper::StandardFont face;
+  };
+  static constexpr Case kCases[] = {
+      {"Helvetica", false, CFX_FontMapper::kHelvetica},
+      {"Arial", true, CFX_FontMapper::kHelvetica},
+      {"Times-Bold", false, CFX_FontMapper::kTimesBold},
+      {"Courier-Oblique", false, CFX_FontMapper::kCourierOblique},
+  };
+  for (const Case& test_case : kCases) {
+    CFX_SubstFont subst_font;
+    RetainPtr<CFX_Face> face = font_mapper().FindSubstFont(
+        test_case.name, test_case.is_truetype, /*flags=*/0, /*weight=*/0,
+        /*italic_angle=*/0, FX_CodePage::kDefANSI, &subst_font);
+    ASSERT_TRUE(face) << test_case.name;
+    EXPECT_EQ(CFX_FontMgr::GetStandardFont(test_case.face).data(),
+              face->GetData().data())
+        << test_case.name;
+  }
+}
+
+// EmbedPDF: a CJK code page still asks the system for the font: the built-in
+// faces have none of its glyphs.
+TEST_F(CFXFontMapperSystemFontInfoTest, StandardFontInCjkCodePageAsksSystem) {
+  EXPECT_CALL(system_font_info(), MapFont).WillOnce(Return(nullptr));
+  CFX_SubstFont subst_font;
+  font_mapper().FindSubstFont("Helvetica", /*is_truetype=*/false,
+                              /*flags=*/0, /*weight=*/0, /*italic_angle=*/0,
+                              FX_CodePage::kShiftJIS, &subst_font);
 }

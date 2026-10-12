@@ -60,6 +60,8 @@ source_set("fxcodec") {
     "jbig2/jbig2_decoder.h",
     "jpeg/jpeg_common.c",
     "jpeg/jpeg_common.h",
+    "jpeg/jpeg_writer.cpp",
+    "jpeg/jpeg_writer.h",
     "jpeg/jpegmodule.cpp",
     "jpeg/jpegmodule.h",
     "jpx/cjpx_decoder.cpp",

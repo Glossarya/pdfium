@@ -10,14 +10,19 @@
 #include <stdint.h>
 
 #include <map>
+#include <set>
 #include <vector>
 
+#include "core/fpdfapi/page/cpdf_textstate.h"
 #include "core/fxcrt/bytestring.h"
 #include "core/fxcrt/fx_string_wrappers.h"
+#include "core/fxcrt/retain_ptr.h"
 #include "core/fxcrt/unowned_ptr.h"
 
 class CPDF_ContentMarks;
+class CPDF_Dictionary;
 class CPDF_Document;
+class CPDF_Font;
 class CPDF_FormObject;
 class CPDF_ImageObject;
 class CPDF_Object;
@@ -49,14 +54,50 @@ class CPDF_PageContentGenerator {
   void ProcessImage(fxcrt::ostringstream* buf, CPDF_ImageObject* pImageObj);
   void ProcessShading(fxcrt::ostringstream* buf, CPDF_ShadingObject* pShadingObj);
   void ProcessGraphics(fxcrt::ostringstream* buf, CPDF_PageObject* pPageObj);
+  // EmbedPDF: the clip `pPageObj` is drawn in, its paths and then the text
+  // that clips (render modes 4 to 7), written invisible.
+  void ProcessClip(fxcrt::ostringstream* buf, CPDF_PageObject* pPageObj);
+  // EmbedPDF: the graphics state resources the content set for `pPageObj`,
+  // or one made for its alpha and blend mode.
+  void ProcessGraphicsState(fxcrt::ostringstream* buf,
+                            CPDF_PageObject* pPageObj);
   void ProcessDefaultGraphics(fxcrt::ostringstream* buf);
   void ProcessText(fxcrt::ostringstream* buf, CPDF_TextObject* pTextObj);
+  // EmbedPDF: names the font `text` draws with in the resources, and sets
+  // `font` to it; empty when the font can be described by neither its
+  // dictionary nor its type.
+  ByteString RealizeFont(CPDF_TextObject* text, RetainPtr<CPDF_Font>* font);
+  // EmbedPDF: the same for `font` itself (a stock Helvetica when null).
+  ByteString RealizeFont(RetainPtr<CPDF_Font>* font);
+  // EmbedPDF: content showing text without setting its font, spacing or
+  // rendering mode draws with those of the content around it. Writes them
+  // as they were where `form_object` was read, for a form that shows text.
+  void WriteInheritedTextState(fxcrt::ostringstream& buf,
+                               CPDF_FormObject* form_object);
+  // EmbedPDF: Tf, Tr, Tc, Tw and the operator that shows `text`'s characters,
+  // drawn with `render_mode`.
+  void WriteTextShowing(fxcrt::ostringstream& buf,
+                        CPDF_TextObject* text,
+                        CPDF_Font* font,
+                        const ByteString& font_name,
+                        TextRenderingMode render_mode);
   bool EmitColor(fxcrt::ostringstream& buf,
     const CPDF_Color* color,
     bool is_stroke,
     CPDF_PageObject* owner);
   ByteString GetOrCreateDefaultGraphics() const;
+  // EmbedPDF: names the array `cs` was loaded from in the resources: the
+  // name they already give it when they have one. Empty for a colour space
+  // with no array (the stock ones).
   ByteString RealizeColorSpaceObject(const CPDF_ColorSpace* cs);
+  // EmbedPDF: adds to `seen_resources` the names other content looks up in
+  // these resources (a form drawn here, a Type3 glyph, an appearance), so
+  // pruning keeps them.
+  // EmbedPDF: points `resources`' entries at the objects the holder's
+  // content is to draw instead (CPDF_PageObjectHolder::ReplaceResource()).
+  void ApplyResourceReplacements(CPDF_Dictionary* resources);
+  void AddNamesBorrowed(std::map<ByteString, std::set<ByteString>>&
+                            seen_resources) const;
   ByteString RealizeResource(const CPDF_Object* pResource,
                              ByteStringView type) const;
   const CPDF_ContentMarks* ProcessContentMarks(fxcrt::ostringstream* buf,
@@ -94,6 +135,11 @@ class CPDF_PageContentGenerator {
   UnownedPtr<CPDF_Document> const document_;
   std::vector<UnownedPtr<CPDF_PageObject>> page_objects_;
   ByteString default_graphics_name_;
+  // EmbedPDF: the font names WriteInheritedTextState() wrote.
+  std::set<ByteString> inherited_font_names_;
+  // EmbedPDF: the names RealizeColorSpaceObject() gave in this pass. The page
+  // objects keep the colour spaces alive.
+  std::map<const CPDF_ColorSpace*, ByteString> color_space_names_;
 };
 
 #endif  // CORE_FPDFAPI_EDIT_CPDF_PAGECONTENTGENERATOR_H_

@@ -9,6 +9,7 @@
 
 #include <array>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <set>
 #include <stack>
@@ -84,6 +85,25 @@ class CPDF_StreamContentParser {
   RetainPtr<CPDF_Font> FindFont(const ByteString& name);
   CPDF_PageObjectHolder::CTMMap TakeAllCTMs();
 
+  // EmbedPDF: the content begins under `ctm` - a form's /Matrix - rather than
+  // the identity. Page objects carry it in their matrices, so the content
+  // generator writes its inverse at the top of a stream it regenerates.
+  void SetCTMAtBeginningOfContent(const CFX_Matrix& ctm);
+  const CFX_Matrix& ctm_at_beginning_of_content() const {
+    return ctm_at_beginning_of_content_;
+  }
+
+  // EmbedPDF: reads an inline image from just after its BI: the dictionary,
+  // its abbreviations expanded, and the data up to its EI. Returns the image,
+  // or null when there is none. `find_color_space` resolves a colour space
+  // the dictionary names. The parser and content scans (GetNamesInContent())
+  // share it, so both step over image data the same way.
+  static RetainPtr<CPDF_Stream> ReadInlineImage(
+      CPDF_StreamParser* syntax,
+      CPDF_Document* document,
+      const std::function<RetainPtr<const CPDF_Object>(const ByteString&)>&
+          find_color_space);
+
   static ByteStringView FindKeyAbbreviationForTesting(ByteStringView abbr);
   static ByteStringView FindValueAbbreviationForTesting(ByteStringView abbr);
 
@@ -121,6 +141,9 @@ class CPDF_StreamContentParser {
   float GetVerticalTextSize(float fKerning) const;
 
   void OnChangeTextMatrix();
+  // EmbedPDF: records the CTM as the current stream's CTM at its end so far,
+  // in the space of page objects' matrices (content-to-user applied).
+  void RecordCTMOfCurrentStream();
   void ParsePathObject();
   void AddPathPoint(const CFX_PointF& point, CFX_Path::Point::Type type);
   void AddPathPointAndClose(const CFX_PointF& point,
@@ -268,6 +291,7 @@ class CPDF_StreamContentParser {
   std::array<float, 6> type3_data_ = {};
   std::array<ContentParam, kParamBufSize> param_buf_;
   CPDF_PageObjectHolder::CTMMap all_ctms_;
+  CFX_Matrix ctm_at_beginning_of_content_;
 
   // The merged stream offsets at which a content stream ends and another
   // begins.

@@ -186,6 +186,9 @@ source_set("unit_test_support") {
 source_set("embedder_test_support") {
   testonly = true
   sources = [
+    # EmbedPDF: sentinel scans of a saved document's graph (redaction tests).
+    "document_sentinels.cpp",
+    "document_sentinels.h",
     "embedder_test.cpp",
     "embedder_test.h",
     "embedder_test_constants.h",

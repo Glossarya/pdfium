@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <iterator>
 #include <utility>
 
@@ -392,6 +393,11 @@ CFX_Matrix CFX_Matrix::GetInverse() const {
   inverse.e = (c * f - d * e) / i;
   inverse.f = (a * f - b * e) / j;
   return inverse;
+}
+
+bool CFX_Matrix::IsInvertible() const {
+  const float determinant = a * d - b * c;
+  return std::isfinite(determinant) && determinant != 0;
 }
 
 bool CFX_Matrix::Is90Rotated() const {

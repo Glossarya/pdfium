@@ -1,0 +1,55 @@
+{{header}}
+{{object 1 0}} << /Type /Catalog /Pages 2 0 R >>
+endobj
+{{object 2 0}} << /Type /Pages /Count 3 /Kids [3 0 R 13 0 R 23 0 R] >>
+endobj
+{{object 3 0}} << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Fm0 6 0 R >> >> /Contents 4 0 R >>
+endobj
+{{object 4 0}} << {{streamlen}} >>
+stream
+q /Fm0 Do Q
+endstream
+endobj
+{{object 6 0}} << /Type /XObject /Subtype /Form /BBox [0 0 500 700] /Matrix [1 0 0 1 57 42] /Resources << /Font << /F1 8 0 R >> >> {{streamlen}} >>
+stream
+BT /F1 12 Tf 1 0 0 1 20 300 Tm (Keep this, drop SECRET, keep that) Tj ET
+0 0 1 rg 20 290 180 2 re f
+endstream
+endobj
+{{object 8 0}} << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+{{object 13 0}} << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Fm1 16 0 R >> >> /Contents 14 0 R >>
+endobj
+{{object 14 0}} << {{streamlen}} >>
+stream
+q /Fm1 Do Q
+endstream
+endobj
+{{object 16 0}} << /Type /XObject /Subtype /Form /BBox [0 0 500 700] /Matrix [0 0.8 -0.8 0 560 80] /Resources << /Font << /F1 8 0 R >> >> {{streamlen}} >>
+stream
+BT /F1 12 Tf 1 0 0 1 20 300 Tm (Keep this, drop SECRET, keep that) Tj ET
+0 0 1 rg 20 290 180 2 re f
+endstream
+endobj
+{{object 23 0}} << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Outer 26 0 R >> >> /Contents 24 0 R >>
+endobj
+{{object 24 0}} << {{streamlen}} >>
+stream
+q 1 0 0 1 30 0 cm /Outer Do Q
+endstream
+endobj
+{{object 26 0}} << /Type /XObject /Subtype /Form /BBox [0 0 400 500] /Matrix [1.5 0 0 1.5 10 20] /Resources << /XObject << /Inner 27 0 R >> >> {{streamlen}} >>
+stream
+q /Inner Do Q
+endstream
+endobj
+{{object 27 0}} << /Type /XObject /Subtype /Form /BBox [0 0 300 100] /Matrix [1 0 0 1 20 300] /Resources << /Font << /F1 8 0 R >> >> {{streamlen}} >>
+stream
+BT /F1 12 Tf 1 0 0 1 0 20 Tm (Keep this, drop SECRET, keep that) Tj ET
+0 0 1 rg 0 10 180 2 re f
+endstream
+endobj
+{{xref}}
+{{trailer}}
+{{startxref}}
+%%EOF

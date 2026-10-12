@@ -539,8 +539,8 @@ bool CPDF_CIDFont::Load() {
     }
   }
 
-  // TODO(thestig): Better identify font types and identify more font types.
-  if (font_type_ == CIDFontType::kTrueType && IsEmbedded()) {
+  if (font_type_ == CIDFontType::kTrueType && IsEmbedded() && face &&
+      face->GetFontFormat() == "TrueType") {
     font_.SetFontType(CFX_Font::FontType::kCIDTrueType);
   }
 
@@ -728,7 +728,7 @@ int CPDF_CIDFont::GlyphFromCharCode(uint32_t charcode, bool* pVertGlyph) {
       if (unicode == 0) {
         WideString unicode_str = UnicodeFromCharCode(charcode);
         if (!unicode_str.IsEmpty()) {
-          unicode = unicode_str[0];
+          unicode = unicode_str.Front();
         }
       }
     }
@@ -854,8 +854,7 @@ int CPDF_CIDFont::GlyphFromCharCode(uint32_t charcode, bool* pVertGlyph) {
       if (unicode_str.IsEmpty()) {
         return -1;
       }
-
-      charcode = unicode_str[0];
+      charcode = unicode_str.Front();
     }
     return GetGlyphIndex(charcode, pVertGlyph);
   }

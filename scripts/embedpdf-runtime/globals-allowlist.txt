@@ -27,6 +27,7 @@ thread-local | *::g_inline_rewrite_depth | The read-only guard (debug checks onl
 # --- Ours and PDFium's: shared, and why that is safe.
 atomic | *::g_next_write_generation | std::atomic: hands out transaction generations.
 atomic | *::g_held_bounds_generation | std::atomic: invalidates object-run bounds.
+atomic | _MergedGlobals | Clang merges file-local globals into one symbol, hiding them. Oct 12 2026 (S3 clang roll): one, from HarfBuzz hb-ot-tag.cc, whose bss is three hb_atomic_t tag caches (last_tag_idx_*). Recheck which objects define it (nm -m obj/**/*.o) whenever its size changes or a second one appears.
 test-only | *::g_object_groups_enabled | Only SetObjectGroupsEnabledForTesting writes it.
 test-only | *::g_specialized_loops_enabled | Only SetSpecializedLoopsEnabledForTesting writes it.
 test-only | *::g_path_memo_enabled | Only SetPathMemoEnabledForTesting writes it.
@@ -53,7 +54,7 @@ third-party | __cxa_*_handler | libc++abi: process-wide handlers.
 third-party | (anonymous namespace)::freelist | libc++abi fallback_malloc, behind heap_mutex.
 third-party | (anonymous namespace)::heap | libc++abi fallback_malloc, behind heap_mutex.
 third-party | (anonymous namespace)::heap_mutex | libc++abi fallback_malloc.
-third-party | icu_77::* | ICU: once-initialized data behind umtx.
+third-party | icu_[0-9]*::* | ICU: once-initialized data behind umtx; any ICU version namespace.
 third-party | (anonymous namespace)::g[A-Z]* | ICU: layout property tables, once-initialized.
 third-party | g[A-Z]* | ICU: data, directory and time zone state, once-initialized.
 third-party | p[A-Z]* | ICU: allocator and trace hooks, set before use.

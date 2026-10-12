@@ -130,7 +130,7 @@ WideString CalcMergedString(const CJS_EventContext* event,
   WideString postfix;
   int end = event->SelEnd();
   if (end >= 0 && static_cast<size_t>(end) < value.GetLength()) {
-    postfix = value.Last(value.GetLength() - static_cast<size_t>(end));
+    postfix = value.Substr(static_cast<size_t>(end));
   }
   return prefix + change + postfix;
 }
@@ -1519,7 +1519,7 @@ CJS_Result CJS_PublicMethods::AFExtractNums(
   }
 
   WideString str = pRuntime->ToWideString(params[0]);
-  if (str.GetLength() > 0 && IsDigitSeparatorOrDecimalMark(str[0])) {
+  if (IsDigitSeparatorOrDecimalMark(str.Front())) {  // Front() safe when emtpy.
     str.InsertAtFront(L'0');
   }
 

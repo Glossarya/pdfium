@@ -279,6 +279,7 @@ int CheckPDFiumCApi() {
     CHK(FPDFText_LoadFont);
     CHK(FPDFText_LoadStandardFont);
     CHK(FPDFText_SetCharcodes);
+    CHK(FPDFText_SetPositions);
     CHK(FPDFText_SetText);
     CHK(FPDF_CreateNewDocument);
     CHK(FPDF_MovePages);

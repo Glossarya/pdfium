@@ -64,15 +64,8 @@ NodeType GetNodeType(RetainPtr<CPDF_Dictionary> kid_dict) {
 // EmbedPDF(reads-dont-write): GetNodeType() for a const kid, so a page-tree
 // edit doesn't promote the base pages it only looks at.
 NodeType GetNodeTypeForTraversal(const CPDF_Dictionary* kid_dict) {
-  const ByteString kid_type_value = kid_dict->GetNameFor("Type");
-  if (kid_type_value == "Pages") {
-    return NodeType::kBranch;
-  }
-  if (kid_type_value == "Page") {
-    return NodeType::kLeaf;
-  }
-
-  return kid_dict->KeyExist("Kids") ? NodeType::kBranch : NodeType::kLeaf;
+  return CPDF_Document::IsPageTreeLeaf(kid_dict) ? NodeType::kLeaf
+                                                 : NodeType::kBranch;
 }
 
 // Returns a value in the range [0, `CPDF_Document::kPageMaxNum`), or nullopt on
@@ -248,6 +241,18 @@ bool CPDF_Document::IsValidPageObject(const CPDF_Object* obj) {
   return ValidateDictType(ToDictionary(obj), "Page");
 }
 
+// static
+bool CPDF_Document::IsPageTreeLeaf(const CPDF_Dictionary* dict) {
+  if (!dict) {
+    return false;
+  }
+  const ByteString type = dict->GetNameFor("Type");
+  if (type == "Page") {
+    return true;
+  }
+  return type != "Pages" && !dict->KeyExist("Kids");
+}
+
 // EmbedPDF(layer-seam): virtual; a layer answers with its base's parser and
 // its own /Root.
 CPDF_Parser* CPDF_Document::GetParser() const {
@@ -343,6 +348,11 @@ RetainPtr<CPDF_Dictionary> CPDF_Document::TraversePDFPages(int iPage,
   if (!pKidList) {
     tree_traversal_.pop_back();
     if (*nPagesToGo != 1) {
+      return nullptr;
+    }
+    // EmbedPDF(reads-dont-write): upstream's check with the const node type;
+    // GetNodeType() would rewrite a wrong /Type while reading.
+    if (!IsPageTreeLeaf(pPages.Get())) {
       return nullptr;
     }
     // EmbedPDF(layer-seam): a layer keeps its own page list.

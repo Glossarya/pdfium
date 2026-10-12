@@ -738,7 +738,7 @@ RetainPtr<CPDF_Page> NewPage(CPDF_Document* doc, int page_index) {
       doc->GetPageDictionary(page_index);
   RetainPtr<CPDF_Dictionary> dict =
       pdfium::WrapRetain(const_cast<CPDF_Dictionary*>(const_dict.Get()));
-  if (!dict) {
+  if (!CPDF_Document::IsPageTreeLeaf(dict.Get())) {
     return nullptr;
   }
 
@@ -1837,7 +1837,7 @@ FPDF_GetPageSizeByIndexF(FPDF_DOCUMENT document,
       doc->GetPageDictionary(page_index);
   RetainPtr<CPDF_Dictionary> dict =
       pdfium::WrapRetain(const_cast<CPDF_Dictionary*>(const_dict.Get()));
-  if (!dict) {
+  if (!CPDF_Document::IsPageTreeLeaf(dict.Get())) {
     return false;
   }
 

@@ -549,7 +549,7 @@ bool SplitDateTime(const WideString& wsDateTime,
       return false;
     }
   }
-  wsTime = wsDateTime.Last(wsDateTime.GetLength() - nSplitIndex.value() - 1);
+  wsTime = wsDateTime.Substr(nSplitIndex.value() + 1);
   if (!wsTime.IsEmpty()) {
     if (!std::any_of(wsTime.begin(), wsTime.end(),
                      [](wchar_t c) { return FXSYS_IsDecimalDigit(c); })) {
@@ -664,7 +664,7 @@ WideString FormatNumStr(const WideString& wsValue, LocaleIface* pLocale) {
   WideString wsSrcNum = wsValue;
   WideString wsGroupSymbol = pLocale->GetGroupingSymbol();
   bool bNeg = false;
-  if (wsSrcNum[0] == '-') {
+  if (wsSrcNum.Front() == '-') {
     bNeg = true;
     wsSrcNum.Delete(0, 1);
   }
@@ -685,7 +685,7 @@ WideString FormatNumStr(const WideString& wsValue, LocaleIface* pLocale) {
   }
   if (dot_index < wsSrcNum.GetLength()) {
     wsOutput += pLocale->GetDecimalSymbol();
-    wsOutput += wsSrcNum.Last(wsSrcNum.GetLength() - dot_index - 1);
+    wsOutput += wsSrcNum.Substr(dot_index + 1);
   }
   if (bNeg) {
     return pLocale->GetMinusSymbol() + wsOutput;
@@ -1894,8 +1894,8 @@ CXFA_Node* CXFA_Node::GetInstanceMgrOfSubform() {
         WideString wsName = JSObject()->GetCData(XFA_Attribute::Name);
         WideString wsInstName =
             pNode->JSObject()->GetCData(XFA_Attribute::Name);
-        if (wsInstName.GetLength() > 0 && wsInstName[0] == '_' &&
-            wsInstName.Last(wsInstName.GetLength() - 1) == wsName) {
+        if (wsInstName.GetLength() > 0 && wsInstName.Front() == '_' &&
+            wsInstName.Substr(1) == wsName) {
           pInstanceMgr = pNode;
         }
         break;
@@ -1987,8 +1987,8 @@ CXFA_Node* CXFA_Node::GetItemIfExists(int32_t index) {
     if (iCount == 0) {
       WideString wsName = pNode->JSObject()->GetCData(XFA_Attribute::Name);
       WideString wsInstName = JSObject()->GetCData(XFA_Attribute::Name);
-      if (wsInstName.GetLength() < 1 || wsInstName[0] != '_' ||
-          wsInstName.Last(wsInstName.GetLength() - 1) != wsName) {
+      if (wsInstName.GetLength() < 1 || wsInstName.Front() != '_' ||
+          wsInstName.Substr(1) != wsName) {
         return nullptr;
       }
       dwNameHash = pNode->GetNameHash();
@@ -2021,8 +2021,8 @@ int32_t CXFA_Node::GetCount() {
     if (iCount == 0) {
       WideString wsName = pNode->JSObject()->GetCData(XFA_Attribute::Name);
       WideString wsInstName = JSObject()->GetCData(XFA_Attribute::Name);
-      if (wsInstName.GetLength() < 1 || wsInstName[0] != '_' ||
-          wsInstName.Last(wsInstName.GetLength() - 1) != wsName) {
+      if (wsInstName.GetLength() < 1 || wsInstName.Front() != '_' ||
+          wsInstName.Substr(1) != wsName) {
         return iCount;
       }
       dwNameHash = pNode->GetNameHash();
@@ -2612,18 +2612,7 @@ XFA_EventError CXFA_Node::ProcessEventInternal(CXFA_FFDocView* pDocView,
     case XFA_Element::SignData:
       break;
     case XFA_Element::Submit: {
-// TODO(crbug.com/867485): Submit is disabled for now. Fix it and reenable this
-// code.
-#ifdef PDF_XFA_ELEMENT_SUBMIT_ENABLED
-      CXFA_Submit* submit = event->GetSubmitIfExists();
-      if (!submit) {
-        return XFA_EventError::kNotExist;
-      }
-      return pDocView->GetDoc()->GetDocEnvironment()->Submit(pDocView->GetDoc(),
-                                                             submit);
-#else
       return XFA_EventError::kDisabled;
-#endif  // PDF_XFA_ELEMENT_SUBMIT_ENABLED
     }
     default:
       break;
@@ -5288,7 +5277,7 @@ WideString CXFA_Node::NormalizeNumStr(const WideString& wsValue) {
     wsOutput.TrimBack(L"0");
     wsOutput.TrimBack(L".");
   }
-  if (wsOutput.IsEmpty() || wsOutput[0] == '.') {
+  if (wsOutput.IsEmpty() || wsOutput.Front() == '.') {
     wsOutput.InsertAtFront('0');
   }
 

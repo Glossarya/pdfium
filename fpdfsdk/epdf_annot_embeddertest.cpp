@@ -6202,7 +6202,7 @@ TEST_F(EPDFAnnotEmbedderTest, ApplyPageRedactionsTwoMarksOnOneTextObject) {
 // was, including vertical CJK text, even though callers regenerate the page
 // content afterwards.
 TEST_F(EPDFAnnotEmbedderTest, RedactFarFromVerticalTextLeavesItInPlace) {
-  ASSERT_TRUE(OpenDocument("vertical_text.pdf"));
+  ASSERT_TRUE(OpenDocument("embedpdf_vertical_text.pdf"));
   ScopedPage page = LoadScopedPage(0);
   ASSERT_TRUE(page);
 
@@ -6360,7 +6360,7 @@ TEST_F(EPDFAnnotEmbedderTest, RedactRemovesInvisibleOcrLayerText) {
 // the vertical axis (the writing axis), and removing glyphs in the middle
 // must keep the glyphs after the gap exactly in place.
 TEST_F(EPDFAnnotEmbedderTest, RedactVerticalTextLeadingGlyphKeepsRestInPlace) {
-  ASSERT_TRUE(OpenDocument("vertical_text.pdf"));
+  ASSERT_TRUE(OpenDocument("embedpdf_vertical_text.pdf"));
   ScopedPage page = LoadScopedPage(0);
   ASSERT_TRUE(page);
 
@@ -6408,7 +6408,7 @@ TEST_F(EPDFAnnotEmbedderTest, RedactVerticalTextLeadingGlyphKeepsRestInPlace) {
 }
 
 TEST_F(EPDFAnnotEmbedderTest, RedactVerticalTextMiddleGlyphsKeepsTailInPlace) {
-  ASSERT_TRUE(OpenDocument("vertical_text.pdf"));
+  ASSERT_TRUE(OpenDocument("embedpdf_vertical_text.pdf"));
   ScopedPage page = LoadScopedPage(0);
   ASSERT_TRUE(page);
 

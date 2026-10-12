@@ -112,6 +112,10 @@ class CPDF_Document : public Observable,
   static constexpr int kPageMaxNum = 0xFFFFF;
 
   static bool IsValidPageObject(const CPDF_Object* obj);
+  // EmbedPDF(reads-dont-write): whether `dict` is a leaf of the page tree, a
+  // page: /Type /Page, or no /Kids and any /Type but /Pages. Upstream rewrites
+  // such a /Type to /Page while walking the tree; a read leaves it as it is.
+  static bool IsPageTreeLeaf(const CPDF_Dictionary* dict);
 
   CPDF_Document(std::unique_ptr<RenderDataIface> pRenderData,
                 std::unique_ptr<PageDataIface> pPageData);

@@ -47,24 +47,22 @@ bool CFXJSE_ResolveProcessor::Resolve(v8::Isolate* pIsolate, NodeData& rnd) {
     return ResolveAnyChild(pIsolate, rnd);
   }
 
-  if (rnd.name_.GetLength()) {
-    wchar_t wch = rnd.name_[0];
-    switch (wch) {
-      case '$':
-        return ResolveDollar(pIsolate, rnd);
-      case '!':
-        return ResolveExcalmatory(pIsolate, rnd);
-      case '#':
-        return ResolveNumberSign(pIsolate, rnd);
-      case '*':
-        return ResolveAsterisk(rnd);
+  switch (rnd.name_.Front()) {  // Front() safe when emtpy.
+    case '$':
+      return ResolveDollar(pIsolate, rnd);
+    case '!':
+      return ResolveExcalmatory(pIsolate, rnd);
+    case '#':
+      return ResolveNumberSign(pIsolate, rnd);
+    case '*':
+      return ResolveAsterisk(rnd);
       // TODO(dsinclair): We could probably remove this.
-      case '.':
-        return ResolveAnyChild(pIsolate, rnd);
-      default:
-        break;
-    }
+    case '.':
+      return ResolveAnyChild(pIsolate, rnd);
+    default:
+      break;
   }
+
   if (rnd.hash_name_ == XFA_HASHCODE_This && rnd.level_ == 0) {
     rnd.result_.objects.emplace_back(engine_->GetThisObject());
     return true;
@@ -104,10 +102,9 @@ bool CFXJSE_ResolveProcessor::ResolveAnyChild(v8::Isolate* pIsolate,
   WideStringView wsName = rnd.name_.AsStringView();
   WideString wsCondition = rnd.condition_;
   const bool bClassName = !wsName.IsEmpty() && wsName[0] == '#';
-  CXFA_Node* const pChild =
-      bClassName
-          ? pParent->GetOneChildOfClass(wsName.Last(wsName.GetLength() - 1))
-          : pParent->GetOneChildNamed(wsName);
+  CXFA_Node* const pChild = bClassName
+                                ? pParent->GetOneChildOfClass(wsName.Substr(1))
+                                : pParent->GetOneChildNamed(wsName);
   if (!pChild) {
     return false;
   }
@@ -714,7 +711,7 @@ void CFXJSE_ResolveProcessor::FilterCondition(v8::Isolate* pIsolate,
     return;
   }
 
-  wchar_t wTypeChar = wsCondition[0];
+  wchar_t wTypeChar = wsCondition.Front();
   switch (wTypeChar) {
     case '[':
       ConditionArray(iCurIndex, wsCondition, iFoundCount, pRnd);

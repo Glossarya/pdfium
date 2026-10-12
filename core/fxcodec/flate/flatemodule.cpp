@@ -66,6 +66,7 @@ uint32_t FlateGetPossiblyTruncatedTotalIn(z_stream* context) {
   return pdfium::saturated_cast<uint32_t>(context->total_in);
 }
 
+// EmbedPDF(redaction): at a zlib level, for the images a redaction rewrites.
 size_t FlateCompress(pdfium::span<const uint8_t> src_span,
                      pdfium::span<uint8_t> dest_span,
                      int level) {
@@ -957,6 +958,7 @@ FlateModule::SinkDecodeStatus FlateModule::FlateDecodeToSink(
 
 // static
 DataVector<uint8_t> FlateModule::Encode(pdfium::span<const uint8_t> src_span) {
+  // EmbedPDF(redaction): the default level; a redaction asks for its own.
   return Encode(src_span, Z_DEFAULT_COMPRESSION);
 }
 

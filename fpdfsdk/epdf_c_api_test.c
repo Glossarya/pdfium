@@ -494,7 +494,6 @@ int CheckEmbedPDFCApi(void) {
   CHK(EPDF_RenderPage_Continue);
 
   // epdf_redact.h
-  CHK(EPDFAnnot_ApplyRedaction);
   CHK(EPDFPage_ApplyRedactions);
 
   // epdf_save.h

@@ -43,6 +43,8 @@ set-once | guard variable for CPDF_BAFontMap::AddStandardFont(*)::fe | Its initi
 set-once | FX_OutOfMemoryTerminate(*)::make_this_function_aliased | Never written; keeps the function distinct.
 set-once | (anonymous namespace)::AddStandardFont(CPDF_Document*)::encoding | Upstream: a const CPDF_FontEncoding, built once.
 set-once | guard variable for (anonymous namespace)::AddStandardFont(CPDF_Document*)::encoding | Its initialization guard.
+set-once | fxcodec::(anonymous namespace)::Basis()::basis | The JPEG writer's DCT basis: a const table built once (thread-safe static initialization) and only read after.
+set-once | guard variable for fxcodec::(anonymous namespace)::Basis()::basis | Its initialization guard.
 
 # --- Third-party code, shared by design.
 third-party | std::__Cr::* | libc++: locale and facet state behind its own locks.

@@ -26,6 +26,7 @@
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "public/cpp/fpdf_scopers.h"
 #include "public/epdf_annot.h"
+#include "public/epdf_edit.h"
 #include "public/epdf_flatten.h"
 #include "public/epdf_layer.h"
 #include "public/fpdf_annot.h"

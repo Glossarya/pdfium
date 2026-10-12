@@ -552,17 +552,24 @@ void AddBrokenTrueTypeCjkTextPageContent(FPDF_DOCUMENT doc, FPDF_PAGE page) {
                                        contents->GetObjNum());
 }
 
+// Applies the one REDACT annotation `annot` of `page`.
+FPDF_BOOL ApplyOneRedaction(FPDF_PAGE page,
+                            FPDF_ANNOTATION annot,
+                            uint32_t* out_removed_annot_count) {
+  return EPDFPage_ApplyRedactions(page, &annot, 1, out_removed_annot_count);
+}
+
 // Applies one redaction and returns how many annotations other than REDACT
 // ones were removed alongside it.
 uint32_t ApplyRedactionCountingRemoved(FPDF_PAGE page, FPDF_ANNOTATION annot) {
   uint32_t removed_count = 0;
-  EXPECT_TRUE(EPDFAnnot_ApplyRedaction(page, annot, &removed_count));
+  EXPECT_TRUE(ApplyOneRedaction(page, annot, &removed_count));
   return removed_count;
 }
 
 uint32_t ApplyPageRedactionsCountingRemoved(FPDF_PAGE page) {
   uint32_t removed_count = 0;
-  EXPECT_TRUE(EPDFPage_ApplyRedactions(page, &removed_count));
+  EXPECT_TRUE(EPDFPage_ApplyRedactions(page, nullptr, 0, &removed_count));
   return removed_count;
 }
 
@@ -2250,7 +2257,7 @@ TEST_F(EPDFAnnotEmbedderTest, RedactLabelRegisteredFontInstallsRealDrEntry) {
     ASSERT_TRUE(EPDFAnnot_SetOverlayText(annot.get(), text.get()));
     ASSERT_TRUE(EPDFAnnot_SetDefaultAppearanceRegisteredFont(
         annot.get(), roboto_id, 12.0f, 255, 255, 255));
-    ASSERT_TRUE(EPDFAnnot_ApplyRedaction(page.get(), annot.get(), nullptr));
+    ASSERT_TRUE(ApplyOneRedaction(page.get(), annot.get(), nullptr));
   }
   RetainPtr<const CPDF_Dictionary> dr_entry =
       GetDrFontEntry(doc.get(), RegisteredFontAlias(roboto_id));
@@ -5251,7 +5258,7 @@ TEST_F(EPDFAnnotEmbedderTest, ApplyRedactionRemovesTextInMiddleOfSentence) {
   {
     ScopedFPDFAnnotation annot(FPDFPage_GetAnnot(page.get(), 0));
     ASSERT_TRUE(annot);
-    ASSERT_TRUE(EPDFAnnot_ApplyRedaction(page.get(), annot.get(), nullptr));
+    ASSERT_TRUE(ApplyOneRedaction(page.get(), annot.get(), nullptr));
   }
 
   ASSERT_EQ(0, FPDFPage_GetAnnotCount(page.get()));
@@ -5306,7 +5313,7 @@ TEST_F(EPDFAnnotEmbedderTest,
     ScopedFPDFAnnotation annot =
         CreateRedactAnnot(page.get(), {280.0f, 550.0f, 332.0f, 250.0f});
     ASSERT_TRUE(annot);
-    ASSERT_TRUE(EPDFAnnot_ApplyRedaction(page.get(), annot.get(), nullptr));
+    ASSERT_TRUE(ApplyOneRedaction(page.get(), annot.get(), nullptr));
   }
   ASSERT_EQ(0, FPDFPage_GetAnnotCount(page.get()));
   ASSERT_EQ(original_object_count + 2, FPDFPage_CountObjects(page.get()));
@@ -5361,7 +5368,7 @@ TEST_F(EPDFAnnotEmbedderTest,
     ScopedFPDFAnnotation annot =
         CreateRedactAnnot(page.get(), {280.0f, 425.0f, 332.0f, 375.0f});
     ASSERT_TRUE(annot);
-    ASSERT_TRUE(EPDFAnnot_ApplyRedaction(page.get(), annot.get(), nullptr));
+    ASSERT_TRUE(ApplyOneRedaction(page.get(), annot.get(), nullptr));
   }
   ASSERT_EQ(original_object_count + 1, FPDFPage_CountObjects(page.get()));
   ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
@@ -5434,8 +5441,7 @@ TEST_F(EPDFAnnotEmbedderTest,
     ScopedFPDFAnnotation annot =
         CreateRedactAnnot(target_page.get(), {140.0f, 420.0f, 160.0f, 280.0f});
     ASSERT_TRUE(annot);
-    ASSERT_TRUE(
-        EPDFAnnot_ApplyRedaction(target_page.get(), annot.get(), nullptr));
+    ASSERT_TRUE(ApplyOneRedaction(target_page.get(), annot.get(), nullptr));
   }
   ASSERT_TRUE(FPDFPage_GenerateContent(target_page.get()));
 
@@ -5985,7 +5991,7 @@ TEST_F(EPDFAnnotEmbedderTest, ApplyRedactionRotatedQuadSparesNeighbours) {
     ASSERT_TRUE(FPDFAnnot_AppendAttachmentPoints(annot.get(), &region));
     const FS_RECTF rect = {bbox_left, bbox_top, bbox_right, bbox_bottom};
     ASSERT_TRUE(FPDFAnnot_SetRect(annot.get(), &rect));
-    ASSERT_TRUE(EPDFAnnot_ApplyRedaction(page.get(), annot.get(), nullptr));
+    ASSERT_TRUE(ApplyOneRedaction(page.get(), annot.get(), nullptr));
   }
 
   ASSERT_EQ(0, FPDFPage_GetAnnotCount(page.get()));
@@ -6013,7 +6019,7 @@ TEST_F(EPDFAnnotEmbedderTest, ApplyRedactionFallsBackToRectForNonFiniteQuad) {
     ASSERT_TRUE(FPDFAnnot_GetAttachmentPoints(annot.get(), 0, &quad));
     quad.x4 = std::numeric_limits<float>::quiet_NaN();
     ASSERT_TRUE(FPDFAnnot_SetAttachmentPoints(annot.get(), 0, &quad));
-    ASSERT_TRUE(EPDFAnnot_ApplyRedaction(page.get(), annot.get(), nullptr));
+    ASSERT_TRUE(ApplyOneRedaction(page.get(), annot.get(), nullptr));
   }
 
   ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
@@ -6165,7 +6171,7 @@ TEST_F(EPDFAnnotEmbedderTest, ApplyPageRedactionsTwoMarksOnOneTextObject) {
   ASSERT_EQ(2, FPDFPage_GetAnnotCount(page.get()));
 
   uint32_t removed = 0;
-  ASSERT_TRUE(EPDFPage_ApplyRedactions(page.get(), &removed));
+  ASSERT_TRUE(EPDFPage_ApplyRedactions(page.get(), nullptr, 0, &removed));
   EXPECT_EQ(0u, removed);
   ASSERT_EQ(0, FPDFPage_GetAnnotCount(page.get()));
   ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
@@ -6577,7 +6583,7 @@ TEST_F(EPDFAnnotEmbedderTest, ApplyRedactionRemovesTheMarksOwnPopup) {
 
   // As applying the page's marks does: the mark goes, and its popup with it.
   uint32_t removed = 7;
-  ASSERT_TRUE(EPDFAnnot_ApplyRedaction(page.get(), redact.get(), &removed));
+  ASSERT_TRUE(ApplyOneRedaction(page.get(), redact.get(), &removed));
   EXPECT_EQ(1u, removed);
   EXPECT_EQ(0, FPDFPage_GetAnnotCount(page.get()));
 }
@@ -6615,8 +6621,7 @@ TEST_F(EPDFAnnotEmbedderTest, ApplyRedactionSynthesizesInteriorColorFill) {
                                    FPDFANNOT_COLORTYPE_InteriorColor,
                                    /*R=*/0, /*G=*/0, /*B=*/0, /*A=*/255));
     uint32_t removed_count = 7;  // Sentinel: must be zeroed on entry.
-    ASSERT_TRUE(
-        EPDFAnnot_ApplyRedaction(page.get(), annot.get(), &removed_count));
+    ASSERT_TRUE(ApplyOneRedaction(page.get(), annot.get(), &removed_count));
     EXPECT_EQ(0u, removed_count);
   }
   ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
@@ -6645,7 +6650,7 @@ TEST_F(EPDFAnnotEmbedderTest, ApplyRedactionSynthesizesOverlayTextLabel) {
                                                FPDF_FONT_HELVETICA, 12.0f,
                                                /*R=*/255, /*G=*/255,
                                                /*B=*/255));
-    ASSERT_TRUE(EPDFAnnot_ApplyRedaction(page.get(), annot.get(), nullptr));
+    ASSERT_TRUE(ApplyOneRedaction(page.get(), annot.get(), nullptr));
   }
   ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
 
@@ -6677,7 +6682,7 @@ TEST_F(EPDFAnnotEmbedderTest, ApplyRedactionRepeatsOverlayTextToFillRegion) {
                                                FPDF_FONT_HELVETICA, 12.0f,
                                                /*R=*/255, /*G=*/255,
                                                /*B=*/255));
-    ASSERT_TRUE(EPDFAnnot_ApplyRedaction(page.get(), annot.get(), nullptr));
+    ASSERT_TRUE(ApplyOneRedaction(page.get(), annot.get(), nullptr));
   }
   ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
 
@@ -6709,7 +6714,7 @@ TEST_F(EPDFAnnotEmbedderTest, ApplyRedactionHonorsOverlayTextAlignment) {
                                                FPDF_FONT_HELVETICA, 12.0f,
                                                /*R=*/255, /*G=*/255,
                                                /*B=*/255));
-    ASSERT_TRUE(EPDFAnnot_ApplyRedaction(page.get(), annot.get(), nullptr));
+    ASSERT_TRUE(ApplyOneRedaction(page.get(), annot.get(), nullptr));
   }
   ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
 
@@ -6747,7 +6752,7 @@ TEST_F(EPDFAnnotEmbedderTest, ApplyRedactionPrefersBakedOverlayStream) {
     ic->AppendNew<CPDF_Number>(1.0f);
     ic->AppendNew<CPDF_Number>(1.0f);
     ic->AppendNew<CPDF_Number>(1.0f);
-    ASSERT_TRUE(EPDFAnnot_ApplyRedaction(page.get(), annot.get(), nullptr));
+    ASSERT_TRUE(ApplyOneRedaction(page.get(), annot.get(), nullptr));
   }
   ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
 
@@ -6767,8 +6772,7 @@ TEST_F(EPDFAnnotEmbedderTest, ApplyRedactionWithoutOverlayLeavesRegionClear) {
     ASSERT_TRUE(annot);
     // No /RO, no /IC, no /OverlayText: ISO leaves the region transparent.
     uint32_t removed_count = 7;
-    ASSERT_TRUE(
-        EPDFAnnot_ApplyRedaction(page.get(), annot.get(), &removed_count));
+    ASSERT_TRUE(ApplyOneRedaction(page.get(), annot.get(), &removed_count));
     EXPECT_EQ(0u, removed_count);
   }
   ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
@@ -6804,8 +6808,7 @@ TEST_F(EPDFAnnotEmbedderTest, ApplyRedactionPreservesInheritedColorspaceResource
     ScopedFPDFAnnotation annot(FPDFPage_GetAnnot(page.get(), 0));
     ASSERT_TRUE(annot);
     uint32_t removed_count = 7;
-    ASSERT_TRUE(
-        EPDFAnnot_ApplyRedaction(page.get(), annot.get(), &removed_count));
+    ASSERT_TRUE(ApplyOneRedaction(page.get(), annot.get(), &removed_count));
     EXPECT_EQ(0u, removed_count);
   }
   ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
@@ -6841,7 +6844,7 @@ TEST_F(EPDFAnnotEmbedderTest, ApplyRedactionOnNeverParsedPageRemovesText) {
   {
     ScopedFPDFAnnotation annot(FPDFPage_GetAnnot(page.get(), 0));
     ASSERT_TRUE(annot);
-    ASSERT_TRUE(EPDFAnnot_ApplyRedaction(page.get(), annot.get(), nullptr));
+    ASSERT_TRUE(ApplyOneRedaction(page.get(), annot.get(), nullptr));
   }
   ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
   ASSERT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
@@ -6942,7 +6945,7 @@ TEST_F(EPDFAnnotEmbedderTest, ApplyRedactionBurnsInAutoSizedLabel) {
                                                /*R=*/255, /*G=*/255,
                                                /*B=*/255));
     ASSERT_TRUE(EPDFAnnot_GenerateAppearance(annot.get()));
-    ASSERT_TRUE(EPDFAnnot_ApplyRedaction(page.get(), annot.get(), nullptr));
+    ASSERT_TRUE(ApplyOneRedaction(page.get(), annot.get(), nullptr));
   }
   ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
 
@@ -6977,7 +6980,7 @@ TEST_F(EPDFAnnotEmbedderTest, ApplyRedactionRepeatsAutoSizedLabel) {
                                                /*R=*/255, /*G=*/255,
                                                /*B=*/255));
     ASSERT_TRUE(EPDFAnnot_GenerateAppearance(annot.get()));
-    ASSERT_TRUE(EPDFAnnot_ApplyRedaction(page.get(), annot.get(), nullptr));
+    ASSERT_TRUE(ApplyOneRedaction(page.get(), annot.get(), nullptr));
   }
   ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
 
@@ -7005,7 +7008,7 @@ TEST_F(EPDFAnnotEmbedderTest, ApplyRedactionLabelWithoutDaFontUsesHelvetica) {
     ASSERT_TRUE(EPDFAnnot_SetOverlayText(annot.get(), text.get()));
     ScopedFPDFWideString da = GetFPDFWideString(L"1 1 1 rg");
     ASSERT_TRUE(FPDFAnnot_SetStringValue(annot.get(), "DA", da.get()));
-    ASSERT_TRUE(EPDFAnnot_ApplyRedaction(page.get(), annot.get(), nullptr));
+    ASSERT_TRUE(ApplyOneRedaction(page.get(), annot.get(), nullptr));
   }
   ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
 

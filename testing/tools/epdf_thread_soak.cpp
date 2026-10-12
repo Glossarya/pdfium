@@ -242,7 +242,8 @@ bool Redact(FPDF_PAGE page) {
     }
   }
   uint32_t removed = 0;
-  return EPDFPage_ApplyRedactions(page, &removed);
+  // Every REDACT annotation on the page (no marks named).
+  return EPDFPage_ApplyRedactions(page, nullptr, 0, &removed);
 }
 
 // One action, as the engine runs it: a transaction around the writes.

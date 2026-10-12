@@ -428,8 +428,8 @@ FPDF_EXPORT FPDF_FONT FPDF_CALLCONV FPDFText_LoadFont(FPDF_DOCUMENT document,
   // TODO(npm): Maybe use FT_Get_X11_Font_Format to check format? Otherwise, we
   // are allowing giving any font that can be loaded on freetype and setting it
   // as any font type.
-  if (!pFont->LoadFaceFromSpan(span, /*force_vertical=*/false,
-                               /*object_tag=*/0)) {
+  if (!pFont->LoadFaceZeroFromSpan(span, /*force_vertical=*/false,
+                                   /*object_tag=*/0)) {
     return nullptr;
   }
 
@@ -473,8 +473,8 @@ FPDFText_LoadCidType2Font(FPDF_DOCUMENT document,
 
   // TODO(thestig): Consider checking the font format. See similar comment in
   // FPDFText_LoadFont() above.
-  if (!font->LoadFaceFromSpan(font_span, /*force_vertical=*/false,
-                              /*object_tag=*/0)) {
+  if (!font->LoadFaceZeroFromSpan(font_span, /*force_vertical=*/false,
+                                  /*object_tag=*/0)) {
     return nullptr;
   }
 
@@ -805,8 +805,10 @@ FPDFFont_GetGlyphPath(FPDF_FONT font, uint32_t glyph, float font_size) {
   }
 
   uint32_t charcode = pFont->CharCodeFromUnicode(static_cast<wchar_t>(glyph));
+  static constexpr float kCharCodePosition = 0;
   std::vector<TextCharPos> pos = pFont->GetCharPosList(
-      pdfium::span_from_ref(charcode), pdfium::span<const float>(), font_size);
+      pdfium::span_from_ref(charcode), pdfium::span_from_ref(kCharCodePosition),
+      font_size);
   if (pos.empty()) {
     return nullptr;
   }

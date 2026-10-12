@@ -84,7 +84,7 @@ class CPDF_StreamContentParser {
 
   CPDF_AllStates* GetCurStates() const { return cur_states_.get(); }
   bool IsColored() const { return colored_; }
-  pdfium::span<const float> GetType3Data() const { return type3_data_; }
+  pdfium::span<const float, 6> GetType3Data() const { return type3_data_; }
   RetainPtr<CPDF_Font> FindFont(const ByteString& name);
   CPDF_PageObjectHolder::CTMMap TakeAllCTMs();
 

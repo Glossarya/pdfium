@@ -37,6 +37,7 @@
 #include "core/fxcrt/zip.h"
 #include "core/fxge/cfx_defaultrenderdevice.h"
 #include "core/fxge/cfx_fillrenderoptions.h"
+#include "core/fxge/cfx_gemodule.h"
 #include "core/fxge/cfx_path.h"
 #include "core/fxge/dib/cfx_dibbase.h"
 #include "core/fxge/dib/cfx_dibitmap.h"
@@ -227,8 +228,7 @@ bool CPDF_ImageRenderer::IsPrinting() const {
   }
 
   // Make sure the assumption that no printer device supports blend mode holds.
-  CHECK(
-      !(render_status_->GetRenderDevice()->GetRenderCaps() & FXRC_BLEND_MODE));
+  CHECK(!render_status_->GetRenderDevice()->RenderCapBlendMode());
   return true;
 }
 
@@ -402,7 +402,7 @@ bool CPDF_ImageRenderer::DrawMaskedImage() {
   }
 
 #if defined(PDF_USE_SKIA)
-  if (CFX_DefaultRenderDevice::UseSkiaRenderer() &&
+  if (CFX_GEModule::Get()->UseSkiaRenderer() &&
       render_status_->GetRenderDevice()->SetBitsWithMask(
           bitmap_device.GetBitmap(), mask_bitmap, rect.left, rect.top, alpha_,
           blend_type_)) {

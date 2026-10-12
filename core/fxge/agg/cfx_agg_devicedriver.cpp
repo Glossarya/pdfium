@@ -1324,31 +1324,45 @@ DeviceType CFX_AggDeviceDriver::GetDeviceType() const {
   return DeviceType::kDisplay;
 }
 
-int CFX_AggDeviceDriver::GetDeviceCaps(int caps_id) const {
-  switch (caps_id) {
-    case FXDC_PIXEL_WIDTH:
-      return bitmap_->GetWidth();
-    case FXDC_PIXEL_HEIGHT:
-      return bitmap_->GetHeight();
-    case FXDC_BITS_PIXEL:
-      return bitmap_->GetBPP();
-    case FXDC_HORZ_SIZE:
-    case FXDC_VERT_SIZE:
-      return 0;
-    case FXDC_RENDER_CAPS: {
-      int flags = FXRC_GET_BITS | FXRC_ALPHA_PATH | FXRC_ALPHA_IMAGE |
-                  FXRC_BLEND_MODE | FXRC_SOFT_CLIP;
-      if (bitmap_->IsAlphaFormat()) {
-        flags |= FXRC_ALPHA_OUTPUT;
-      } else if (bitmap_->IsMaskFormat()) {
-        CHECK_NE(bitmap_->GetBPP(), 1);  // Matches format CHECKs in the ctor.
-        flags |= FXRC_BYTEMASK_OUTPUT;
-      }
-      return flags;
-    }
-    default:
-      NOTREACHED();
-  }
+bool CFX_AggDeviceDriver::RenderCapGetBits() const {
+  return true;
+}
+
+bool CFX_AggDeviceDriver::RenderCapAlphaPath() const {
+  return true;
+}
+
+bool CFX_AggDeviceDriver::RenderCapAlphaImage() const {
+  return true;
+}
+
+bool CFX_AggDeviceDriver::RenderCapBlendMode() const {
+  return true;
+}
+
+bool CFX_AggDeviceDriver::RenderCapSoftClip() const {
+  return true;
+}
+
+bool CFX_AggDeviceDriver::RenderCapAlphaOutput() const {
+  return bitmap_->IsAlphaFormat();
+}
+
+bool CFX_AggDeviceDriver::RenderCapByteMaskOutput() const {
+  CHECK_NE(bitmap_->GetBPP(), 1);  // Matches format CHECKs in the ctor.
+  return bitmap_->IsMaskFormat();
+}
+
+int CFX_AggDeviceDriver::GetPixelWidth() const {
+  return bitmap_->GetWidth();
+}
+
+int CFX_AggDeviceDriver::GetPixelHeight() const {
+  return bitmap_->GetHeight();
+}
+
+int CFX_AggDeviceDriver::GetBitsPerPixel() const {
+  return bitmap_->GetBPP();
 }
 
 void CFX_AggDeviceDriver::SaveState() {
@@ -1408,15 +1422,14 @@ bool CFX_AggDeviceDriver::SetClip_PathFill(
 
   fill_options_ = fill_options;
   if (!clip_rgn_) {
-    clip_rgn_ = std::make_unique<CFX_AggClipRgn>(
-        GetDeviceCaps(FXDC_PIXEL_WIDTH), GetDeviceCaps(FXDC_PIXEL_HEIGHT));
+    clip_rgn_ =
+        std::make_unique<CFX_AggClipRgn>(GetPixelWidth(), GetPixelHeight());
   }
   std::optional<CFX_FloatRect> maybe_rectf = path.GetRect(pObject2Device);
   if (maybe_rectf.has_value()) {
     CFX_FloatRect& rectf = maybe_rectf.value();
-    rectf.Intersect(
-        CFX_FloatRect(0, 0, static_cast<float>(GetDeviceCaps(FXDC_PIXEL_WIDTH)),
-                      static_cast<float>(GetDeviceCaps(FXDC_PIXEL_HEIGHT))));
+    rectf.Intersect(CFX_FloatRect(0, 0, static_cast<float>(GetPixelWidth()),
+                                  static_cast<float>(GetPixelHeight())));
     FX_RECT rect = rectf.GetOuterRect();
     clip_rgn_->IntersectRect(rect);
     return true;
@@ -1426,9 +1439,9 @@ bool CFX_AggDeviceDriver::SetClip_PathFill(
   agg::path_storage& path_data = workspace.EmptyPath();
   BuildAggPath(path, pObject2Device, path_data);
   path_data.end_poly();
-  agg::rasterizer_scanline_aa& rasterizer = workspace.InitialRasterizer(
-      static_cast<float>(GetDeviceCaps(FXDC_PIXEL_WIDTH)),
-      static_cast<float>(GetDeviceCaps(FXDC_PIXEL_HEIGHT)));
+  agg::rasterizer_scanline_aa& rasterizer =
+      workspace.InitialRasterizer(static_cast<float>(GetPixelWidth()),
+                                  static_cast<float>(GetPixelHeight()));
   rasterizer.add_path(path_data);
   rasterizer.filling_rule(GetAlternateOrWindingFillType(fill_options));
   SetClipMask(rasterizer);
@@ -1441,16 +1454,16 @@ bool CFX_AggDeviceDriver::SetClip_PathStroke(
     const CFX_Matrix* pObject2Device,
     const CFX_GraphStateData* pGraphState) {
   if (!clip_rgn_) {
-    clip_rgn_ = std::make_unique<CFX_AggClipRgn>(
-        GetDeviceCaps(FXDC_PIXEL_WIDTH), GetDeviceCaps(FXDC_PIXEL_HEIGHT));
+    clip_rgn_ =
+        std::make_unique<CFX_AggClipRgn>(GetPixelWidth(), GetPixelHeight());
   }
   // EmbedPDF(render-speedup): draws with the device's reused workspace.
   Workspace& workspace = GetWorkspace();
   agg::path_storage& path_data = workspace.EmptyPath();
   BuildAggPath(path, nullptr, path_data);
-  agg::rasterizer_scanline_aa& rasterizer = workspace.InitialRasterizer(
-      static_cast<float>(GetDeviceCaps(FXDC_PIXEL_WIDTH)),
-      static_cast<float>(GetDeviceCaps(FXDC_PIXEL_HEIGHT)));
+  agg::rasterizer_scanline_aa& rasterizer =
+      workspace.InitialRasterizer(static_cast<float>(GetPixelWidth()),
+                                  static_cast<float>(GetPixelHeight()));
   RasterizeStroke(&rasterizer, &path_data, workspace.solid_stroke(),
                   pObject2Device, pGraphState, 1.0f, false);
   rasterizer.filling_rule(agg::fill_non_zero);
@@ -1548,8 +1561,8 @@ bool CFX_AggDeviceDriver::DrawPath(const CFX_Path& path,
                                 fill_options,
                                 fill_pass,
                                 stroke_pass,
-                                GetDeviceCaps(FXDC_PIXEL_WIDTH),
-                                GetDeviceCaps(FXDC_PIXEL_HEIGHT)};
+                                GetPixelWidth(),
+                                GetPixelHeight()};
   if (!path_memo_->SameInputs(inputs)) {
     // The object repeats with new inputs: keep them and record this call for
     // the calls that repeat them. Only objects the content stream repeats get
@@ -1590,9 +1603,9 @@ void CFX_AggDeviceDriver::DrawPathPasses(
     uint32_t stroke_color,
     const CFX_FillRenderOptions& fill_options,
     PathMemo* record) {
-  const float device_width = static_cast<float>(GetDeviceCaps(FXDC_PIXEL_WIDTH));
+  const float device_width = static_cast<float>(GetPixelWidth());
   const float device_height =
-      static_cast<float>(GetDeviceCaps(FXDC_PIXEL_HEIGHT));
+      static_cast<float>(GetPixelHeight());
   if (fill_options.fill_type != CFX_FillRenderOptions::FillType::kNoFill &&
       fill_color) {
     Workspace& workspace = GetWorkspace();
@@ -1685,8 +1698,7 @@ FX_RECT CFX_AggDeviceDriver::GetClipBox() const {
   if (clip_rgn_) {
     return clip_rgn_->GetBox();
   }
-  return FX_RECT(0, 0, GetDeviceCaps(FXDC_PIXEL_WIDTH),
-                 GetDeviceCaps(FXDC_PIXEL_HEIGHT));
+  return FX_RECT(0, 0, GetPixelWidth(), GetPixelHeight());
 }
 
 bool CFX_AggDeviceDriver::GetDIBits(RetainPtr<CFX_DIBitmap> bitmap,

@@ -19,16 +19,24 @@
 #include "core/fxcrt/numerics/safe_conversions.h"
 #include "core/fxcrt/numerics/safe_math.h"
 #include "core/fxcrt/unowned_ptr.h"
-#include "core/fxge/cfx_font.h"
 #include "core/fxge/cfx_fontmgr.h"
 #include "core/fxge/cfx_gemodule.h"
 #include "core/fxge/cfx_glyphbitmap.h"
+#include "core/fxge/cfx_glyphcache.h"
 #include "core/fxge/cfx_path.h"
 #include "core/fxge/cfx_substfont.h"
 #include "core/fxge/dib/cfx_dibitmap.h"
 #include "core/fxge/dib/fx_dib.h"
 #include "core/fxge/fx_font.h"
 #include "core/fxge/fx_fontencoding.h"
+
+#if defined(PDF_USE_SKIA)
+#include "third_party/skia/include/core/SkTypeface.h"  // nogncheck
+
+// Define the following to enable additional runtime checks during
+// the development process.
+// #define PDF_ENABLE_SKIA_TYPEFACE_CHECKS 1
+#endif
 
 #define EM_ADJUST(em, a) (em == 0 ? (a) : (a) * 1000 / em)
 
@@ -38,9 +46,9 @@ struct OUTLINE_PARAMS {
   UnownedPtr<CFX_Path> path_;
   FT_Pos cur_x_;
   FT_Pos cur_y_;
-  float coord_unit_;
 };
 
+constexpr float kCoordUnit = 64 * 64.0f;
 constexpr int kThousandthMinInt = std::numeric_limits<int>::min() / 1000;
 constexpr int kThousandthMaxInt = std::numeric_limits<int>::max() / 1000;
 
@@ -148,9 +156,8 @@ int Outline_MoveTo(const FT_Vector* to, void* user) {
   Outline_CheckEmptyContour(param);
 
   param->path_->ClosePath();
-  param->path_->AppendPoint(
-      CFX_PointF(to->x / param->coord_unit_, to->y / param->coord_unit_),
-      CFX_Path::Point::Type::kMove);
+  param->path_->AppendPoint(CFX_PointF(to->x / kCoordUnit, to->y / kCoordUnit),
+                            CFX_Path::Point::Type::kMove);
 
   param->cur_x_ = to->x;
   param->cur_y_ = to->y;
@@ -160,9 +167,8 @@ int Outline_MoveTo(const FT_Vector* to, void* user) {
 int Outline_LineTo(const FT_Vector* to, void* user) {
   OUTLINE_PARAMS* param = static_cast<OUTLINE_PARAMS*>(user);
 
-  param->path_->AppendPoint(
-      CFX_PointF(to->x / param->coord_unit_, to->y / param->coord_unit_),
-      CFX_Path::Point::Type::kLine);
+  param->path_->AppendPoint(CFX_PointF(to->x / kCoordUnit, to->y / kCoordUnit),
+                            CFX_Path::Point::Type::kLine);
 
   param->cur_x_ = to->x;
   param->cur_y_ = to->y;
@@ -173,20 +179,18 @@ int Outline_ConicTo(const FT_Vector* control, const FT_Vector* to, void* user) {
   OUTLINE_PARAMS* param = static_cast<OUTLINE_PARAMS*>(user);
 
   param->path_->AppendPoint(
-      CFX_PointF((param->cur_x_ + (control->x - param->cur_x_) * 2 / 3) /
-                     param->coord_unit_,
-                 (param->cur_y_ + (control->y - param->cur_y_) * 2 / 3) /
-                     param->coord_unit_),
+      CFX_PointF(
+          (param->cur_x_ + (control->x - param->cur_x_) * 2 / 3) / kCoordUnit,
+          (param->cur_y_ + (control->y - param->cur_y_) * 2 / 3) / kCoordUnit),
       CFX_Path::Point::Type::kBezier);
 
   param->path_->AppendPoint(
-      CFX_PointF((control->x + (to->x - control->x) / 3) / param->coord_unit_,
-                 (control->y + (to->y - control->y) / 3) / param->coord_unit_),
+      CFX_PointF((control->x + (to->x - control->x) / 3) / kCoordUnit,
+                 (control->y + (to->y - control->y) / 3) / kCoordUnit),
       CFX_Path::Point::Type::kBezier);
 
-  param->path_->AppendPoint(
-      CFX_PointF(to->x / param->coord_unit_, to->y / param->coord_unit_),
-      CFX_Path::Point::Type::kBezier);
+  param->path_->AppendPoint(CFX_PointF(to->x / kCoordUnit, to->y / kCoordUnit),
+                            CFX_Path::Point::Type::kBezier);
 
   param->cur_x_ = to->x;
   param->cur_y_ = to->y;
@@ -199,17 +203,16 @@ int Outline_CubicTo(const FT_Vector* control1,
                     void* user) {
   OUTLINE_PARAMS* param = static_cast<OUTLINE_PARAMS*>(user);
 
-  param->path_->AppendPoint(CFX_PointF(control1->x / param->coord_unit_,
-                                       control1->y / param->coord_unit_),
-                            CFX_Path::Point::Type::kBezier);
-
-  param->path_->AppendPoint(CFX_PointF(control2->x / param->coord_unit_,
-                                       control2->y / param->coord_unit_),
-                            CFX_Path::Point::Type::kBezier);
+  param->path_->AppendPoint(
+      CFX_PointF(control1->x / kCoordUnit, control1->y / kCoordUnit),
+      CFX_Path::Point::Type::kBezier);
 
   param->path_->AppendPoint(
-      CFX_PointF(to->x / param->coord_unit_, to->y / param->coord_unit_),
+      CFX_PointF(control2->x / kCoordUnit, control2->y / kCoordUnit),
       CFX_Path::Point::Type::kBezier);
+
+  param->path_->AppendPoint(CFX_PointF(to->x / kCoordUnit, to->y / kCoordUnit),
+                            CFX_Path::Point::Type::kBezier);
 
   param->cur_x_ = to->x;
   param->cur_y_ = to->y;
@@ -371,10 +374,11 @@ class ScopedFaceVariation {
 }  // namespace
 
 // static
-RetainPtr<CFX_Face> CFX_Face::New(CFX_FontMgr* font_mgr,
-                                  RetainPtr<Retainable> desc,
-                                  pdfium::span<const uint8_t> data,
+RetainPtr<CFX_Face> CFX_Face::New(RetainPtr<Retainable> cache_entry,
+                                  RetainPtr<CFX_ReadOnlySpanStream> font_stream,
                                   uint32_t face_index) {
+  CFX_FontMgr* font_mgr = CFX_GEModule::Get()->GetFontMgr();
+  pdfium::span<const uint8_t> data = font_stream->span();
   FT_FaceRec* face_rec = nullptr;
   if (FT_New_Memory_Face(font_mgr->GetFTLibrary(), data.data(),
                          pdfium::checked_cast<FT_Long>(data.size()),
@@ -382,32 +386,17 @@ RetainPtr<CFX_Face> CFX_Face::New(CFX_FontMgr* font_mgr,
                          &face_rec) != 0) {
     return nullptr;
   }
-
+  if (FT_Set_Pixel_Sizes(face_rec, 64, 64) != 0) {
+    return nullptr;
+  }
   // Private ctor.
-  auto face = pdfium::WrapRetain(new CFX_Face(face_rec, std::move(desc)));
-  if (FT_Set_Pixel_Sizes(face->GetRec(), 64, 64) != 0) {
-    return nullptr;
-  }
-  return face;
+  auto result = pdfium::WrapRetain(
+      new CFX_Face(std::move(cache_entry), std::move(font_stream), face_rec));
+#if defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
+  result->skia_typeface_ = font_mgr->MakeSkTypeface(result->GetData());
+#endif
+  return result;
 }
-
-#if defined(PDF_ENABLE_XFA) || BUILDFLAG(IS_ANDROID)
-RetainPtr<CFX_Face> CFX_Face::NewFromSpanStream(
-    CFX_FontMgr* font_mgr,
-    const RetainPtr<CFX_ReadOnlySpanStream>& font_stream,
-    uint32_t face_index) {
-  if (!font_stream) {
-    return nullptr;
-  }
-  RetainPtr<CFX_Face> face =
-      New(font_mgr, nullptr, font_stream->span(), face_index);
-  if (!face) {
-    return nullptr;
-  }
-  face->owned_font_stream_ = std::move(font_stream);
-  return face;
-}
-#endif  // defined(PDF_ENABLE_XFA) || BUILDFLAG(IS_ANDROID)
 
 bool CFX_Face::HasGlyphNames() const {
   return !!(GetRec()->face_flags & FT_FACE_FLAG_GLYPH_NAMES);
@@ -466,10 +455,8 @@ int16_t CFX_Face::GetDescender() const {
   return pdfium::checked_cast<int16_t>(GetRec()->descender);
 }
 
-pdfium::span<uint8_t> CFX_Face::GetData() const {
-  // TODO(tsepez): justify safety from library API.
-  return UNSAFE_BUFFERS(
-      pdfium::span(GetRec()->stream->base, GetRec()->stream->size));
+pdfium::span<const uint8_t> CFX_Face::GetData() const {
+  return font_stream_->span();
 }
 
 size_t CFX_Face::GetSfntTable(uint32_t table, pdfium::span<uint8_t> buffer) {
@@ -526,30 +513,30 @@ int CFX_Face::GetGlyphCount() const {
 }
 
 std::unique_ptr<CFX_GlyphBitmap> CFX_Face::RenderGlyph(
-    const CFX_Font* font,
     uint32_t glyph_index,
-    bool bFontStyle,
+    bool font_style,
+    bool is_vertical,
     const CFX_Matrix& matrix,
     int dest_width,
-    FontAntiAliasingMode anti_alias) {
+    FontAntiAliasingMode anti_alias,
+    const CFX_SubstFont* subst_font) {
   FT_Matrix ft_matrix;
   ft_matrix.xx = matrix.a / 64 * 65536;
   ft_matrix.xy = matrix.c / 64 * 65536;
   ft_matrix.yx = matrix.b / 64 * 65536;
   ft_matrix.yy = matrix.d / 64 * 65536;
   bool bUseCJKSubFont = false;
-  const CFX_SubstFont* pSubstFont = font->GetSubstFont();
-  if (pSubstFont) {
-    bUseCJKSubFont = pSubstFont->subst_cjk_ && bFontStyle;
+  if (subst_font) {
+    bUseCJKSubFont = subst_font->subst_cjk_ && font_style;
     int angle;
     if (bUseCJKSubFont) {
-      angle = pSubstFont->italic_cjk_ ? -15 : 0;
+      angle = subst_font->italic_cjk_ ? -15 : 0;
     } else {
-      angle = pSubstFont->italic_angle_;
+      angle = subst_font->italic_angle_;
     }
     if (angle) {
       int skew = GetSkewFromAngle(angle);
-      if (font->IsVertical()) {
+      if (is_vertical) {
         ft_matrix.yx += ft_matrix.yy * skew / 100;
       } else {
         ft_matrix.xy -= ft_matrix.xx * skew / 100;
@@ -560,12 +547,10 @@ std::unique_ptr<CFX_GlyphBitmap> CFX_Face::RenderGlyph(
   // EmbedPDF(substitute-font-bounds): the design set for this glyph is undone
   // when the call returns.
   const bool adjust_variation =
-      pSubstFont && pSubstFont->IsBuiltInGenericFont();
-  ScopedFaceVariation scoped_variation(font->GetFace()->GetRec(),
-                                       adjust_variation);
+      subst_font && subst_font->IsBuiltInGenericFont();
+  ScopedFaceVariation scoped_variation(GetRec(), adjust_variation);
   if (adjust_variation) {
-    font->GetFace()->AdjustVariationParams(glyph_index, dest_width,
-                                           pSubstFont->weight_);
+    AdjustVariationParams(glyph_index, dest_width, subst_font->weight_);
   }
 
   ScopedFaceTransform scoped_transform(GetRec(), &ft_matrix);
@@ -592,14 +577,14 @@ std::unique_ptr<CFX_GlyphBitmap> CFX_Face::RenderGlyph(
   auto* glyph = rec->glyph;
   int weight;
   if (bUseCJKSubFont) {
-    weight = pSubstFont->weight_cjk_;
+    weight = subst_font->weight_cjk_;
   } else {
-    weight = pSubstFont ? pSubstFont->weight_ : 0;
+    weight = subst_font ? subst_font->weight_ : 0;
   }
-  if (pSubstFont && !pSubstFont->IsBuiltInGenericFont() && weight > 400) {
+  if (subst_font && !subst_font->IsBuiltInGenericFont() && weight > 400) {
     uint32_t index = (weight - 400) / 10;
     pdfium::CheckedNumeric<signed long> level =
-        GetWeightLevel(pSubstFont->charset_, index);
+        GetWeightLevel(subst_font->charset_, index);
     if (level.ValueOrDefault(-1) < 0) {
       return nullptr;
     }
@@ -610,8 +595,8 @@ std::unique_ptr<CFX_GlyphBitmap> CFX_Face::RenderGlyph(
             36655;
     FT_Outline_Embolden(&glyph->outline, level.ValueOrDefault(0));
   }
-  FT_Library_SetLcdFilter(CFX_GEModule::Get()->GetFontMgr()->GetFTLibrary(),
-                          FT_LCD_FILTER_DEFAULT);
+  CFX_FontMgr* font_mgr = CFX_GEModule::Get()->GetFontMgr();
+  FT_Library_SetLcdFilter(font_mgr->GetFTLibrary(), FT_LCD_FILTER_DEFAULT);
   error =
       FT_Render_Glyph(glyph, FtRenderModeFromFontAntiAliasingMode(anti_alias));
   if (error) {
@@ -634,32 +619,31 @@ std::unique_ptr<CFX_GlyphBitmap> CFX_Face::RenderGlyph(
   auto pGlyphBitmap = std::make_unique<CFX_GlyphBitmap>(
       glyph->bitmap_left, glyph->bitmap_top, new_bitmap);
 
-  const int dest_pitch = new_bitmap->GetPitch();
-  uint8_t* pDestBuf = new_bitmap->GetWritableBuffer().data();
-  const uint8_t* pSrcBuf = ft_bitmap.buffer;
-  UNSAFE_TODO({
-    if (anti_alias != FontAntiAliasingMode::kMono &&
-        ft_bitmap.pixel_mode == FT_PIXEL_MODE_MONO) {
-      unsigned int bytes = anti_alias == FontAntiAliasingMode::kLcd ? 3 : 1;
-      for (unsigned int i = 0; i < ft_bitmap.rows; i++) {
-        for (unsigned int n = 0; n < ft_bitmap.width; n++) {
-          uint8_t data =
-              (pSrcBuf[i * ft_bitmap.pitch + n / 8] & (0x80 >> (n % 8))) ? 255
-                                                                         : 0;
-          for (unsigned int b = 0; b < bytes; b++) {
-            pDestBuf[i * dest_pitch + n * bytes + b] = data;
-          }
-        }
+  const uint32_t dest_pitch = new_bitmap->GetPitch();
+  const uint32_t src_pitch = abs(ft_bitmap.pitch);
+  pdfium::span<uint8_t> dest_span = new_bitmap->GetWritableBuffer();
+  pdfium::span<const uint8_t> src_span =
+      UNSAFE_TODO(pdfium::span<const uint8_t>(ft_bitmap.buffer,
+                                              src_pitch * ft_bitmap.rows));
+
+  if (anti_alias != FontAntiAliasingMode::kMono &&
+      ft_bitmap.pixel_mode == FT_PIXEL_MODE_MONO) {
+    for (unsigned int i = 0; i < ft_bitmap.rows; i++) {
+      for (unsigned int n = 0; n < ft_bitmap.width; n++) {
+        dest_span[n] = (src_span[n / 8] & (0x80 >> (n % 8))) ? 255 : 0;
       }
-    } else {
-      FXSYS_memset(pDestBuf, 0, dest_pitch * ft_bitmap.rows);
-      int rowbytes = std::min(abs(ft_bitmap.pitch), dest_pitch);
-      for (unsigned int row = 0; row < ft_bitmap.rows; row++) {
-        FXSYS_memcpy(pDestBuf + row * dest_pitch,
-                     pSrcBuf + row * ft_bitmap.pitch, rowbytes);
-      }
+      dest_span = dest_span.subspan(dest_pitch);
+      src_span = src_span.subspan(src_pitch);
     }
-  });
+  } else {
+    std::ranges::fill(dest_span, 0);
+    const uint32_t rowbytes = std::min(src_pitch, dest_pitch);
+    for (unsigned int row = 0; row < ft_bitmap.rows; row++) {
+      fxcrt::spancpy(dest_span, src_span.first(rowbytes));
+      dest_span = dest_span.subspan(dest_pitch);
+      src_span = src_span.subspan(src_pitch);
+    }
+  }
   return pGlyphBitmap;
 }
 
@@ -719,10 +703,11 @@ std::unique_ptr<CFX_Path> CFX_Face::LoadGlyphPath(
   funcs.delta = 0;
 
   auto pPath = std::make_unique<CFX_Path>();
-  OUTLINE_PARAMS params;
-  params.path_ = pPath.get();
-  params.cur_x_ = params.cur_y_ = 0;
-  params.coord_unit_ = 64 * 64.0;
+  OUTLINE_PARAMS params = {
+      .path_ = pPath.get(),
+      .cur_x_ = 0,
+      .cur_y_ = 0,
+  };
 
   FT_Outline_Decompose(&rec->glyph->outline, &funcs, &params);
   if (pPath->GetPoints().empty()) {
@@ -1032,10 +1017,24 @@ bool CFX_Face::CanEmbed() {
 }
 #endif
 
-CFX_Face::CFX_Face(FT_FaceRec* rec, RetainPtr<Retainable> pDesc)
-    : rec_(rec), desc_(std::move(pDesc)) {
+CFX_Face::CFX_Face(RetainPtr<Retainable> cache_entry,
+                   RetainPtr<CFX_ReadOnlySpanStream> font_stream,
+                   FT_FaceRec* rec)
+    : cache_entry_(std::move(cache_entry)),
+      font_stream_(std::move(font_stream)),
+      rec_(rec) {
   DCHECK(rec_);
 }
+
+#if defined(PDF_USE_SKIA)
+SkTypeface* CFX_Face::GetOrCreateSkTypeface() {
+  if (!skia_typeface_) {
+    skia_typeface_ =
+        CFX_GEModule::Get()->GetFontMgr()->MakeSkTypeface(GetData());
+  }
+  return skia_typeface_.get();
+}
+#endif
 
 CFX_Face::~CFX_Face() = default;
 

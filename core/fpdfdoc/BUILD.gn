@@ -134,7 +134,7 @@ source_set("fpdfdoc") {
     "../fxge",
     # EmbedPDF: CPDF_AnnotFontSubset uses HarfBuzz subsetting to embed only the
     # glyphs used by each saved annotation/layer.
-    "../../third_party/harfbuzz-ng",
+    "../../third_party/harfbuzz",
   ]
   visibility = [ "../../*" ]
 }

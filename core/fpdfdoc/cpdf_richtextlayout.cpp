@@ -269,18 +269,18 @@ std::vector<bool> CPDF_RichTextLayout::BreakOpportunities(
       opportunities[i] = true;  // LB8
       continue;
     }
-    switch (GetLineBreakTypeFromPair(before, classes[i])) {
-      case FX_LINEBREAKTYPE::kDIRECT_BRK:
+    switch (pdfium::GetLineBreakTypeFromPair(before, classes[i])) {
+      case pdfium::LineBreakType::kDirectBreak:
         opportunities[i] = true;
         break;
-      case FX_LINEBREAKTYPE::kINDIRECT_BRK:
-      case FX_LINEBREAKTYPE::kCOM_INDIRECT_BRK:
-      case FX_LINEBREAKTYPE::kHANGUL_SPACE_BRK:
-      case FX_LINEBREAKTYPE::kUNKNOWN:
+      case pdfium::LineBreakType::kIndirectBreak:
+      case pdfium::LineBreakType::kCommonIndirectBreak:
+      case pdfium::LineBreakType::kHangulSpaceBreak:
+      case pdfium::LineBreakType::kUnknown:
         opportunities[i] = spaces;
         break;
-      case FX_LINEBREAKTYPE::kPROHIBITED_BRK:
-      case FX_LINEBREAKTYPE::kCOM_PROHIBITED_BRK:
+      case pdfium::LineBreakType::kProhibitedBreak:
+      case pdfium::LineBreakType::kCommonProhibitedBreak:
         opportunities[i] = false;
         break;
     }

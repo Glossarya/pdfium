@@ -12,6 +12,7 @@
 
 #include "constants/annotation_common.h"
 #include "constants/annotation_flags.h"
+#include "constants/catalog.h"
 #include "constants/form_fields.h"
 #include "core/fpdfapi/page/cpdf_occontext.h"
 #include "core/fpdfapi/page/cpdf_page.h"

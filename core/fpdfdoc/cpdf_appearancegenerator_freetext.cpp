@@ -138,8 +138,7 @@ CalloutEnvelope AppendCalloutEnvelope(fxcrt::ostringstream& appearance_stream,
   // PDF's default black fill. Mirrors GenerateCircleAP / GenerateSquareAP.
   auto color_array = annot_dict->GetArrayFor(pdfium::annotation::kC);
   appearance_stream << GetColorStringWithDefault(
-      color_array.Get(), CFX_Color(CFX_Color::Type::kTransparent),
-      PaintOperation::kFill);
+      color_array.Get(), CFX_Color::MakeTransparent(), PaintOperation::kFill);
   appearance_stream << GenerateColorAP(da_color, PaintOperation::kStroke);
   if (border_w > 0) {
     appearance_stream << border_w << " w\n";

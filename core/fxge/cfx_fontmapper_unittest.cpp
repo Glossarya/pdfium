@@ -36,7 +36,7 @@ class MockSystemFontInfo : public SystemFontInfoIface {
   MOCK_METHOD(void, EnumFontList, (CFX_FontMapper*), (override));
   MOCK_METHOD(void*,
               MapFont,
-              (int, bool, FX_Charset, int, const ByteString&),
+              (CFX_FontMapper*, int, bool, FX_Charset, int, const ByteString&),
               (override));
   MOCK_METHOD(void*, GetFont, (const ByteString&), (override));
   MOCK_METHOD(size_t,
@@ -94,28 +94,6 @@ class CFXFontMapperSystemFontInfoTest : public testing::Test {
 
 // Deliberately give this global variable external linkage.
 char g_maybe_changes = '\xff';
-
-TEST(CFXFontMapperTest, IsStandardFontName) {
-  EXPECT_TRUE(CFX_FontMapper::IsStandardFontName("Courier"));
-  EXPECT_TRUE(CFX_FontMapper::IsStandardFontName("Courier-Bold"));
-  EXPECT_TRUE(CFX_FontMapper::IsStandardFontName("Courier-BoldOblique"));
-  EXPECT_TRUE(CFX_FontMapper::IsStandardFontName("Courier-Oblique"));
-  EXPECT_TRUE(CFX_FontMapper::IsStandardFontName("Helvetica"));
-  EXPECT_TRUE(CFX_FontMapper::IsStandardFontName("Helvetica-Bold"));
-  EXPECT_TRUE(CFX_FontMapper::IsStandardFontName("Helvetica-BoldOblique"));
-  EXPECT_TRUE(CFX_FontMapper::IsStandardFontName("Helvetica-Oblique"));
-  EXPECT_TRUE(CFX_FontMapper::IsStandardFontName("Times-Roman"));
-  EXPECT_TRUE(CFX_FontMapper::IsStandardFontName("Times-Bold"));
-  EXPECT_TRUE(CFX_FontMapper::IsStandardFontName("Times-BoldItalic"));
-  EXPECT_TRUE(CFX_FontMapper::IsStandardFontName("Times-Italic"));
-  EXPECT_TRUE(CFX_FontMapper::IsStandardFontName("Symbol"));
-  EXPECT_TRUE(CFX_FontMapper::IsStandardFontName("ZapfDingbats"));
-
-  EXPECT_FALSE(CFX_FontMapper::IsStandardFontName("Courie"));
-  EXPECT_FALSE(CFX_FontMapper::IsStandardFontName("Courier-"));
-  EXPECT_FALSE(CFX_FontMapper::IsStandardFontName("Helvetica+Bold"));
-  EXPECT_FALSE(CFX_FontMapper::IsStandardFontName("YapfDingbats"));
-}
 
 TEST(CFXFontMapperTest, MakeTag) {
   EXPECT_EQ(0x61626364u, CFX_FontMapper::MakeTag('a', 'b', 'c', 'd'));
@@ -282,7 +260,7 @@ TEST_F(CFXFontMapperSystemFontInfoTest, SetSubstFontNameWhenGetFaceNameFails) {
   EXPECT_TRUE(font_mapper().UseExternalSubst(kFontHandle, kSubstName, kWeight,
                                              kItalic, kItalicAngle, kCharset,
                                              &subst_font));
-  EXPECT_EQ("Noto Sans SC Regular", subst_font.family_);
+  EXPECT_EQ("Noto Sans SC Regular", subst_font.GetFamily());
 }
 
 TEST_F(CFXFontMapperSystemFontInfoTest,
@@ -306,8 +284,9 @@ TEST_F(CFXFontMapperSystemFontInfoTest,
     InSequence s;
     EXPECT_CALL(system_font_info(), EnumFontList(&font_mapper()));
     EXPECT_CALL(system_font_info(),
-                MapFont(kExpectedWeight, /*bItalic=*/true, kExpectedCharset,
-                        kExpectedPitchFamily, ByteString(kExpectedFamily)))
+                MapFont(&font_mapper(), kExpectedWeight, /*bItalic=*/true,
+                        kExpectedCharset, kExpectedPitchFamily,
+                        ByteString(kExpectedFamily)))
         .WillOnce(Return(kFontHandle));
     EXPECT_CALL(system_font_info(), GetFaceName(kFontHandle, _))
         .WillOnce(Return(false));
@@ -337,11 +316,11 @@ TEST_F(CFXFontMapperSystemFontInfoTest,
   RetainPtr<CFX_Face> face = font_mapper().FindSubstFace(
       kFaceName,
       /*is_truetype=*/true,
-      /*flags=*/FXFONT_USEEXTERNATTR,
+      /*flags=*/kFontUseExternAttr,
       /*weight=*/kBoldWeight,
       /*italic_angle=*/kItalicAngle, kCodePage, &subst_font);
   EXPECT_TRUE(face);
-  EXPECT_EQ("Noto Sans SC Regular", subst_font.family_);
+  EXPECT_EQ("Noto Sans SC Regular", subst_font.GetFamily());
 }
 
 TEST(CFXFontMapperTest, LoadInstalledFontsWithEnumeration) {
@@ -391,13 +370,13 @@ TEST_F(CFXFontMapperSystemFontInfoTest, StandardFontUsesBuiltInFace) {
   struct Case {
     const char* name;
     bool is_truetype;
-    CFX_FontMapper::StandardFont face;
+    CFX_StandardFont::Index face;
   };
   static constexpr Case kCases[] = {
-      {"Helvetica", false, CFX_FontMapper::kHelvetica},
-      {"Arial", true, CFX_FontMapper::kHelvetica},
-      {"Times-Bold", false, CFX_FontMapper::kTimesBold},
-      {"Courier-Oblique", false, CFX_FontMapper::kCourierOblique},
+      {"Helvetica", false, CFX_StandardFont::kHelvetica},
+      {"Arial", true, CFX_StandardFont::kHelvetica},
+      {"Times-Bold", false, CFX_StandardFont::kTimesBold},
+      {"Courier-Oblique", false, CFX_StandardFont::kCourierOblique},
   };
   for (const Case& test_case : kCases) {
     CFX_SubstFont subst_font;
@@ -405,7 +384,7 @@ TEST_F(CFXFontMapperSystemFontInfoTest, StandardFontUsesBuiltInFace) {
         test_case.name, test_case.is_truetype, /*flags=*/0, /*weight=*/0,
         /*italic_angle=*/0, FX_CodePage::kDefANSI, &subst_font);
     ASSERT_TRUE(face) << test_case.name;
-    EXPECT_EQ(CFX_FontMgr::GetStandardFont(test_case.face).data(),
+    EXPECT_EQ(CFX_StandardFont::GetFontData(test_case.face).data(),
               face->GetData().data())
         << test_case.name;
   }

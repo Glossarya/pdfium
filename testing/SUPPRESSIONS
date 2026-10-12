@@ -763,6 +763,7 @@ bug_1282.in * * * gdi
 bug_1304714.in * * * gdi
 bug_1337.in * * * gdi
 bug_1372651.in * * * gdi
+bug_477200528.in * * * gdi
 bug_725389.in * * * gdi
 bug_733528.in * * * gdi
 bug_736695_1.in * * * gdi
@@ -784,6 +785,7 @@ scrollable_widgets2.in * * * gdi
 static_list_box_caption.pdf * * * gdi
 static_password_field_rotate.pdf * * * gdi
 text_form_custom_font.in * * * gdi
+text_form_multiline.in * * * gdi
 xfa_bmp_image.in * * * gdi
 xfa_gif_image.in * * * gdi
 xfa_jpg_image.in * * * gdi

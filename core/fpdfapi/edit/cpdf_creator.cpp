@@ -973,7 +973,7 @@ bool CPDF_Creator::BuildTrailer() {
 void CPDF_Creator::InitID() {
   DCHECK(!id_array_);
 
-  id_array_ = pdfium::MakeRetain<CPDF_Array>();
+  id_array_ = document_->New<CPDF_Array>();
   // EmbedPDF(annot-appearance): a created document can carry a preset
   // identifier, so a canonical stamp drawing is the same bytes every time.
   RetainPtr<const CPDF_Array> pOldIDArray =

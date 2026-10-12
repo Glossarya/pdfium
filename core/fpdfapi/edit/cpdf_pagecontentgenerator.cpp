@@ -1586,7 +1586,7 @@ void CPDF_PageContentGenerator::ProcessGraphicsState(
   if (maybe_name.has_value()) {
     name = std::move(maybe_name.value());
   } else {
-    auto gsDict = pdfium::MakeRetain<CPDF_Dictionary>();
+    auto gsDict = document_->New<CPDF_Dictionary>();
     if (graphD.fillAlpha != 1.0f) {
       gsDict->SetNewFor<CPDF_Number>("ca", graphD.fillAlpha);
     }
@@ -1631,7 +1631,7 @@ ByteString CPDF_PageContentGenerator::GetOrCreateDefaultGraphics() const {
     return maybe_name.value();
   }
 
-  auto gsDict = pdfium::MakeRetain<CPDF_Dictionary>();
+  auto gsDict = document_->New<CPDF_Dictionary>();
   gsDict->SetNewFor<CPDF_Number>("ca", defaultGraphics.fillAlpha);
   gsDict->SetNewFor<CPDF_Number>("CA", defaultGraphics.strokeAlpha);
   gsDict->SetNewFor<CPDF_Name>("BM", "Normal");
@@ -1741,7 +1741,7 @@ ByteString CPDF_PageContentGenerator::RealizeFont(RetainPtr<CPDF_Font>* font) {
       dict_name = *hit;
     } else {
       // Build a minimal indirect font dict (same as your old code).
-      auto font_dict = pdfium::MakeRetain<CPDF_Dictionary>();
+      auto font_dict = document_->New<CPDF_Dictionary>();
       font_dict->SetNewFor<CPDF_Name>("Type", "Font");
       font_dict->SetNewFor<CPDF_Name>("Subtype", data.type);
       font_dict->SetNewFor<CPDF_Name>("BaseFont", data.baseFont);

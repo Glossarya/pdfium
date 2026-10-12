@@ -262,9 +262,9 @@ bool AppendRedactOverlayOps(CPDF_Document* doc,
   }
 
   if (has_fill) {
-    stream << GetColorStringWithDefault(
-        interior_color.Get(), CFX_Color(CFX_Color::Type::kTransparent),
-        PaintOperation::kFill);
+    stream << GetColorStringWithDefault(interior_color.Get(),
+                                        CFX_Color::MakeTransparent(),
+                                        PaintOperation::kFill);
     for (const RedactOverlayRegion& region : regions) {
       if (region.quad.has_value()) {
         // Fill the exact oriented cell (ring order, like the highlight AP).
@@ -314,9 +314,8 @@ bool AppendRedactOverlayOps(CPDF_Document* doc,
     // Legacy EmbedPDF v2 files carry the label colour in /OC; ISO keeps it
     // in the /DA string. Default to black when neither is present.
     RetainPtr<const CPDF_Array> oc = annot_dict->GetArrayFor("OC");
-    label_color = (oc && oc->size() >= 3)
-                      ? fpdfdoc::CFXColorFromArray(*oc)
-                      : CFX_Color(CFX_Color::Type::kRGB, 0, 0, 0);
+    label_color = (oc && oc->size() >= 3) ? fpdfdoc::CFXColorFromArray(*oc)
+                                          : CFX_Color::MakeRGB(0, 0, 0);
   }
 
   DaFontResolution da_font;
@@ -368,7 +367,7 @@ bool GenerateRedactAP(APGenerationTarget* target,
   normal_stream << "/" << kGSDictName << " gs ";
   normal_stream << GetColorStringWithDefault(
       annot_dict->GetArrayFor(pdfium::annotation::kC).Get(),
-      CFX_Color(CFX_Color::Type::kRGB, 1, 0, 0),  // default: red
+      CFX_Color::MakeRGB(1, 0, 0),  // default: red
       PaintOperation::kStroke);
 
   const float border_width = GetBorderWidth(annot_dict);

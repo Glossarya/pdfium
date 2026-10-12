@@ -14,6 +14,7 @@
 #include "core/fxcrt/span.h"
 
 #include FT_CID_H
+#include FT_FONT_FORMATS_H
 #include FT_FREETYPE_H
 #include FT_GLYPH_H
 #include FT_LCD_FILTER_H

@@ -41,10 +41,12 @@ void CheckLimitsArray(const CPDF_Dictionary* node,
   ASSERT_TRUE(node);
   RetainPtr<const CPDF_Array> limits = node->GetArrayFor("Limits");
   ASSERT_TRUE(limits);
-  EXPECT_EQ(2u, limits->size());
+
+  // Sorted, but not always truncated.
+  EXPECT_GE(limits->size(), 2u);
   RetainPtr<const CPDF_String> left = limits->GetStringAt(0);
-  ASSERT_TRUE(left);
   RetainPtr<const CPDF_String> right = limits->GetStringAt(1);
+  ASSERT_TRUE(left);
   ASSERT_TRUE(right);
   EXPECT_EQ(least, left->GetString());
   EXPECT_EQ(greatest, right->GetString());
@@ -146,7 +148,9 @@ TEST(CPDFNameTreeTest, GetFromTreeWithLimitsArrayWith4Items) {
       ToNumber(name_tree->LookupValue(L"9.txt"));
   ASSERT_TRUE(pNumber);
   EXPECT_EQ(999, pNumber->GetInteger());
-  CheckLimitsArray(pKid1.Get(), "1.txt", "9.txt");
+  // EmbedPDF: a lookup writes nothing, so kid 1's reversed /Limits stay as
+  // they are (rule reads-dont-write); upstream's lookup reordered them.
+  CheckLimitsArray(pKid1.Get(), "9.txt", "1.txt");
   CheckLimitsArray(pGrandKid3.Get(), "9.txt", "9.txt");
 }
 
@@ -432,3 +436,27 @@ TEST(CPDFNameTreeTest, DanglingValueKeepsIndexAlignment) {
   EXPECT_EQ(L"3.txt", csName);
 }
 
+
+// EmbedPDF: a lookup reads a node's /Limits in order and writes nothing back;
+// through a layer, the tree is the frozen base (rule reads-dont-write).
+TEST(CPDFNameTreeTest, LookupLeavesLimitsAsTheyAre) {
+  auto pRootDict = pdfium::MakeRetain<CPDF_Dictionary>();
+  FillNameTreeDict(pRootDict.Get());
+  RetainPtr<CPDF_Dictionary> pKid1 =
+      pRootDict->GetMutableArrayFor("Kids")->GetMutableDictAt(0);
+  RetainPtr<CPDF_Array> pLimits = pKid1->GetMutableArrayFor("Limits");
+  // Reversed, with an extra entry.
+  pLimits->SetNewAt<CPDF_String>(0, "9.txt");
+  pLimits->SetNewAt<CPDF_String>(1, "1.txt");
+  pLimits->AppendNew<CPDF_Number>(5);
+  std::unique_ptr<CPDF_NameTree> name_tree =
+      CPDF_NameTree::CreateForTesting(pRootDict.Get());
+
+  RetainPtr<const CPDF_Number> pNumber =
+      ToNumber(name_tree->LookupValue(L"9.txt"));
+  ASSERT_TRUE(pNumber);
+  EXPECT_EQ(999, pNumber->GetInteger());
+  ASSERT_EQ(3u, pLimits->size());
+  EXPECT_EQ("9.txt", pLimits->GetByteStringAt(0));
+  EXPECT_EQ("1.txt", pLimits->GetByteStringAt(1));
+}

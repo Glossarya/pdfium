@@ -216,6 +216,8 @@ FPDFEditEmbedderTest.RemoveTextObjectWithTwoPagesSharingContentStreamAndResource
 FPDFEditEmbedderTest.RemoveTextObjectWithTwoPagesSharingResourcesDict 6
 FPDFEditEmbedderTest.SaveAndRender 7
 FPDFEditEmbedderTest.SetMarkParam 4
+FPDFEditEmbedderTest.SetPositions 3
+FPDFEditEmbedderTest.SetPositionsVertical 3
 FPDFEditEmbedderTest.SetText 3
 FPDFEditEmbedderTest.SetTextKeepClippingPath 3
 FPDFEditEmbedderTest.SetTextRenderMode 4
@@ -237,6 +239,7 @@ FPDFFlattenEmbedderTest.FlatNothing 1
 FPDFFlattenEmbedderTest.FlatPrint 6
 FPDFFlattenEmbedderTest.FlatWithBadFont 5
 FPDFFlattenEmbedderTest.FlatWithFontNoBaseEncoding 6
+FPDFFlattenEmbedderTest.FlattenShouldRemoveAcroForm 7
 FPDFPPOEmbedderTest.Bug1229106 2
 FPDFPPOEmbedderTest.Bug925981 2
 FPDFPPOEmbedderTest.ImportIntoDestDocWithoutInfo 6

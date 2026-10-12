@@ -719,7 +719,7 @@ RetainPtr<CPDF_Stream> CPDF_StreamContentParser::ReadInlineImage(
     }
     // Next `syntax` read below may invalidate `word`. Must save to `key`.
     ByteStringView word = syntax->GetWord();
-    ByteString key(word.Last(word.GetLength() - 1));
+    ByteString key(word.Substr(1));
     auto pObj = syntax->ReadNextObject(false, false, 0);
     if (pObj && !pObj->IsInline()) {
       dict->SetNewFor<CPDF_Reference>(key, document, pObj->GetObjNum());
@@ -1423,7 +1423,7 @@ RetainPtr<CPDF_ColorSpace> CPDF_StreamContentParser::FindColorSpace(
 
   if (name == "DeviceGray" || name == "DeviceCMYK" || name == "DeviceRGB") {
     ByteString defname = "Default";
-    defname += name.Last(name.GetLength() - 7);
+    defname += name.Substr(6);  // Remove "Device" from e.g. "DeviceCMYK".
     RetainPtr<const CPDF_Object> pDefObj =
         FindResourceObj("ColorSpace", defname);
     if (!pDefObj) {
@@ -1871,7 +1871,7 @@ uint32_t CPDF_StreamContentParser::Parse(
         break;
       case CPDF_StreamParser::ElementType::kName: {
         auto word = syntax_->GetWord();
-        AddNameParam(word.Last(word.GetLength() - 1));
+        AddNameParam(word.Substr(1));
         break;
       }
       default:

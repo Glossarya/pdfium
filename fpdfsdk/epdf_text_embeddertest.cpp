@@ -209,7 +209,7 @@ TEST_F(EPDFTextEmbedderTest, GetMirroredCharGeometry) {
 }
 
 TEST_F(EPDFTextEmbedderTest, GetVerticalCharGeometry) {
-  ASSERT_TRUE(OpenDocument("vertical_text.pdf"));
+  ASSERT_TRUE(OpenDocument("embedpdf_vertical_text.pdf"));
   ScopedPage page = LoadScopedPage(0);
   ASSERT_TRUE(page);
 

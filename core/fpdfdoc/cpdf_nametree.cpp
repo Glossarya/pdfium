@@ -30,22 +30,29 @@ struct NodeToInsert {
   int index = -1;
 };
 
-std::pair<WideString, WideString> GetNodeLimitsAndSanitize(
-    CPDF_Array* pLimits) {
-  DCHECK(pLimits);
-  WideString csLeft = pLimits->GetUnicodeTextAt(0);
-  WideString csRight = pLimits->GetUnicodeTextAt(1);
+// EmbedPDF(reads-dont-write): `write_back` is false for a lookup, which reads
+// the limits in order without writing them.
+std::pair<WideString, WideString> GetNodeLimits(CPDF_Array* limits,
+                                                bool write_back = true) {
+  WideString left = limits->GetUnicodeTextAt(0);
+  WideString right = limits->GetUnicodeTextAt(1);
+
   // If the lower limit is greater than the upper limit, swap them.
-  if (csLeft.Compare(csRight) > 0) {
-    pLimits->SetNewAt<CPDF_String>(0, csRight.AsStringView());
-    pLimits->SetNewAt<CPDF_String>(1, csLeft.AsStringView());
-    csLeft = pLimits->GetUnicodeTextAt(0);
-    csRight = pLimits->GetUnicodeTextAt(1);
+  if (left.Compare(right) > 0) {
+    std::swap(left, right);
+    if (write_back) {
+      limits->SetNewAt<CPDF_String>(0, left.AsStringView());
+      limits->SetNewAt<CPDF_String>(1, right.AsStringView());
+    }
   }
-  while (pLimits->size() > 2) {
-    pLimits->RemoveAt(pLimits->size() - 1);
+
+  return {std::move(left), std::move(right)};
+}
+
+void TrimNodeLimits(CPDF_Array* limits) {
+  while (limits->size() > 2) {
+    limits->RemoveAt(limits->size() - 1);
   }
-  return {csLeft, csRight};
 }
 
 // Get the limit arrays that leaf array |pFind| is under in the tree with root
@@ -108,7 +115,8 @@ bool UpdateNodesAndLimitsUponDeletion(CPDF_Dictionary* pNode,
   WideString csLeft;
   WideString csRight;
   if (pLimits) {
-    std::tie(csLeft, csRight) = GetNodeLimitsAndSanitize(pLimits.Get());
+    TrimNodeLimits(pLimits.Get());
+    std::tie(csLeft, csRight) = GetNodeLimits(pLimits.Get());
   }
 
   RetainPtr<const CPDF_Array> pNames = pNode->GetArrayFor("Names");
@@ -242,13 +250,22 @@ RetainPtr<const CPDF_Object> SearchNameNodeByNameInternal(
   }
 
   if (pLimits) {
-    auto [csLeft, csRight] = GetNodeLimitsAndSanitize(pLimits.Get());
+    // When lookup-only: do not truncate the /Limits array.
+    // EmbedPDF(reads-dont-write): nor reorder it. A lookup has no
+    // `node_to_insert`; upstream's condition trimmed on exactly that path.
+    const bool lookup_only = !node_to_insert;
+    if (!lookup_only) {
+      TrimNodeLimits(pLimits.Get());
+    }
+    auto [left, right] =
+        GetNodeLimits(pLimits.Get(), /*write_back=*/!lookup_only);
+
     // Skip this node if the name to look for is smaller than its lower limit.
-    if (csName.Compare(csLeft) < 0) {
+    if (csName.Compare(left) < 0) {
       return nullptr;
     }
 
-    if (csName.Compare(csRight) > 0) {
+    if (csName.Compare(right) > 0) {
       // If only trying to find the name node, and not where the name should be
       // added, skip this node.
       if (!node_to_insert) {

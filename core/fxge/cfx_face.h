@@ -63,6 +63,7 @@ class CFX_Face final : public Retainable, public Observable {
 
   bool HasGlyphNames() const;
   bool IsTtOt() const;
+  ByteString GetFontFormat();
   bool IsFixedWidth() const;
   bool IsItalic() const;
   bool IsBold() const;
@@ -131,12 +132,10 @@ class CFX_Face final : public Retainable, public Observable {
   std::optional<fxge::FontEncoding> GetCurrentCharMapEncoding() const;
   CharMapId GetCharMapIdByIndex(size_t index) const;
   int GetCharMapPlatformIdByIndex(size_t index) const;
-  int GetCharMapEncodingIdByIndex(size_t index) const;
   fxge::FontEncoding GetCharMapEncodingByIndex(size_t index) const;
   size_t GetCharMapCount() const;
   int LoadGlyph(uint32_t glyph_index, bool scale);
   ByteString GetPostscriptName();
-  CFX_Size GetPixelSize() const;
   void SetCharMap(CharMap map);
   void SetCharMapByIndex(size_t index);
   bool SelectCharMap(fxge::FontEncoding encoding);
@@ -171,6 +170,9 @@ class CFX_Face final : public Retainable, public Observable {
 
   FT_FaceRec* GetRec() { return rec_.get(); }
   const FT_FaceRec* GetRec() const { return rec_.get(); }
+
+  int GetCharMapEncodingIdByIndex(size_t index) const;
+  CFX_Size GetPixelSize() const;
 
   bool IsTricky() const;
   void AdjustVariationParams(int glyph_index, int dest_width, int weight);

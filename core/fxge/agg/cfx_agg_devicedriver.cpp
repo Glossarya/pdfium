@@ -182,10 +182,15 @@ void RgbByteOrderTransferBitmap(RetainPtr<CFX_DIBitmap> pBitmap,
             pSrcBitmap->GetScanlineAs<FX_BGRA_STRUCT<uint8_t>>(src_row).subspan(
                 static_cast<size_t>(src_left), static_cast<size_t>(width));
         for (auto [input, output] : fxcrt::Zip(src_scan, dest_scan)) {
-          output.red = input.red;
-          output.green = input.green;
-          output.blue = input.blue;
-          output.alpha = input.alpha;
+          // Compiler can't conclude that src_scan and dest_scan don't overlap.
+          const uint8_t red = input.red;
+          const uint8_t green = input.green;
+          const uint8_t blue = input.blue;
+          const uint8_t alpha = input.alpha;
+          output.red = red;
+          output.green = green;
+          output.blue = blue;
+          output.alpha = alpha;
         }
       }
       return;
@@ -202,9 +207,13 @@ void RgbByteOrderTransferBitmap(RetainPtr<CFX_DIBitmap> pBitmap,
           pSrcBitmap->GetScanlineAs<FX_BGR_STRUCT<uint8_t>>(src_row).subspan(
               static_cast<size_t>(src_left), static_cast<size_t>(width));
       for (auto [input, output] : fxcrt::Zip(src_scan, dest_scan)) {
-        output.red = input.red;
-        output.green = input.green;
-        output.blue = input.blue;
+        // Compiler can't prove src_scan and dest_scan don't overlap.
+        const uint8_t red = input.red;
+        const uint8_t green = input.green;
+        const uint8_t blue = input.blue;
+        output.red = red;
+        output.green = green;
+        output.blue = blue;
       }
     }
     return;
@@ -222,9 +231,14 @@ void RgbByteOrderTransferBitmap(RetainPtr<CFX_DIBitmap> pBitmap,
           pSrcBitmap->GetScanlineAs<FX_BGRA_STRUCT<uint8_t>>(src_row).subspan(
               static_cast<size_t>(src_left), static_cast<size_t>(width));
       for (auto [input, output] : fxcrt::Zip(src_scan, dest_scan)) {
-        output.red = input.red;
-        output.green = input.green;
-        output.blue = input.blue;
+        // Compiler can't prove src_scan and dest_scan don't overlap, avoid
+        // interleaved load/stores.
+        const uint8_t red = input.red;
+        const uint8_t green = input.green;
+        const uint8_t blue = input.blue;
+        output.red = red;
+        output.green = green;
+        output.blue = blue;
       }
     }
     return;
@@ -243,9 +257,14 @@ void RgbByteOrderTransferBitmap(RetainPtr<CFX_DIBitmap> pBitmap,
           pSrcBitmap->GetScanlineAs<FX_BGR_STRUCT<uint8_t>>(src_row).subspan(
               static_cast<size_t>(src_left), static_cast<size_t>(width));
       for (auto [input, output] : fxcrt::Zip(src_scan, dest_scan)) {
-        output.red = input.red;
-        output.green = input.green;
-        output.blue = input.blue;
+        // Compiler can't prove src_scan and dest_scan don't overlap, avoid
+        // interleaved load/stores.
+        const uint8_t red = input.red;
+        const uint8_t green = input.green;
+        const uint8_t blue = input.blue;
+        output.red = red;
+        output.green = green;
+        output.blue = blue;
         output.alpha = 255;
       }
     }
@@ -265,9 +284,14 @@ void RgbByteOrderTransferBitmap(RetainPtr<CFX_DIBitmap> pBitmap,
         pSrcBitmap->GetScanlineAs<FX_BGRA_STRUCT<uint8_t>>(src_row).subspan(
             static_cast<size_t>(src_left), static_cast<size_t>(width));
     for (auto [input, output] : fxcrt::Zip(src_scan, dest_scan)) {
-      output.red = input.red;
-      output.green = input.green;
-      output.blue = input.blue;
+      // Compiler can't prove src_scan and dest_scan don't overlap, avoid
+      // interleaved load/stores.
+      const uint8_t red = input.red;
+      const uint8_t green = input.green;
+      const uint8_t blue = input.blue;
+      output.red = red;
+      output.green = green;
+      output.blue = blue;
       output.alpha = 255;
     }
   }

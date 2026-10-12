@@ -171,6 +171,77 @@ std::string StreamText(const CPDF_Stream* stream) {
   return std::string(bytes.begin(), bytes.end());
 }
 
+// A stream object holding `data`: its dictionary is `entries` and /Length.
+std::string StreamObject(const std::string& entries, const std::string& data) {
+  return "<< " + entries + " /Length " + std::to_string(data.size()) +
+         " >>\nstream\n" + data + "\nendstream";
+}
+
+// A PDF file opened as a document, or as a layer over it.
+struct OpenedPdf {
+  std::unique_ptr<std::remove_pointer_t<EPDF_BASE_DOCUMENT>,
+                  decltype(&EPDF_ReleaseBaseDocument)>
+      base{nullptr, EPDF_ReleaseBaseDocument};
+  ScopedFPDFDocument doc;
+};
+
+OpenedPdf OpenPdf(const std::string& input, bool layer) {
+  OpenedPdf opened;
+  if (layer) {
+    opened.base.reset(
+        EPDF_LoadMemBaseDocument64(input.data(), input.size(), nullptr));
+    if (opened.base) {
+      opened.doc.reset(
+          EPDFLayer_OpenLayer(opened.base.get(), nullptr, nullptr, nullptr));
+    }
+  } else {
+    opened.doc.reset(
+        FPDF_LoadMemDocument64(input.data(), input.size(), nullptr));
+  }
+  return opened;
+}
+
+// Marks `rect` on `page` and applies the page's marks; on a layer in a
+// transaction, as the engine runs every write.
+void MarkAndApply(FPDF_DOCUMENT doc,
+                  FPDF_PAGE page,
+                  bool layer,
+                  const FS_RECTF& rect) {
+  {
+    ScopedFPDFAnnotation mark(FPDFPage_CreateAnnot(page, FPDF_ANNOT_REDACT));
+    ASSERT_TRUE(mark);
+    ASSERT_TRUE(FPDFAnnot_SetRect(mark.get(), &rect));
+  }
+  if (layer) {
+    ASSERT_TRUE(EPDFLayer_BeginTransaction(doc));
+  }
+  ASSERT_TRUE(EPDFPage_ApplyRedactions(page, nullptr));
+  ASSERT_TRUE(FPDFPage_GenerateContent(page));
+  if (layer) {
+    ASSERT_TRUE(EPDFLayer_CommitTransaction(doc));
+  }
+}
+
+// The image XObjects page `index` names in its resources.
+std::vector<RetainPtr<const CPDF_Dictionary>> PageImages(CPDF_Document* doc,
+                                                         int index) {
+  std::vector<RetainPtr<const CPDF_Dictionary>> images;
+  RetainPtr<const CPDF_Dictionary> xobjects = doc->GetPageDictionary(index)
+                                                  ->GetDictFor("Resources")
+                                                  ->GetDictFor("XObject");
+  if (!xobjects) {
+    return images;
+  }
+  CPDF_DictionaryLocker locker(xobjects.Get());
+  for (const auto& [name, object] : locker) {
+    RetainPtr<const CPDF_Stream> stream = ToStream(object->GetDirect());
+    if (stream && stream->GetDict()->GetNameFor("Subtype") == "Image") {
+      images.push_back(stream->GetDict());
+    }
+  }
+  return images;
+}
+
 }  // namespace
 
 class EPDFRedactEmbedderTest : public EmbedderTest {
@@ -698,5 +769,370 @@ TEST_F(EPDFRedactEmbedderTest, AppliesOnAPageWithoutContentsOrResources) {
     EXPECT_EQ(0xffffffu, Pixel(reloaded.get(), 200, 100));
     CloseSavedPage(saved);
     CloseSavedDocument();
+  }
+}
+
+TEST_F(EPDFRedactEmbedderTest,
+       RemovesTheThumbnailAndOtherCopiesOfARedactedPage) {
+  const std::string xmp =
+      "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>"
+      "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF "
+      "xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">"
+      "<rdf:Description rdf:about=\"\" "
+      "xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" "
+      "xmlns:xmpGImg=\"http://ns.adobe.com/xap/1.0/g/img/\" "
+      "xmlns:dc=\"http://purl.org/dc/elements/1.1/\">"
+      "<dc:format>KEEPFORMAT</dc:format>"
+      "<xmp:Thumbnails><rdf:Alt><rdf:li rdf:parseType=\"Resource\">"
+      "<xmpGImg:image>XMPTHUMBSECRET</xmpGImg:image>"
+      "</rdf:li></rdf:Alt></xmp:Thumbnails>"
+      "</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end=\"w\"?>";
+  const std::string input = PdfOf({
+      "<< /Type /Catalog /Pages 2 0 R /Metadata 9 0 R >>",
+      "<< /Type /Pages /Kids [3 0 R 8 0 R] /Count 2 >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R "
+      "/Resources << /Font << /F1 5 0 R >> >> /Thumb 6 0 R /PieceInfo << "
+      "/App << /LastModified (D:20260101) /Private 7 0 R >> >> "
+      "/Metadata 10 0 R >>",
+      StreamObject("", "BT /F1 24 Tf 20 150 Td (SECRET) Tj ET"),
+      "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+      StreamObject(
+          "/Width 11 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8",
+          "THUMBSECRET"),
+      StreamObject("", "PIECESECRET"),
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Thumb 11 0 R >>",
+      StreamObject("/Type /Metadata /Subtype /XML", xmp),
+      StreamObject("/Type /Metadata /Subtype /XML", "PAGEMETASECRET"),
+      StreamObject(
+          "/Width 9 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8",
+          "KEEPTHUMB"),
+  });
+  for (bool layer : {false, true}) {
+    SCOPED_TRACE(layer ? "layer transaction" : "document");
+    OpenedPdf opened = OpenPdf(input, layer);
+    ASSERT_TRUE(opened.doc);
+    {
+      ScopedFPDFPage page(FPDF_LoadPage(opened.doc.get(), 0));
+      ASSERT_TRUE(page);
+      ASSERT_NO_FATAL_FAILURE(MarkAndApply(opened.doc.get(), page.get(), layer,
+                                           {15, 180, 150, 140}));
+    }
+    {
+      CPDF_Document* pdf = CPDFDocumentFromFPDFDocument(opened.doc.get());
+      CPDF_DocumentViewScope document_view(pdf);
+      RetainPtr<const CPDF_Dictionary> redacted = pdf->GetPageDictionary(0);
+      EXPECT_FALSE(redacted->KeyExist("Thumb"));
+      EXPECT_FALSE(redacted->KeyExist("PieceInfo"));
+      EXPECT_FALSE(redacted->KeyExist("Metadata"));
+      // A page no mark was applied on keeps its thumbnail.
+      EXPECT_TRUE(pdf->GetPageDictionary(1)->KeyExist("Thumb"));
+      const std::string metadata =
+          StreamText(pdf->GetRoot()->GetStreamFor("Metadata").Get());
+      EXPECT_NE(std::string::npos, metadata.find("KEEPFORMAT"));
+      EXPECT_EQ(std::string::npos, metadata.find("Thumbnails"));
+    }
+
+    ClearString();
+    ASSERT_TRUE(FPDF_SaveAsCopy(opened.doc.get(), this, FPDF_NO_INCREMENTAL));
+    ASSERT_TRUE(OpenSavedDocument());
+    CPDF_Document* saved = CPDFDocumentFromFPDFDocument(saved_document());
+    for (const char* sentinel :
+         {"THUMBSECRET", "PIECESECRET", "PAGEMETASECRET", "XMPTHUMBSECRET"}) {
+      ExpectNoSentinel(saved, sentinel);
+    }
+    EXPECT_EQ(1, CountSentinel(saved, "KEEPTHUMB"));
+    CloseSavedDocument();
+  }
+}
+
+TEST_F(EPDFRedactEmbedderTest, TheCopyOfARedactedFormHoldsNoOtherCopiesOfIt) {
+  const std::string input = PdfOf({
+      "<< /Type /Catalog /Pages 2 0 R >>",
+      "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 5 0 R "
+      "/Resources << /XObject << /Fm 4 0 R >> >> >>",
+      StreamObject("/Type /XObject /Subtype /Form /BBox [0 0 300 300] "
+                   "/Resources << /Font << /F1 6 0 R >> >> /PieceInfo << /App "
+                   "<< /LastModified (D:20260101) /Private 7 0 R >> >> "
+                   "/Metadata 8 0 R /OPI << /2.0 << /Type /OPI /Version 2.0 "
+                   "/F (OPISECRET.tif) /Inks /full_color >> >>",
+                   "BT /F1 24 Tf 20 150 Td (SECRET) Tj ET"),
+      StreamObject("", "/Fm Do"),
+      "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+      StreamObject("", "FORMPIECESECRET"),
+      StreamObject("/Type /Metadata /Subtype /XML", "FORMMETASECRET"),
+  });
+  for (bool layer : {false, true}) {
+    SCOPED_TRACE(layer ? "layer transaction" : "document");
+    OpenedPdf opened = OpenPdf(input, layer);
+    ASSERT_TRUE(opened.doc);
+    {
+      ScopedFPDFPage page(FPDF_LoadPage(opened.doc.get(), 0));
+      ASSERT_TRUE(page);
+      ASSERT_NO_FATAL_FAILURE(MarkAndApply(opened.doc.get(), page.get(), layer,
+                                           {15, 180, 150, 140}));
+    }
+
+    ClearString();
+    ASSERT_TRUE(FPDF_SaveAsCopy(opened.doc.get(), this, FPDF_NO_INCREMENTAL));
+    ASSERT_TRUE(OpenSavedDocument());
+    CPDF_Document* saved = CPDFDocumentFromFPDFDocument(saved_document());
+    // The page still draws a form: the redacted copy.
+    RetainPtr<const CPDF_Dictionary> xobjects = saved->GetPageDictionary(0)
+                                                    ->GetDictFor("Resources")
+                                                    ->GetDictFor("XObject");
+    ASSERT_TRUE(xobjects);
+    EXPECT_GE(xobjects->size(), 1u);
+    for (const char* sentinel :
+         {"SECRET", "FORMPIECESECRET", "FORMMETASECRET", "OPISECRET"}) {
+      ExpectNoSentinel(saved, sentinel);
+    }
+    CloseSavedDocument();
+  }
+}
+
+TEST_F(EPDFRedactEmbedderTest, ARedactedImageKeepsItsLayerAndHowItIsDrawnOnly) {
+  const std::string dark(4, '\x28');
+  const std::string input = PdfOf({
+      "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [6 0 R] "
+      "/D << /OFF [6 0 R] /Order [6 0 R] >> >> >>",
+      "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 5 0 R "
+      "/Resources << /XObject << /Hidden 4 0 R /Shown 9 0 R >> >> >>",
+      StreamObject(
+          "/Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace "
+          "/DeviceGray /BitsPerComponent 8 /OC 6 0 R /Intent /Perceptual "
+          "/Interpolate true /StructParent 3 /Name /Hidden /Metadata 7 0 R "
+          "/Alternates [<< /Image 8 0 R >>] /OPI << /1.3 << /Type /OPI "
+          "/Version 1.3 /F (OPISECRET.tif) /Size [2 2] /CropRect [0 0 2 2] "
+          "/Position [0 0 0 2 2 2 2 0] >> >>",
+          dark),
+      StreamObject("",
+                   "q 200 0 0 100 50 150 cm /Hidden Do Q "
+                   "q 200 0 0 50 50 30 cm /Shown Do Q"),
+      "<< /Type /OCG /Name (Hidden) >>",
+      StreamObject("/Type /Metadata /Subtype /XML", "IMAGEMETASECRET"),
+      StreamObject("/Type /XObject /Subtype /Image /Width 3 /Height 3 "
+                   "/ColorSpace /DeviceGray /BitsPerComponent 8",
+                   "ALTSECRET"),
+      StreamObject("/Type /XObject /Subtype /Image /Width 2 /Height 2 "
+                   "/ColorSpace /DeviceGray /BitsPerComponent 8",
+                   dark),
+  });
+  // 600 pixels for 300 points: the hidden image's right part is around
+  // (400, 200), the shown image around (300, 490).
+  for (bool layer : {false, true}) {
+    SCOPED_TRACE(layer ? "layer transaction" : "document");
+    OpenedPdf opened = OpenPdf(input, layer);
+    ASSERT_TRUE(opened.doc);
+    ScopedFPDFPage page(FPDF_LoadPage(opened.doc.get(), 0));
+    ASSERT_TRUE(page);
+    auto before = Render(page.get());
+    EXPECT_EQ(0xffffffu, Pixel(before.get(), 400, 200));
+    EXPECT_NE(0xffffffu, Pixel(before.get(), 300, 490));
+
+    ASSERT_NO_FATAL_FAILURE(
+        MarkAndApply(opened.doc.get(), page.get(), layer, {50, 250, 90, 150}));
+    auto after = Render(page.get());
+    EXPECT_EQ(0xffffffu, Pixel(after.get(), 400, 200));
+    EXPECT_NE(0xffffffu, Pixel(after.get(), 300, 490));
+    {
+      CPDF_Document* pdf = CPDFDocumentFromFPDFDocument(opened.doc.get());
+      CPDF_DocumentViewScope document_view(pdf);
+      int replacements = 0;
+      for (const auto& image : PageImages(pdf, 0)) {
+        if (!image->KeyExist("OC")) {
+          continue;
+        }
+        ++replacements;
+        EXPECT_EQ("Perceptual", image->GetNameFor("Intent"));
+        EXPECT_TRUE(image->GetBooleanFor("Interpolate", false));
+        EXPECT_EQ(3, image->GetIntegerFor("StructParent"));
+        for (const char* gone : {"Metadata", "Alternates", "OPI", "Name"}) {
+          EXPECT_FALSE(image->KeyExist(gone)) << gone;
+        }
+      }
+      EXPECT_EQ(1, replacements);
+    }
+
+    ClearString();
+    ASSERT_TRUE(FPDF_SaveAsCopy(opened.doc.get(), this, FPDF_NO_INCREMENTAL));
+    ASSERT_TRUE(OpenSavedDocument());
+    CPDF_Document* saved = CPDFDocumentFromFPDFDocument(saved_document());
+    for (const char* sentinel : {"IMAGEMETASECRET", "ALTSECRET", "OPISECRET"}) {
+      ExpectNoSentinel(saved, sentinel);
+    }
+    FPDF_PAGE reloaded = LoadSavedPage(0);
+    ASSERT_TRUE(reloaded);
+    auto saved_render = Render(reloaded);
+    EXPECT_EQ(0xffffffu, Pixel(saved_render.get(), 400, 200));
+    CloseSavedPage(reloaded);
+    CloseSavedDocument();
+  }
+}
+
+TEST_F(EPDFRedactEmbedderTest, AnExplicitMaskStillMasksTheReplacementImage) {
+  // A 4 x 2 dark image whose mask paints the left half and masks out the
+  // right. A mask sample of 0 is painted, unless /Decode is [1 0].
+  struct MaskCase {
+    const char* name;
+    int width;
+    char row;
+    const char* decode;
+  };
+  const MaskCase cases[] = {
+      {"the image's grid", 4, '\x30', ""},
+      {"an inverted /Decode", 4, '\xC0', "/Decode [1 0]"},
+      {"a finer grid", 8, '\x0F', ""},
+  };
+  for (const MaskCase& mask : cases) {
+    const int height = mask.width / 2;
+    const std::string input = PdfOf({
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 5 0 R "
+        "/Resources << /XObject << /Im 4 0 R >> >> >>",
+        StreamObject("/Type /XObject /Subtype /Image /Width 4 /Height 2 "
+                     "/ColorSpace /DeviceGray /BitsPerComponent 8 /Mask 6 0 R",
+                     std::string(8, '\x28')),
+        StreamObject("", "q 200 0 0 100 50 100 cm /Im Do Q"),
+        StreamObject("/Type /XObject /Subtype /Image /Width " +
+                         std::to_string(mask.width) + " /Height " +
+                         std::to_string(height) +
+                         " /ImageMask true /BitsPerComponent 1 " + mask.decode,
+                     std::string(height, mask.row)),
+    });
+    for (bool layer : {false, true}) {
+      SCOPED_TRACE(std::string(mask.name) +
+                   (layer ? ", layer transaction" : ", document"));
+      OpenedPdf opened = OpenPdf(input, layer);
+      ASSERT_TRUE(opened.doc);
+      ScopedFPDFPage page(FPDF_LoadPage(opened.doc.get(), 0));
+      ASSERT_TRUE(page);
+      // 600 pixels for 300 points, the image at x 100..500, y 200..400: its
+      // marked column x 100..200, painted x 200..300, masked out x 300..500.
+      auto before = Render(page.get());
+      EXPECT_NE(0xffffffu, Pixel(before.get(), 240, 300));
+      EXPECT_EQ(0xffffffu, Pixel(before.get(), 400, 300));
+
+      ASSERT_NO_FATAL_FAILURE(MarkAndApply(opened.doc.get(), page.get(), layer,
+                                           {50, 200, 90, 100}));
+      auto after = Render(page.get());
+      EXPECT_EQ(0xffffffu, Pixel(after.get(), 140, 300));
+      EXPECT_NE(0xffffffu, Pixel(after.get(), 240, 300));
+      EXPECT_EQ(0xffffffu, Pixel(after.get(), 400, 300));
+
+      ClearString();
+      ASSERT_TRUE(FPDF_SaveAsCopy(opened.doc.get(), this, FPDF_NO_INCREMENTAL));
+      ASSERT_TRUE(OpenSavedDocument());
+      FPDF_PAGE reloaded = LoadSavedPage(0);
+      ASSERT_TRUE(reloaded);
+      auto saved_render = Render(reloaded);
+      EXPECT_EQ(0xffffffu, Pixel(saved_render.get(), 140, 300));
+      EXPECT_NE(0xffffffu, Pixel(saved_render.get(), 240, 300));
+      EXPECT_EQ(0xffffffu, Pixel(saved_render.get(), 400, 300));
+      CloseSavedPage(reloaded);
+      CloseSavedDocument();
+    }
+  }
+}
+
+TEST_F(EPDFRedactEmbedderTest, RedactingByQuadsRemovesThePageThumbnailToo) {
+  const std::string input = PdfOf({
+      "<< /Type /Catalog /Pages 2 0 R >>",
+      "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R "
+      "/Resources << /Font << /F1 5 0 R >> >> /Thumb 6 0 R >>",
+      StreamObject("", "BT /F1 24 Tf 20 150 Td (SECRET) Tj ET"),
+      "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+      StreamObject(
+          "/Width 11 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8",
+          "THUMBSECRET"),
+  });
+  OpenedPdf opened = OpenPdf(input, /*layer=*/false);
+  ASSERT_TRUE(opened.doc);
+  {
+    ScopedFPDFPage page(FPDF_LoadPage(opened.doc.get(), 0));
+    ASSERT_TRUE(page);
+    const FS_QUADPOINTSF quad = {15, 180, 150, 180, 15, 140, 150, 140};
+    ASSERT_TRUE(EPDFText_RedactInQuads(page.get(), &quad, 1, true, false));
+    ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
+  }
+  ClearString();
+  ASSERT_TRUE(FPDF_SaveAsCopy(opened.doc.get(), this, FPDF_NO_INCREMENTAL));
+  ASSERT_TRUE(OpenSavedDocument());
+  ExpectNoSentinel(CPDFDocumentFromFPDFDocument(saved_document()), "SECRET");
+  CloseSavedDocument();
+}
+
+// The page paints through a soft mask whose group shows B of the page's Type3
+// font; the text in A is redacted, so the group is copied to draw a copy of
+// the font without A. The group carries /Metadata and /PieceInfo, and B's
+// glyph /Metadata: none of them may come along, whether or not B's resources
+// change (an unused resource is dropped from its copy; none, or an empty
+// dictionary, changes nothing).
+TEST_F(EPDFRedactEmbedderTest, CopiesOfAType3FontsContentHoldNoOtherCopies) {
+  for (const char* glyph_b : {"/Resources << /XObject << /Unused 8 0 R >> >> ",
+                              "", "/Resources << >> "}) {
+    SCOPED_TRACE(std::string("glyph B: ") + glyph_b);
+    const std::string input = PdfOf({
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 600] /Contents 4 0 R "
+        "/Resources << /Font << /I 5 0 R >> /ExtGState << /GP << /Type "
+        "/ExtGState /SMask << /Type /Mask /S /Luminosity /G 9 0 R >> >> >> >> "
+        ">>",
+        StreamObject("",
+                     "BT /I 72 Tf 100 500 Td (A) Tj ET\n"
+                     "q /GP gs 0 0 1 rg 300 300 100 100 re f Q"),
+        "<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1000 1000] "
+        "/FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << /a 6 0 R /b 7 0 R >> "
+        "/Encoding << /Type /Encoding /Differences [65 /a /b] >> /FirstChar 65 "
+        "/LastChar 66 /Widths [1100 1100] /Resources << /XObject << /ImA 8 0 R "
+        ">> >> >>",
+        StreamObject("", "1100 0 d0 q 1000 0 0 1000 0 0 cm /ImA Do Q"),
+        StreamObject(std::string(glyph_b) + "/Metadata 12 0 R",
+                     "1100 0 d0 0 1 0 rg 0 0 1000 1000 re f"),
+        StreamObject("/Type /XObject /Subtype /Form /BBox [0 0 1 1]",
+                     "0 0 1 rg 0 0 1 1 re f"),
+        StreamObject(
+            "/Type /XObject /Subtype /Form /Group << /S /Transparency "
+            "/CS /DeviceRGB >> /BBox [0 0 600 600] /Resources << /Font "
+            "<< /In 5 0 R >> >> /Metadata 10 0 R /PieceInfo << /App << "
+            "/LastModified (D:20260101) /Private 11 0 R >> >>",
+            "BT /In 100 Tf 300 300 Td (B) Tj ET"),
+        StreamObject("/Type /Metadata /Subtype /XML", "NESTEDPRIVATE metadata"),
+        StreamObject("", "NESTEDPRIVATE piece"),
+        StreamObject("/Type /Metadata /Subtype /XML", "GLYPHPRIVATE"),
+    });
+    for (bool layer : {false, true}) {
+      SCOPED_TRACE(layer ? "layer transaction" : "document");
+      OpenedPdf opened = OpenPdf(input, layer);
+      ASSERT_TRUE(opened.doc);
+      ScopedFPDFPage page(FPDF_LoadPage(opened.doc.get(), 0));
+      ASSERT_TRUE(page);
+      // 600 pixels for 600 points: the masked square around (350, 250).
+      auto before = Render(page.get());
+      EXPECT_NE(0xffffffu, Pixel(before.get(), 350, 250));
+
+      ASSERT_NO_FATAL_FAILURE(MarkAndApply(opened.doc.get(), page.get(), layer,
+                                           {98, 574, 181, 498}));
+      auto after = Render(page.get());
+      EXPECT_EQ(Pixel(before.get(), 350, 250), Pixel(after.get(), 350, 250));
+
+      ClearString();
+      ASSERT_TRUE(FPDF_SaveAsCopy(opened.doc.get(), this, FPDF_NO_INCREMENTAL));
+      ASSERT_TRUE(OpenSavedDocument());
+      CPDF_Document* saved = CPDFDocumentFromFPDFDocument(saved_document());
+      ExpectNoSentinel(saved, "NESTEDPRIVATE");
+      ExpectNoSentinel(saved, "GLYPHPRIVATE");
+      FPDF_PAGE reloaded = LoadSavedPage(0);
+      ASSERT_TRUE(reloaded);
+      auto saved_render = Render(reloaded);
+      EXPECT_EQ(Pixel(before.get(), 350, 250),
+                Pixel(saved_render.get(), 350, 250));
+      CloseSavedPage(reloaded);
+      CloseSavedDocument();
+    }
   }
 }

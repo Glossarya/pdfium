@@ -13,6 +13,7 @@
 #include "core/fpdfapi/edit/cpdf_path_redactor.h"
 #include "core/fpdfapi/edit/cpdf_pagecontentgenerator.h"
 #include "core/fpdfapi/edit/cpdf_pagecontentmanager.h"
+#include "core/fpdfapi/edit/cpdf_redaction_copies.h"
 #include "core/fpdfapi/edit/cpdf_redaction_mark_sanitizer.h"
 #include "core/fpdfapi/edit/cpdf_type3_redactor.h"
 #include "core/fpdfapi/font/cpdf_cidfont.h"
@@ -36,7 +37,11 @@
 #include "core/fpdfapi/parser/cpdf_stream.h"
 #include "core/fpdfapi/parser/cpdf_reference.h"
 #include "core/fpdfapi/parser/cpdf_stream_acc.h"
+#include "core/fpdfapi/parser/cpdf_array.h"
+#include "core/fpdfapi/parser/cpdf_boolean.h"
 #include "core/fxcrt/fx_coordinates.h"
+#include "core/fxcrt/stl_util.h"
+#include "core/fxcodec/flate/flatemodule.h"
 #include "core/fxcodec/jpeg/jpegmodule.h"
 #include "core/fxcodec/scanlinedecoder.h"
 #include "core/fxge/dib/cfx_dibitmap.h"
@@ -593,6 +598,105 @@ static void PageRectsToImageGrid(const CFX_Matrix& image_to_page,
   }
 }
 
+// EmbedPDF: the samples of an image grid the rects (from
+// PageRectsToImageGrid()) cover any part of, as whole-sample boxes. Rows
+// count from the bottom; x1 and y1 are one past the box.
+struct GridBox {
+  int x0, y0, x1, y1;
+};
+
+static std::vector<GridBox> GridBoxesOf(
+    pdfium::span<const CFX_FloatRect> grid_rects,
+    int width,
+    int height) {
+  std::vector<GridBox> boxes;
+  boxes.reserve(grid_rects.size());
+  for (const CFX_FloatRect& r : grid_rects) {
+    GridBox b;
+    b.x0 = std::max(0, std::min(width, static_cast<int>(std::floor(r.left))));
+    b.x1 = std::max(0, std::min(width, static_cast<int>(std::ceil(r.right))));
+    b.y0 =
+        std::max(0, std::min(height, static_cast<int>(std::floor(r.bottom))));
+    b.y1 = std::max(0, std::min(height, static_cast<int>(std::ceil(r.top))));
+    if (b.x1 > b.x0 && b.y1 > b.y0) {
+      boxes.push_back(b);
+    }
+  }
+  return boxes;
+}
+
+// EmbedPDF: a private copy of an image's explicit mask (an image mask of its
+// own, ISO 32000-1 §8.9.6.3, with its own grid over the same unit square),
+// painted where `page_rects` cover it: the hole shows as the replacement
+// image's fill, as the soft-mask path makes it opaque. Null when the mask
+// can't be read.
+static RetainPtr<CPDF_Stream> RedactExplicitMask(
+    CPDF_Document* doc,
+    RetainPtr<const CPDF_Stream> mask,
+    const CFX_Matrix& image_to_page,
+    pdfium::span<const CFX_FloatRect> page_rects) {
+  auto dib = pdfium::MakeRetain<CPDF_DIB>(doc, std::move(mask));
+  if (!dib->Load()) {
+    return nullptr;
+  }
+  CPDF_DIB::LoadState state = CPDF_DIB::LoadState::kSuccess;
+  if (dib->IsJBigImage()) {
+    do {
+      state = dib->ContinueLoadDIBBase(nullptr);
+    } while (state == CPDF_DIB::LoadState::kContinue);
+  }
+  if (state != CPDF_DIB::LoadState::kSuccess || !dib->IsMaskFormat() ||
+      dib->GetBPP() != 1) {
+    return nullptr;
+  }
+
+  const int width = dib->GetWidth();
+  const int height = dib->GetHeight();
+  std::vector<CFX_FloatRect> grid_rects;
+  PageRectsToImageGrid(image_to_page, width, height, page_rects, &grid_rects);
+  const std::vector<GridBox> boxes = GridBoxesOf(grid_rects, width, height);
+
+  // CPDF_DIB reads a mask whatever its /Decode with 1 as painted; the copy
+  // keeps that and says so with /Decode [1 0].
+  const size_t pitch = (static_cast<size_t>(width) + 7) / 8;
+  DataVector<uint8_t> bits(pitch * static_cast<size_t>(height));
+  for (int row = 0; row < height; ++row) {
+    pdfium::span<uint8_t> out =
+        pdfium::span(bits).subspan(static_cast<size_t>(row) * pitch, pitch);
+    pdfium::span<const uint8_t> line = dib->GetScanline(row);
+    if (line.size() >= pitch) {
+      fxcrt::Copy(line.first(pitch), out);
+    }
+    const int y = height - 1 - row;
+    for (const GridBox& box : boxes) {
+      if (y < box.y0 || y >= box.y1) {
+        continue;
+      }
+      for (int x = box.x0; x < box.x1; ++x) {
+        out[x / 8] |= static_cast<uint8_t>(0x80 >> (x % 8));
+      }
+    }
+  }
+
+  RetainPtr<CPDF_Dictionary> dict = doc->New<CPDF_Dictionary>();
+  dict->SetNewFor<CPDF_Name>("Type", "XObject");
+  dict->SetNewFor<CPDF_Name>("Subtype", "Image");
+  dict->SetNewFor<CPDF_Number>("Width", width);
+  dict->SetNewFor<CPDF_Number>("Height", height);
+  dict->SetNewFor<CPDF_Boolean>("ImageMask", true);
+  dict->SetNewFor<CPDF_Number>("BitsPerComponent", 1);
+  RetainPtr<CPDF_Array> decode = dict->SetNewFor<CPDF_Array>("Decode");
+  decode->AppendNew<CPDF_Number>(1);
+  decode->AppendNew<CPDF_Number>(0);
+  dict->SetNewFor<CPDF_Name>("Filter", "FlateDecode");
+  auto stream = pdfium::MakeRetain<CPDF_Stream>(
+      fxcodec::FlateModule::Encode(bits), std::move(dict));
+  if (doc->AddIndirectObject(stream) == 0) {
+    return nullptr;
+  }
+  return stream;
+}
+
 // Helper: Manually decode a JPEG stream for SMask.
 // Returns true on success and populates out_data.
 static bool DecodeJpegSMask(RetainPtr<const CPDF_Stream> stream,
@@ -729,14 +833,16 @@ static RedactResult RedactImageObject(
     return {.succeeded = false};
   }
 
+  RetainPtr<const CPDF_Dictionary> source_dict =
+      image->GetStream() ? image->GetStream()->GetDict() : nullptr;
+
   // If the image has an SMask, keep it so we preserve transparency.
   RetainPtr<const CPDF_Stream> orig_smask_stream;
-  if (image->GetStream()) {
-    RetainPtr<const CPDF_Dictionary> idict = image->GetStream()->GetDict();
-    if (idict) {
-      RetainPtr<const CPDF_Object> smask_obj = idict->GetDirectObjectFor("SMask");
-      if (smask_obj && smask_obj->AsStream())
-        orig_smask_stream = pdfium::WrapRetain(smask_obj->AsStream());
+  if (source_dict) {
+    RetainPtr<const CPDF_Object> smask_obj =
+        source_dict->GetDirectObjectFor("SMask");
+    if (smask_obj && smask_obj->AsStream()) {
+      orig_smask_stream = pdfium::WrapRetain(smask_obj->AsStream());
     }
   }
 
@@ -746,21 +852,24 @@ static RedactResult RedactImageObject(
   if (img_rects.empty()) {
     return {};
   }
-
-  struct IRect { int x0, y0, x1, y1; };
-  std::vector<IRect> boxes;
-  boxes.reserve(img_rects.size());
-  for (const auto& r : img_rects) {
-    IRect b;
-    b.x0 = std::max(0, std::min(W, static_cast<int>(std::floor(r.left))));
-    b.x1 = std::max(0, std::min(W, static_cast<int>(std::ceil (r.right))));
-    b.y0 = std::max(0, std::min(H, static_cast<int>(std::floor(r.bottom))));
-    b.y1 = std::max(0, std::min(H, static_cast<int>(std::ceil (r.top))));
-    if (b.x1 > b.x0 && b.y1 > b.y0)
-      boxes.push_back(b);
-  }
+  const std::vector<GridBox> boxes = GridBoxesOf(img_rects, W, H);
   if (boxes.empty()) {
     return {};
+  }
+
+  // EmbedPDF: an explicit mask stream masks the replacement too. A soft mask
+  // overrides it (ISO 32000-1 §8.9.5, the SMask entry), and a colour-key mask
+  // (an array) is already in the alpha CPDF_DIB reads.
+  RetainPtr<CPDF_Stream> explicit_mask;
+  RetainPtr<const CPDF_Stream> source_mask =
+      source_dict && !orig_smask_stream ? source_dict->GetStreamFor("Mask")
+                                        : nullptr;
+  if (source_mask) {
+    explicit_mask = RedactExplicitMask(doc, std::move(source_mask), img_to_page,
+                                       page_rects);
+    if (!explicit_mask) {
+      return {.succeeded = false};
+    }
   }
 
   const uint8_t fill_val = fill_black ? 0x00 : 0xFF;
@@ -931,6 +1040,21 @@ static RedactResult RedactImageObject(
         pdfium::MakeRetain<CPDF_Stream>(std::move(out_a), std::move(smask_dict));
     const uint32_t smask_objnum = doc->AddIndirectObject(smask_stream);
     ndict->SetFor("SMask", pdfium::MakeRetain<CPDF_Reference>(doc, smask_objnum));
+  } else if (explicit_mask) {
+    ndict->SetNewFor<CPDF_Reference>("Mask", doc, explicit_mask->GetObjNum());
+  }
+
+  // EmbedPDF: the replacement keeps what says how, where and when the image
+  // is drawn: its optional content (an image in a hidden layer stays
+  // hidden), rendering intent, interpolation and structure. Nothing else of
+  // the original comes along: its metadata, alternate versions and OPI link
+  // are other copies of the pixels.
+  if (source_dict) {
+    for (const char* key : {"OC", "Intent", "Interpolate", "StructParent"}) {
+      if (RetainPtr<const CPDF_Object> value = source_dict->GetObjectFor(key)) {
+        ndict->SetFor(key, value->CloneForHolder(doc));
+      }
+    }
   }
 
   // Images (and their masks) may be reused by other placements or pages.
@@ -1110,10 +1234,15 @@ RedactResult RedactHolder(CPDF_Page* page_for_cache,
   if (result.changed) {
     // This walker accepts only pages and Form XObjects. Give forms private
     // backing dictionaries before sanitizing their named property resources.
-    if (!holder->IsPage() &&
-        !static_cast<CPDF_Form*>(holder)->CloneBackingStreamForWrite()) {
-      result.succeeded = false;
-      return result;
+    if (!holder->IsPage()) {
+      auto* form = static_cast<CPDF_Form*>(holder);
+      if (!form->CloneBackingStreamForWrite()) {
+        result.succeeded = false;
+        return result;
+      }
+      // EmbedPDF: the copy holds the redacted drawing, and none of the
+      // original's other copies of it.
+      RemoveContentCopies(form->GetMutableDict().Get());
     }
     mark_sanitizer.Apply();
   }
@@ -1181,6 +1310,12 @@ RedactResult RedactTextInRegions(CPDF_Page* page,
   if (RedactType3Glyphs(page, result.type3_fonts)) {
     result.changed = true;
   }
+  // EmbedPDF: copies made before the redaction still show what it removed:
+  // the page's thumbnail, application data and metadata, and the previews in
+  // the document's XMP metadata. A page redacted loses them, whether or not
+  // content changed under the regions.
+  RemovePageContentCopies(page);
+  RemoveDocumentXmpThumbnails(page->GetDocument());
 
   if (draw_black_boxes) {
     AddBlackOverlayPaths(page, pdfium::span(regions));  // paint on top

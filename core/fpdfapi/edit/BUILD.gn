@@ -21,6 +21,8 @@ source_set("edit") {
     "cpdf_pageorganizer.h",
     "cpdf_path_redactor.cpp",
     "cpdf_path_redactor.h",
+    "cpdf_redaction_copies.cpp",
+    "cpdf_redaction_copies.h",
     "cpdf_redaction_mark_sanitizer.cpp",
     "cpdf_redaction_mark_sanitizer.h",
     "cpdf_resourceuse.cpp",
@@ -77,6 +79,7 @@ pdfium_unittest_source_set("unittests") {
     "cpdf_npagetooneexporter_unittest.cpp",
     "cpdf_pagecontentgenerator_unittest.cpp",
     "cpdf_path_redactor_unittest.cpp",
+    "cpdf_redaction_copies_unittest.cpp",
     "cpdf_text_redactor_unittest.cpp",
     "cpdf_tounicodecmap_unittest.cpp",
   ]

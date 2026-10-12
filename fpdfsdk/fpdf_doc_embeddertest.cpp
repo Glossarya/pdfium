@@ -16,6 +16,7 @@
 #include "core/fxge/cfx_defaultrenderdevice.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "public/cpp/fpdf_scopers.h"
+#include "public/epdf_doc.h"
 #include "public/epdf_view.h"
 #include "public/fpdf_doc.h"
 #include "public/fpdf_edit.h"

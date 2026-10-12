@@ -37,6 +37,7 @@
 #include "fpdfsdk/epdf_appearance_exporter.h"
 #include "fpdfsdk/epdf_form_helpers.h"
 #include "fpdfsdk/epdf_object_helpers.h"
+#include "public/epdf_flatten.h"
 #include "public/fpdf_edit.h"
 
 namespace {

@@ -469,15 +469,16 @@ component builds; don't bring back the empty `#else` branch.
 **Rule.** An `EPDF*` function or declaration placed inside an upstream API file
 (`fpdfsdk/fpdf_*.cpp`, `public/fpdf_*.h`), or a core helper that exists only to back one.
 **Why.** It was put there when the API was added.
-**Where.** `fpdf_view.cpp`, `fpdf_doc.cpp`, `fpdf_attachment.cpp`, `fpdf_save.cpp` and
-`fpdf_text.cpp`; our declarations in the other `public/fpdf_*.h` headers; the two colour
-types `public/fpdf_annot.h` adds for `public/epdf_annot.h`; core helpers such as
-`CPDF_Dest::GetPageObjectNumber`. Already in our own files: the annotation API
-(`public/epdf_annot.h`, `fpdfsdk/epdf_annot.cpp`) and what we declared in `public/fpdfview.h`
-(`public/epdf_view.h`, `public/epdf_layer.h`).
+**Where.** The implementations still in `fpdf_view.cpp`, `fpdf_doc.cpp`, `fpdf_attachment.cpp`,
+`fpdf_save.cpp` and `fpdf_text.cpp`; the two colour types `public/fpdf_annot.h` adds for
+`public/epdf_annot.h`; core helpers such as `CPDF_Dest::GetPageObjectNumber`. Every declaration we
+added to a public header now lives in our own: `public/epdf_<name>.h` next to upstream's
+`public/fpdf_<name>.h` (`epdf_view.h` and `epdf_layer.h` for `fpdfview.h`), and the annotation API
+in `fpdfsdk/epdf_annot.cpp`.
 **Guarded by.** The embedder tests of each API.
-**When upstream touches this.** Keep ours and take upstream's around it. These move to `epdf_*`
-files (upstream-sync plan, phase P4).
+**When upstream touches this.** Keep ours and take upstream's around it. A new `EPDF*` declaration
+goes in our `public/epdf_<name>.h`, never in upstream's header. The implementations left in
+`fpdf_*.cpp` move to `epdf_*.cpp` when they conflict (upstream-sync plan §6.1).
 
 ### bug-fix
 **Rule.** Our fix of an upstream bug. The comment says what the bug was.

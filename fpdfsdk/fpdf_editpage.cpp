@@ -44,6 +44,7 @@
 #include "core/fxcrt/stl_util.h"
 #include "core/fxcrt/unowned_ptr.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
+#include "public/epdf_edit.h"
 #include "public/fpdf_formfill.h"
 
 #ifdef PDF_ENABLE_XFA

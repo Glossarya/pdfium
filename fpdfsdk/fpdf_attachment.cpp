@@ -37,6 +37,7 @@
 #include "core/fxcrt/notreached.h"
 #include "core/fxcrt/numerics/safe_conversions.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
+#include "public/epdf_attachment.h"
 
 namespace {
 

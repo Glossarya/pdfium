@@ -23,6 +23,7 @@
 #include "core/fxcrt/retain_ptr.h"
 #include "core/fxcrt/widestring.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
+#include "public/epdf_doc.h"
 
 namespace {  
   // Appends the page dictionary reference as the first element of |arr|.

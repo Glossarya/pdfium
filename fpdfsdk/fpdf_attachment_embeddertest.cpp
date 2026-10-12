@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include "public/epdf_attachment.h"
+#include "public/epdf_save.h"
 #include "public/fpdf_attachment.h"
 #include "public/fpdf_save.h"
 #include "public/fpdfview.h"

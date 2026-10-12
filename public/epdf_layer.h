@@ -12,7 +12,8 @@ extern "C" {
 #endif  // __cplusplus
 
 // EmbedPDF's base documents and layers: a frozen base document many layers
-// share, the layers opened on it, their transactions and their saves.
+// share, the layers opened on it, and their transactions. Saving a layer is in
+// public/epdf_save.h.
 
 // A base document: loaded once, frozen, and shared by the layers opened on it.
 typedef struct fpdf_base_document_t__* EPDF_BASE_DOCUMENT;

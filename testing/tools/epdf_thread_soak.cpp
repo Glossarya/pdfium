@@ -44,6 +44,8 @@
 #include "public/epdf_annot.h"
 #include "public/epdf_form.h"
 #include "public/epdf_layer.h"
+#include "public/epdf_progressive.h"
+#include "public/epdf_save.h"
 #include "public/epdf_text.h"
 #include "public/epdf_view.h"
 #include "public/fpdf_annot.h"

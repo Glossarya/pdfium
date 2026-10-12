@@ -25,6 +25,7 @@
 #include "core/fxge/dib/cstretchengine.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "public/cpp/fpdf_scopers.h"
+#include "public/epdf_progressive.h"
 #include "public/fpdf_edit.h"
 #include "public/fpdf_progressive.h"
 #include "public/fpdf_save.h"

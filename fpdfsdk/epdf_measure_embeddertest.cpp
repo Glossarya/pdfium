@@ -26,6 +26,7 @@
 #include "public/epdf_annot.h"
 #include "public/epdf_font.h"
 #include "public/epdf_layer.h"
+#include "public/epdf_save.h"
 #include "public/fpdf_edit.h"
 #include "public/fpdf_save.h"
 #include "testing/embedder_test.h"

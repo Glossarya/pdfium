@@ -31,6 +31,7 @@
 #include "core/fxcrt/stl_util.h"
 #include "fpdfsdk/cpdfsdk_filewriteadapter.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
+#include "public/epdf_save.h"
 #include "public/fpdf_edit.h"
 
 #ifdef PDF_ENABLE_XFA

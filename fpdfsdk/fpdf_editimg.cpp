@@ -35,6 +35,7 @@
 #include "core/fxge/dib/cfx_dibitmap.h"
 #include "fpdfsdk/cpdfsdk_customaccess.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
+#include "public/epdf_edit.h"
 
 namespace {
 

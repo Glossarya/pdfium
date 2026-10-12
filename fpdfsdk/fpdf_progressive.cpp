@@ -19,6 +19,7 @@
 #include "fpdfsdk/cpdfsdk_pauseadapter.h"
 #include "fpdfsdk/cpdfsdk_renderpage.h"
 #include "fpdfsdk/epdf_budget_pause.h"
+#include "public/epdf_progressive.h"
 #include "public/fpdfview.h"
 
 // These checks are here because core/ and public/ cannot depend on each other.

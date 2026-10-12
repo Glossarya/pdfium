@@ -35,6 +35,7 @@
 #include "core/fxcrt/span.h"
 #include "core/fxcrt/span_util.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
+#include "public/epdf_doc.h"
 #include "public/fpdf_formfill.h"
 
 namespace {

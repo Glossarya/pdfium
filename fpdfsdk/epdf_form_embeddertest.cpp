@@ -20,6 +20,7 @@
 #include "public/epdf_action.h"
 #include "public/epdf_annot.h"
 #include "public/epdf_layer.h"
+#include "public/epdf_save.h"
 #include "public/fpdf_annot.h"
 #include "public/fpdf_save.h"
 #include "public/fpdfview.h"

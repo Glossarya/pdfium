@@ -369,11 +369,19 @@ selective flattening.
 **When upstream touches this.** Line breaking and Unicode tables.
 
 ### fonts
-**Rule.** Registered fonts, fallbacks, subsetting, CID-keyed CFF and font embedding policies.
-**Why.** Text the user types must render and embed with the right font.
-**Where.** `cfx_fontregistry` (ours), `cpdf_font*`, `cfx_fontmapper.cpp`.
-**Guarded by.** The font embedder tests.
-**When upstream touches this.** Font loading and mapping.
+**Rule.** Registered fonts, fallbacks, subsetting, CID-keyed CFF and font embedding policies. A
+standard font (the 14, on an ANSI code page) draws with PDFium's built-in face on every platform,
+never a system font.
+**Why.** Text the user types must render and embed with the right font, and a document must draw
+the same in every engine, WebAssembly (which has no system fonts) included.
+**Where.** `cfx_fontregistry` (ours), `cpdf_font*`, `cfx_fontmapper.cpp`. Upstream's embedder tests
+expect standard fonts from the test fonts, so the embedder test environment turns on
+`CFX_FontMapper::SetStandardFontsFromSystemForTesting()`; our tests of the rule turn it off.
+**Guarded by.** The font embedder tests; `cfx_fontmapper_unittest.cpp` and
+`EPDFViewEmbedderTest.StandardFontsDrawWithBuiltInFaces` for standard fonts.
+**When upstream touches this.** Font loading and mapping. A new upstream test that expects the test
+fonts for a standard font passes as it is; one of ours that expects the built-in faces turns the
+switch off.
 
 ### measurement
 **Rule.** Measurement dictionaries and dimension appearances.

@@ -22,6 +22,7 @@
 #include "core/fpdfapi/parser/cpdf_name.h"
 #include "core/fpdfapi/parser/cpdf_number.h"
 #include "core/fxge/agg/cfx_agg_devicedriver.h"
+#include "core/fxge/cfx_fontmapper.h"
 #include "core/fxge/dib/cstretchengine.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "fpdfsdk/epdf_c_api_test.h"
@@ -897,4 +898,64 @@ TEST_F(EPDFViewEmbedderTest, EPDFGetPageUserUnitByIndex) {
   EXPECT_FLOAT_EQ(1.0f, user_unit);
 
   EXPECT_EQ(0u, doc->GetParsedPageCountForTesting());
+}
+
+namespace {
+
+// The family names of the fonts hello_world.pdf's text objects draw with: a
+// Times-Roman and a Helvetica the file doesn't embed.
+std::vector<std::string> HelloWorldFontFamilies(FPDF_PAGE page) {
+  std::vector<std::string> families;
+  for (int i = 0; i < FPDFPage_CountObjects(page); ++i) {
+    FPDF_PAGEOBJECT object = FPDFPage_GetObject(page, i);
+    if (FPDFPageObj_GetType(object) != FPDF_PAGEOBJ_TEXT) {
+      continue;
+    }
+    FPDF_FONT font = FPDFTextObj_GetFont(object);
+    const size_t size = FPDFFont_GetFamilyName(font, nullptr, 0);
+    std::string family(size, '\0');
+    FPDFFont_GetFamilyName(font, family.data(), size);
+    family.resize(size ? size - 1 : 0);
+    families.push_back(family);
+  }
+  return families;
+}
+
+// Standard fonts draw as the product draws them, with PDFium's built-in faces,
+// while it lives; then as the embedder test environment set them up for
+// upstream's tests, from the test fonts.
+class ScopedBuiltInStandardFonts {
+ public:
+  ScopedBuiltInStandardFonts() {
+    CFX_FontMapper::SetStandardFontsFromSystemForTesting(false);
+  }
+  ~ScopedBuiltInStandardFonts() {
+    CFX_FontMapper::SetStandardFontsFromSystemForTesting(true);
+  }
+};
+
+}  // namespace
+
+// Standard fonts draw with PDFium's built-in faces on every platform (rule
+// fonts), even where the system has fonts for them: here, the test fonts the
+// embedder test environment installs, which upstream's tests get instead.
+TEST_F(EPDFViewEmbedderTest, StandardFontsDrawWithBuiltInFaces) {
+  {
+    ScopedBuiltInStandardFonts built_in;
+    ASSERT_TRUE(OpenDocument("hello_world.pdf"));
+    {
+      ScopedPage page = LoadScopedPage(0);
+      ASSERT_TRUE(page);
+      EXPECT_EQ((std::vector<std::string>{"Chrom Serif OTF", "Chrom Sans OTF"}),
+                HelloWorldFontFamilies(page.get()));
+    }
+    CloseDocument();
+  }
+
+  // Upstream's tests: the test fonts.
+  ASSERT_TRUE(OpenDocument("hello_world.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+  EXPECT_EQ((std::vector<std::string>{"Tinos", "Arimo"}),
+            HelloWorldFontFamilies(page.get()));
 }

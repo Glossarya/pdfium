@@ -32,6 +32,7 @@ atomic | *::g_held_bounds_generation | std::atomic: invalidates object-run bound
 test-only | *::g_object_groups_enabled | Only SetObjectGroupsEnabledForTesting writes it.
 test-only | *::g_specialized_loops_enabled | Only SetSpecializedLoopsEnabledForTesting writes it.
 test-only | *::g_path_memo_enabled | Only SetPathMemoEnabledForTesting writes it.
+test-only | *::g_standard_fonts_from_system | Only SetStandardFontsFromSystemForTesting writes it.
 test-only | *::g_fail_after_staged_fonts_for_testing | A test hook.
 set-once | *::g_sandbox_policy | Set once at process start-up, before workers start.
 set-once | *::g_unsupport_info | Set once at process start-up, before workers start.

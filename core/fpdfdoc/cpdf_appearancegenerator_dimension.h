@@ -1,7 +1,7 @@
 // Copyright 2026 CloudPDF LTD
 // SPDX-License-Identifier: Apache-2.0
-#ifndef CORE_FPDFDOC_CPDF_GENERATEAP_DIMENSION_H_
-#define CORE_FPDFDOC_CPDF_GENERATEAP_DIMENSION_H_
+#ifndef CORE_FPDFDOC_CPDF_APPEARANCEGENERATOR_DIMENSION_H_
+#define CORE_FPDFDOC_CPDF_APPEARANCEGENERATOR_DIMENSION_H_
 
 #include <vector>
 #include "core/fxcrt/fx_coordinates.h"
@@ -52,4 +52,4 @@ CaptionLayout LayoutShapeCaption(const CPDF_Dictionary* annot,
                                  float width,
                                  float height);
 }  // namespace pdfium::dimension
-#endif  // CORE_FPDFDOC_CPDF_GENERATEAP_DIMENSION_H_
+#endif  // CORE_FPDFDOC_CPDF_APPEARANCEGENERATOR_DIMENSION_H_

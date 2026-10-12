@@ -218,7 +218,7 @@ void MarkAndApply(FPDF_DOCUMENT doc,
   if (layer) {
     ASSERT_TRUE(EPDFLayer_BeginTransaction(doc));
   }
-  ASSERT_TRUE(EPDFPage_ApplyRedactions(page, nullptr));
+  ASSERT_TRUE(EPDFPage_ApplyRedactions(page, nullptr, 0, nullptr));
   ASSERT_TRUE(FPDFPage_GenerateContent(page));
   if (layer) {
     ASSERT_TRUE(EPDFLayer_CommitTransaction(doc));
@@ -449,7 +449,7 @@ RetainPtr<const CPDF_Stream> OnlyImage(FPDF_DOCUMENT doc) {
 class EPDFRedactEmbedderTest : public EmbedderTest {
  protected:
   void ApplyAndSave(FPDF_PAGE page) {
-    ASSERT_TRUE(EPDFPage_ApplyRedactions(page, nullptr));
+    ASSERT_TRUE(EPDFPage_ApplyRedactions(page, nullptr, 0, nullptr));
     ASSERT_TRUE(FPDFPage_GenerateContent(page));
     // Safe export is caller-selected. Never let an incremental save obscure
     // the distinction between removal defects and deliberately retained
@@ -738,7 +738,7 @@ TEST_P(EPDFRedactPageTreeTest, RemovesUnusedPropertiesFromEveryAncestor) {
   ASSERT_TRUE(working_);
   ScopedFPDFPage page(FPDF_LoadPage(working_.get(), 0));
   ASSERT_TRUE(page);
-  ASSERT_TRUE(EPDFPage_ApplyRedactions(page.get(), nullptr));
+  ASSERT_TRUE(EPDFPage_ApplyRedactions(page.get(), nullptr, 0, nullptr));
   ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
   SaveWorking();
   ASSERT_TRUE(saved_document());
@@ -759,7 +759,7 @@ TEST_P(EPDFRedactPageTreeTest, PreservesAnUnmarkedSiblingUsingTheProperty) {
   ASSERT_TRUE(working_);
   ScopedFPDFPage page(FPDF_LoadPage(working_.get(), 0));
   ASSERT_TRUE(page);
-  ASSERT_TRUE(EPDFPage_ApplyRedactions(page.get(), nullptr));
+  ASSERT_TRUE(EPDFPage_ApplyRedactions(page.get(), nullptr, 0, nullptr));
   ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
   SaveWorking();
   ASSERT_TRUE(saved_document());
@@ -784,8 +784,8 @@ TEST_P(EPDFRedactPageTreeTest,
     const FS_RECTF rect = {49, 121, 133, 95};
     ASSERT_TRUE(FPDFAnnot_SetRect(mark.get(), &rect));
   }
-  ASSERT_TRUE(EPDFPage_ApplyRedactions(first.get(), nullptr));
-  ASSERT_TRUE(EPDFPage_ApplyRedactions(second.get(), nullptr));
+  ASSERT_TRUE(EPDFPage_ApplyRedactions(first.get(), nullptr, 0, nullptr));
+  ASSERT_TRUE(EPDFPage_ApplyRedactions(second.get(), nullptr, 0, nullptr));
   ASSERT_TRUE(FPDFPage_GenerateContent(first.get()));
   ASSERT_TRUE(FPDFPage_GenerateContent(second.get()));
   SaveWorking();
@@ -844,7 +844,7 @@ TEST_F(EPDFRedactEmbedderTest,
     const FS_RECTF area = {40, 535, 360, 490};
     ASSERT_TRUE(FPDFAnnot_SetRect(redact.get(), &area));
   }
-  ASSERT_TRUE(EPDFPage_ApplyRedactions(page.get(), nullptr));
+  ASSERT_TRUE(EPDFPage_ApplyRedactions(page.get(), nullptr, 0, nullptr));
   ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
 
   const std::wstring text = ReadText(page.get());
@@ -891,7 +891,7 @@ TEST_F(EPDFRedactEmbedderTest, RedactingTheOnlyStampLeavesNothingOfItsDrawing) {
       const FS_RECTF area = {40, 560, 360, 490};
       ASSERT_TRUE(FPDFAnnot_SetRect(redact.get(), &area));
     }
-    ASSERT_TRUE(EPDFPage_ApplyRedactions(page.get(), nullptr));
+    ASSERT_TRUE(EPDFPage_ApplyRedactions(page.get(), nullptr, 0, nullptr));
     ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
     EXPECT_EQ(0, FPDFPage_GetAnnotCount(page.get()));
     EXPECT_EQ(0, SentinelsInRewrite(doc.get(), "SENTINELONLY"));
@@ -939,7 +939,7 @@ TEST_F(EPDFRedactEmbedderTest, AppliesOnAPageWithoutContentsOrResources) {
     if (layer) {
       ASSERT_TRUE(EPDFLayer_BeginTransaction(doc.get()));
     }
-    ASSERT_TRUE(EPDFPage_ApplyRedactions(page.get(), nullptr));
+    ASSERT_TRUE(EPDFPage_ApplyRedactions(page.get(), nullptr, 0, nullptr));
     ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
     if (layer) {
       ASSERT_TRUE(EPDFLayer_CommitTransaction(doc.get()));
@@ -1712,5 +1712,111 @@ TEST_F(EPDFRedactEmbedderTest, AnImageThatCannotBeDecodedFailsTheApply) {
     const FS_RECTF rect = {50, 200, 115, 100};
     ASSERT_TRUE(FPDFAnnot_SetRect(mark.get(), &rect));
   }
-  EXPECT_FALSE(EPDFPage_ApplyRedactions(page.get(), nullptr));
+  EXPECT_FALSE(EPDFPage_ApplyRedactions(page.get(), nullptr, 0, nullptr));
+}
+
+// Marks passed to EPDFPage_ApplyRedactions are applied, in any order; the
+// page's other marks stay.
+TEST_F(EPDFRedactEmbedderTest, ApplyingSomeMarksLeavesTheOthers) {
+  const std::string input = MakeTextDrawing({"AAAA", "BBBB", "CCCC"});
+  for (bool layer : {false, true}) {
+    SCOPED_TRACE(layer ? "layer transaction" : "document");
+    OpenedPdf opened = OpenPdf(input, layer);
+    ASSERT_TRUE(opened.doc);
+    ScopedFPDFPage page(FPDF_LoadPage(opened.doc.get(), 0));
+    ASSERT_TRUE(page);
+    // Line i is drawn from y = 10 + 40 * i.
+    std::vector<ScopedFPDFAnnotation> marks;
+    for (int line = 0; line < 3; ++line) {
+      marks.emplace_back(FPDFPage_CreateAnnot(page.get(), FPDF_ANNOT_REDACT));
+      ASSERT_TRUE(marks.back());
+      const float bottom = 10.0f + 40 * line - 4;
+      const FS_RECTF rect = {5, bottom + 30, 150, bottom};
+      ASSERT_TRUE(FPDFAnnot_SetRect(marks.back().get(), &rect));
+    }
+    const FPDF_ANNOTATION applied[] = {marks[2].get(), marks[0].get()};
+    if (layer) {
+      ASSERT_TRUE(EPDFLayer_BeginTransaction(opened.doc.get()));
+    }
+    ASSERT_TRUE(EPDFPage_ApplyRedactions(page.get(), applied, 2, nullptr));
+    ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
+    if (layer) {
+      ASSERT_TRUE(EPDFLayer_CommitTransaction(opened.doc.get()));
+    }
+    marks.clear();
+    EXPECT_EQ(L"BBBB", ReadText(page.get()));
+    ASSERT_EQ(1, FPDFPage_GetAnnotCount(page.get()));
+    ScopedFPDFAnnotation left(FPDFPage_GetAnnot(page.get(), 0));
+    EXPECT_EQ(FPDF_ANNOT_REDACT, FPDFAnnot_GetSubtype(left.get()));
+  }
+}
+
+// A list holding anything but REDACT annotations of the page applies nothing.
+TEST_F(EPDFRedactEmbedderTest,
+       ApplyingAnythingButAMarkOfThePageAppliesNothing) {
+  const std::string input = PdfOf({
+      "<< /Type /Catalog /Pages 2 0 R >>",
+      "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 50] /Contents 4 0 R "
+      "/Resources << /Font << /F1 5 0 R >> >> >>",
+      StreamObject("", "BT /F1 24 Tf 10 10 Td (AAAA) Tj ET"),
+      "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 50] >>",
+  });
+  OpenedPdf opened = OpenPdf(input, /*layer=*/false);
+  ASSERT_TRUE(opened.doc);
+  ScopedFPDFPage page(FPDF_LoadPage(opened.doc.get(), 0));
+  ScopedFPDFPage other(FPDF_LoadPage(opened.doc.get(), 1));
+  ASSERT_TRUE(page);
+  ASSERT_TRUE(other);
+  const FS_RECTF rect = {5, 40, 150, 5};
+  ScopedFPDFAnnotation mark(
+      FPDFPage_CreateAnnot(page.get(), FPDF_ANNOT_REDACT));
+  ScopedFPDFAnnotation square(
+      FPDFPage_CreateAnnot(page.get(), FPDF_ANNOT_SQUARE));
+  ScopedFPDFAnnotation elsewhere(
+      FPDFPage_CreateAnnot(other.get(), FPDF_ANNOT_REDACT));
+  for (FPDF_ANNOTATION annot : {mark.get(), square.get(), elsewhere.get()}) {
+    ASSERT_TRUE(FPDFAnnot_SetRect(annot, &rect));
+  }
+
+  const FPDF_ANNOTATION with_square[] = {mark.get(), square.get()};
+  EXPECT_FALSE(EPDFPage_ApplyRedactions(page.get(), with_square, 2, nullptr));
+  const FPDF_ANNOTATION with_other_page[] = {mark.get(), elsewhere.get()};
+  EXPECT_FALSE(
+      EPDFPage_ApplyRedactions(page.get(), with_other_page, 2, nullptr));
+  EXPECT_FALSE(EPDFPage_ApplyRedactions(page.get(), nullptr, 1, nullptr));
+  EXPECT_FALSE(EPDFPage_ApplyRedactions(page.get(), with_square, 0, nullptr));
+  EXPECT_FALSE(EPDFPage_ApplyRedactions(page.get(), with_square, -1, nullptr));
+  EXPECT_EQ(L"AAAA", ReadText(page.get()));
+  EXPECT_EQ(2, FPDFPage_GetAnnotCount(page.get()));
+}
+
+// Two marks on one image applied in one call both leave their hole.
+TEST_F(EPDFRedactEmbedderTest, MarksOnOneImageApplyInOneCall) {
+  const std::string input = ImagePage(StreamObject(
+      "/Type /XObject /Subtype /Image /Width 20 /Height 10 /ColorSpace "
+      "/DeviceGray /BitsPerComponent 8 /Filter /FlateDecode",
+      Flate(std::string(200, '\x28'))));
+  OpenedPdf opened = OpenPdf(input, /*layer=*/false);
+  ASSERT_TRUE(opened.doc);
+  ScopedFPDFPage page(FPDF_LoadPage(opened.doc.get(), 0));
+  ASSERT_TRUE(page);
+  // A sample is 10 points: the marks cover columns 0..3 and 16..19.
+  ScopedFPDFAnnotation left(
+      FPDFPage_CreateAnnot(page.get(), FPDF_ANNOT_REDACT));
+  ScopedFPDFAnnotation right(
+      FPDFPage_CreateAnnot(page.get(), FPDF_ANNOT_REDACT));
+  const FS_RECTF left_rect = {50, 200, 90, 100};
+  const FS_RECTF right_rect = {210, 200, 250, 100};
+  ASSERT_TRUE(FPDFAnnot_SetRect(left.get(), &left_rect));
+  ASSERT_TRUE(FPDFAnnot_SetRect(right.get(), &right_rect));
+  const FPDF_ANNOTATION marks[] = {left.get(), right.get()};
+  ASSERT_TRUE(EPDFPage_ApplyRedactions(page.get(), marks, 2, nullptr));
+  ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
+  auto after = Render(page.get());
+  EXPECT_EQ(0xffffffu, Pixel(after.get(), 130, 300));
+  EXPECT_EQ(0xffffffu, Pixel(after.get(), 470, 300));
+  EXPECT_NE(0xffffffu, Pixel(after.get(), 300, 300));
+  EXPECT_EQ(0, FPDFPage_GetAnnotCount(page.get()));
 }

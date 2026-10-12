@@ -352,7 +352,7 @@ class EPDFContentRewriteEmbedderTest
   }
 
   void ApplyRedactions(FPDF_PAGE page) {
-    ASSERT_TRUE(EPDFPage_ApplyRedactions(page, nullptr));
+    ASSERT_TRUE(EPDFPage_ApplyRedactions(page, nullptr, 0, nullptr));
     ASSERT_TRUE(FPDFPage_GenerateContent(page));
   }
 

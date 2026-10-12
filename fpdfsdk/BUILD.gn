@@ -63,7 +63,6 @@ source_set("fpdfsdk") {
     # EmbedPDF: what a parsed page costs, and whether it is still current.
     "epdf_page_residency.cpp",
     "epdf_png_shim.cpp",
-    "epdf_jpeg_shim.cpp",
     "epdf_redact.cpp",
     "epdf_threading.cpp",
     "epdf_wrapped_appearance.cpp",
@@ -128,7 +127,6 @@ source_set("fpdfsdk") {
   ]
   deps = [
     "//third_party:png",
-    "//third_party/libjpeg_turbo:libjpeg",
     "../:pdfium_public_headers",
     "../constants",
     "../core/fdrm",
@@ -271,6 +269,9 @@ pdfium_embeddertest_source_set("embeddertests") {
     "fpdf_transformpage_embeddertest.cpp",
     "fpdf_view_c_api_test.c",
     "fpdf_view_c_api_test.h",
+    # EmbedPDF: our public headers compile and link as C.
+    "epdf_c_api_test.c",
+    "epdf_c_api_test.h",
     "fpdf_view_embeddertest.cpp",
   ]
   deps = [

@@ -397,9 +397,9 @@ selective flattening.
 **When upstream touches this.** Annotation dictionaries.
 
 ### codecs
-**Rule.** PNG and JPEG encoding of page and image bitmaps.
+**Rule.** PNG encoding of page and image bitmaps (`EPDF_PNG_EncodeRGBA`, `public/epdf_png.h`).
 **Why.** Thumbnails and exports without a second image library.
-**Where.** `pngmodule` (ours), `epdf_png_shim.cpp`, `epdf_jpeg_shim.cpp`.
+**Where.** `pngmodule` (ours), `epdf_png_shim.cpp`.
 **Guarded by.** The image export embedder tests.
 **When upstream touches this.** `fxcodec`.
 
@@ -475,7 +475,9 @@ component builds; don't bring back the empty `#else` branch.
 added to a public header now lives in our own: `public/epdf_<name>.h` next to upstream's
 `public/fpdf_<name>.h` (`epdf_view.h` and `epdf_layer.h` for `fpdfview.h`), and the annotation API
 in `fpdfsdk/epdf_annot.cpp`.
-**Guarded by.** The embedder tests of each API.
+**Guarded by.** The embedder tests of each API. `epdf.CApiTest` (`fpdfsdk/epdf_c_api_test.c`) takes
+every `EPDF*` function's address from C, so each header compiles as C and each declaration links;
+`check-c-api.py` keeps its list complete.
 **When upstream touches this.** Keep ours and take upstream's around it. A new `EPDF*` declaration
 goes in our `public/epdf_<name>.h`, never in upstream's header. The implementations left in
 `fpdf_*.cpp` move to `epdf_*.cpp` when they conflict (upstream-sync plan §6.1).

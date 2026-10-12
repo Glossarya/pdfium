@@ -24,6 +24,7 @@
 #include "core/fxge/agg/cfx_agg_devicedriver.h"
 #include "core/fxge/dib/cstretchengine.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
+#include "fpdfsdk/epdf_c_api_test.h"
 #include "public/cpp/fpdf_scopers.h"
 #include "public/epdf_progressive.h"
 #include "public/fpdf_edit.h"
@@ -31,6 +32,11 @@
 #include "public/fpdf_save.h"
 #include "public/fpdfview.h"
 #include "testing/embedder_test.h"
+
+// Our public headers compile and link as C (fpdfsdk/epdf_c_api_test.c).
+TEST(epdf, CApiTest) {
+  EXPECT_TRUE(CheckEmbedPDFCApi());
+}
 
 class EPDFViewEmbedderTest : public EmbedderTest {
  protected:

@@ -1,11 +1,13 @@
 // Copyright 2025 CloudPDF LTD
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PUBLIC_FPDF_PNG_H_
-#define PUBLIC_FPDF_PNG_H_
+#ifndef PUBLIC_EPDF_PNG_H_
+#define PUBLIC_EPDF_PNG_H_
 
-#include "fpdfview.h"
 #include <stdint.h>
+
+// NOLINTNEXTLINE(build/include)
+#include "fpdfview.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -26,4 +28,4 @@ EPDF_PNG_EncodeRGBA(uint8_t* rgba,
 }  // extern "C"
 #endif
 
-#endif  // PUBLIC_FPDF_PNG_H_
+#endif  // PUBLIC_EPDF_PNG_H_

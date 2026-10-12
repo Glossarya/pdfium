@@ -56,6 +56,7 @@ All commands run from the fork's root.
    PDF_RUNTIME_SYNC=auto bash scripts/embedpdf-runtime/test-target.sh linux-x64   # or darwin-arm64
    python3 testing/tools/run_layer_mode.py out/embedpdf-runtime-tests-<target>
    python3 scripts/embedpdf-runtime/check-fork-tags.py --strict
+   python3 scripts/embedpdf-runtime/check-c-api.py
    bash scripts/embedpdf-runtime/build-target.sh <target>
    python3 scripts/embedpdf-runtime/check-globals.py out/embedpdf-runtime/<target>/libembedpdf.{so,dylib}
    bash scripts/embedpdf-runtime/build-target.sh wasm32

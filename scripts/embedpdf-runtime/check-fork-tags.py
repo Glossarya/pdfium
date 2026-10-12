@@ -26,8 +26,9 @@ Statuses:
 Usage:
   check-fork-tags.py [--base COMMIT] [--strict] [--format text|json] [PATH...]
 
-  --base     the upstream commit this fork is based on. Default:
-             `git merge-base HEAD pdfium/main` (keep that mirror current).
+  --base     the upstream commit this fork is based on. Default: the merge
+             base of HEAD with upstream/main, pdfium/main or
+             origin/pdfium/main, the first that exists.
   --strict   exit 1 when a block is unknown-rule, needs-rule or untagged.
              Without it the check only reports.
   PATH       limit the check to these files or directories.
@@ -192,10 +193,13 @@ def check(base, paths):
 
 
 def default_base():
-  try:
-    return git('merge-base', 'HEAD', 'pdfium/main').strip()
-  except subprocess.CalledProcessError:
-    sys.exit('No pdfium/main ref: pass the upstream base with --base.')
+  # A fetched upstream/main first (see upstream-preview.py), then the mirror.
+  for ref in ('upstream/main', 'pdfium/main', 'origin/pdfium/main'):
+    try:
+      return git('merge-base', 'HEAD', ref).strip()
+    except subprocess.CalledProcessError:
+      continue
+  sys.exit('No upstream ref: fetch upstream/main or pass --base.')
 
 
 def print_text(base, rules, results):

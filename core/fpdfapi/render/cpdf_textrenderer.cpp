@@ -10,7 +10,6 @@
 #include <vector>
 
 #include "core/fpdfapi/font/cpdf_font.h"
-#include "core/fpdfapi/render/charposlist.h"
 #include "core/fpdfapi/render/cpdf_renderoptions.h"
 #include "core/fxge/cfx_graphstatedata.h"
 #include "core/fxge/cfx_path.h"
@@ -64,7 +63,7 @@ bool CPDF_TextRenderer::DrawTextPath(
     CFX_Path* pClippingPath,
     const CFX_FillRenderOptions& fill_options) {
   std::vector<TextCharPos> pos =
-      GetCharPosList(char_codes, char_pos, pFont, font_size);
+      pFont->GetCharPosList(char_codes, char_pos, font_size);
   if (pos.empty()) {
     return true;
   }
@@ -128,7 +127,7 @@ void CPDF_TextRenderer::DrawTextString(CFX_RenderDevice* pDevice,
     if (i) {
       positions[i - 1] = cur_pos;
     }
-    cur_pos += pFont->GetCharWidthF(codes[i]) * font_size / 1000;
+    cur_pos += pFont->GetCharWidth(codes[i]) * font_size / 1000;
   }
   CFX_Matrix new_matrix = matrix;
   new_matrix.e = origin_x;
@@ -147,7 +146,7 @@ bool CPDF_TextRenderer::DrawNormalText(CFX_RenderDevice* pDevice,
                                        FX_ARGB fill_argb,
                                        const CPDF_RenderOptions& options) {
   std::vector<TextCharPos> pos =
-      GetCharPosList(char_codes, char_pos, pFont, font_size);
+      pFont->GetCharPosList(char_codes, char_pos, font_size);
   if (pos.empty()) {
     return true;
   }

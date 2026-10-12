@@ -7,6 +7,7 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <charconv>
 #include <cstdint>
 #include <cstdlib>
@@ -17,6 +18,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -43,9 +45,11 @@
 #include "public/epdf_layer.h"
 #include "public/epdf_view.h"
 #include "public/fpdf_annot.h"
+#include "public/fpdf_edit.h"
 #include "public/fpdf_save.h"
 #include "public/fpdfview.h"
 #include "testing/embedder_test.h"
+#include "testing/fx_string_testhelpers.h"
 #include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "testing/utils/file_util.h"
 #include "testing/utils/path_service.h"
@@ -54,6 +58,23 @@ using testing::HasSubstr;
 using testing::StartsWith;
 
 namespace {
+
+// Whether `bytes` name a subset of `font`: a slash, six capital letters, a
+// plus sign and the font's name (ISO 32000-2 9.9.2).
+bool NamesASubsetOf(const std::string& bytes, const std::string& font) {
+  const std::string suffix = "+" + font;
+  for (size_t at = bytes.find(suffix); at != std::string::npos;
+       at = bytes.find(suffix, at + 1)) {
+    if (at < 7 || bytes[at - 7] != '/') {
+      continue;
+    }
+    const std::string_view tag(bytes.data() + at - 6, 6);
+    if (std::ranges::all_of(tag, [](char c) { return c >= 'A' && c <= 'Z'; })) {
+      return true;
+    }
+  }
+  return false;
+}
 
 class CountingFileAccess final : public FPDF_FILEACCESS {
  public:
@@ -954,6 +975,100 @@ TEST_F(EPDFSaveEmbedderTest, FullRewriteDoesNotPopulateSharedBaseCaches) {
   ScopedSavedDoc saved = OpenScopedSavedDocument();
   ASSERT_TRUE(saved);
   EXPECT_EQ(FPDF_GetPageCount(layer.get()), FPDF_GetPageCount(saved.get()));
+}
+
+// A full save walks the document from its roots instead of upstream's
+// WriteNewObjs(), and still writes the subset fonts: the file shrinks and the
+// page draws the same. Native text is off so that only the font data counts.
+TEST_F(EPDFSaveEmbedderTest, FullSaveSubsetsNewFonts) {
+  ASSERT_TRUE(OpenDocument("hello_world.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+  struct NewText {
+    const char* font_path;
+    const wchar_t* text;
+    float y;
+  };
+  // An OpenType font with CFF outlines, then a TrueType one.
+  for (const NewText& new_text :
+       {NewText{"NotoSansCJK/NotoSansSC-Regular.subset.otf", L"这是第一句。",
+                10.0f},
+        NewText{"test_fonts/test_fonts/Arimo-Regular.ttf", L"Hello again.",
+                150.0f}}) {
+    std::vector<uint8_t> font_data = GetFileContents(
+        PathService::GetThirdPartyFilePath(new_text.font_path).c_str());
+    ASSERT_FALSE(font_data.empty());
+    ScopedFPDFFont font(FPDFText_LoadFont(document(), font_data.data(),
+                                          font_data.size(), FPDF_FONT_TRUETYPE,
+                                          /*cid=*/true));
+    ASSERT_TRUE(font);
+    FPDF_PAGEOBJECT text =
+        FPDFPageObj_CreateTextObj(document(), font.get(), 24.0f);
+    ScopedFPDFWideString words = GetFPDFWideString(new_text.text);
+    ASSERT_TRUE(FPDFText_SetText(text, words.get()));
+    FPDFPageObj_Transform(text, 1, 0, 0, 1, 10, new_text.y);
+    FPDFPage_InsertObject(page.get(), text);
+  }
+  ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
+  const std::string drawn = HashBitmap(
+      RenderLoadedPageWithFlags(page.get(), FPDF_NO_NATIVETEXT).get());
+
+  ASSERT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
+  const size_t whole_size = GetString().size();
+  ClearString();
+  ASSERT_TRUE(FPDF_SaveAsCopy(document(), this, FPDF_SUBSET_NEW_FONTS));
+  EXPECT_LT(GetString().size() * 10, whole_size);
+  EXPECT_TRUE(NamesASubsetOf(GetString(), "Arimo-Regular"));
+
+  ScopedSavedDoc saved = OpenScopedSavedDocument();
+  ASSERT_TRUE(saved);
+  ScopedSavedPage saved_page = LoadScopedSavedPage(0);
+  ASSERT_TRUE(saved_page);
+  EXPECT_EQ(drawn, HashBitmap(RenderSavedPageWithFlags(saved_page.get(),
+                                                       FPDF_NO_NATIVETEXT)
+                                  .get()));
+}
+
+// Subsetting new fonts parses every page to find the glyphs in use. On a layer
+// it still subsets, and copies nothing up: the save leaves the layer as it
+// was.
+TEST_F(EPDFSaveEmbedderTest, SubsettingNewFontsCopiesNoPageIntoTheLayer) {
+  FileAccessForTesting access("hello_world_2_pages.pdf");
+  EPDF_BASE_DOCUMENT base = EPDF_LoadBaseDocument(&access, nullptr);
+  ASSERT_TRUE(base);
+  ScopedFPDFDocument layer(
+      EPDFLayer_OpenLayer(base, nullptr, nullptr, nullptr));
+  // The layer retains the base, including on an assertion failure below.
+  EPDF_ReleaseBaseDocument(base);
+  ASSERT_TRUE(layer);
+
+  std::vector<uint8_t> font_data =
+      GetFileContents(PathService::GetThirdPartyFilePath(
+                          "test_fonts/test_fonts/Arimo-Regular.ttf")
+                          .c_str());
+  ASSERT_FALSE(font_data.empty());
+  ScopedFPDFFont font(FPDFText_LoadFont(layer.get(), font_data.data(),
+                                        font_data.size(), FPDF_FONT_TRUETYPE,
+                                        /*cid=*/true));
+  ASSERT_TRUE(font);
+  {
+    ScopedFPDFPage page(FPDF_LoadPage(layer.get(), 0));
+    ASSERT_TRUE(page);
+    FPDF_PAGEOBJECT text = FPDFPageObj_CreateTextObj(layer.get(), font.get(),
+                                                     24.0f);
+    ScopedFPDFWideString words = GetFPDFWideString(L"New words");
+    ASSERT_TRUE(FPDFText_SetText(text, words.get()));
+    FPDFPage_InsertObject(page.get(), text);
+    ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
+  }
+
+  auto* doc = CPDF_LayerDocument::FromDocument(
+      CPDFDocumentFromFPDFDocument(layer.get()));
+  ASSERT_TRUE(doc);
+  const size_t promoted_count = doc->GetPromotedObjectCount();
+  ASSERT_TRUE(FPDF_SaveAsCopy(layer.get(), this, FPDF_SUBSET_NEW_FONTS));
+  EXPECT_EQ(promoted_count, doc->GetPromotedObjectCount());
+  EXPECT_TRUE(NamesASubsetOf(GetString(), "Arimo-Regular"));
 }
 
 TEST_F(EPDFSaveEmbedderTest, FullRewritePreservesLiveAnnotationAcrossSaves) {

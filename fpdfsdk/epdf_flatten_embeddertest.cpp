@@ -142,7 +142,8 @@ TEST_F(EPDFFlattenEmbedderTest, FlattenSpecificAnnotationByHandle) {
   EXPECT_TRUE(preserved);
 
   ASSERT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
-  ASSERT_TRUE(OpenSavedDocument());
+  ScopedSavedDoc saved_doc = OpenScopedSavedDocument();
+  ASSERT_TRUE(saved_doc);
   FPDF_PAGE saved_page = LoadSavedPage(0);
   ASSERT_TRUE(saved_page);
   EXPECT_EQ(5, FPDFPage_GetAnnotCount(saved_page));

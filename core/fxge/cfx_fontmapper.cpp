@@ -29,7 +29,7 @@
 namespace {
 
 // EmbedPDF(fonts): standard fonts draw with the built-in faces (see
-// FindSubstFont()); SetStandardFontsFromSystemForTesting() lets upstream's
+// FindSubstFace()); SetStandardFontsFromSystemForTesting() lets upstream's
 // embedder tests keep the test fonts they expect.
 bool g_standard_fonts_from_system = false;
 
@@ -366,25 +366,6 @@ FX_Charset GetCharset(FX_CodePage code_page, int base_font, uint32_t flags) {
   return FX_Charset::kANSI;
 }
 
-bool IsStrUpper(const ByteString& str) {
-  for (size_t i = 0; i < str.GetLength(); ++i) {
-    if (!FXSYS_IsUpperASCII(str[i])) {
-      return false;
-    }
-  }
-  return true;
-}
-
-void RemoveSubsettedFontPrefix(ByteString* subst_name) {
-  static constexpr size_t kPrefixLength = 6;
-  if (subst_name->GetLength() > kPrefixLength &&
-      (*subst_name)[kPrefixLength] == '+' &&
-      IsStrUpper(subst_name->First(kPrefixLength))) {
-    *subst_name =
-        subst_name->Last(subst_name->GetLength() - (kPrefixLength + 1));
-  }
-}
-
 ByteString GetSubstName(const ByteString& name, bool is_truetype) {
   ByteString subst_name = name;
   if (is_truetype && name.Front() == '@') {
@@ -392,7 +373,7 @@ ByteString GetSubstName(const ByteString& name, bool is_truetype) {
   } else {
     subst_name.Remove(' ');
   }
-  RemoveSubsettedFontPrefix(&subst_name);
+  MaybeRemoveSubsettedFontPrefix(subst_name);
   CFX_FontMapper::GetStandardFontName(&subst_name);
   return subst_name;
 }
@@ -628,7 +609,7 @@ RetainPtr<CFX_Face> CFX_FontMapper::UseExternalSubst(
   return face;
 }
 
-RetainPtr<CFX_Face> CFX_FontMapper::FindSubstFont(const ByteString& name,
+RetainPtr<CFX_Face> CFX_FontMapper::FindSubstFace(const ByteString& name,
                                                   bool is_truetype,
                                                   uint32_t flags,
                                                   int weight,
@@ -814,7 +795,7 @@ RetainPtr<CFX_Face> CFX_FontMapper::FindSubstFont(const ByteString& name,
                               subst_font);
     }
 #endif
-    return FindSubstFont(family, is_truetype,
+    return FindSubstFace(family, is_truetype,
                          flags & ~pdfium::kFontStyleSymbolic, weight,
                          italic_angle, FX_CodePage::kDefANSI, subst_font);
   }

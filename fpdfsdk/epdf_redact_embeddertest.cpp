@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <tuple>
@@ -501,7 +502,15 @@ class EPDFRedactEmbedderTest : public EmbedderTest {
     // the distinction between removal defects and deliberately retained
     // history.
     ASSERT_TRUE(FPDF_SaveAsCopy(document(), this, FPDF_NO_INCREMENTAL));
-    ASSERT_TRUE(OpenSavedDocument());
+    OpenSaved();
+  }
+
+  // Opens the saved copy, which stays open until the test ends or the next
+  // save.
+  void OpenSaved() {
+    saved_.reset();
+    saved_.emplace(OpenScopedSavedDocument());
+    ASSERT_TRUE(*saved_);
   }
 
   // How many streams reachable in a full rewrite of `doc` carry `sentinel`.
@@ -520,6 +529,9 @@ class EPDFRedactEmbedderTest : public EmbedderTest {
     }
     return CountSentinel(CPDFDocumentFromFPDFDocument(saved.get()), sentinel);
   }
+
+ private:
+  std::optional<ScopedSavedDoc> saved_;
 };
 
 TEST_F(EPDFRedactEmbedderTest, NestedFormsUseTheRenderersTransformOrder) {
@@ -752,7 +764,7 @@ class EPDFRedactPageTreeTest
 
   void SaveWorking() {
     ASSERT_TRUE(FPDF_SaveAsCopy(working_.get(), this, FPDF_NO_INCREMENTAL));
-    ASSERT_TRUE(OpenSavedDocument());
+    OpenSaved();
   }
 
   void ExpectOtherLayerUnchanged() {
@@ -1009,14 +1021,14 @@ TEST_F(EPDFRedactEmbedderTest, AppliesOnAPageWithoutContentsOrResources) {
     EXPECT_EQ(0xffffffu, Pixel(after.get(), 200, 100));
     ClearString();
     ASSERT_TRUE(FPDF_SaveAsCopy(doc.get(), this, FPDF_NO_INCREMENTAL));
-    ASSERT_TRUE(OpenSavedDocument());
+    ScopedSavedDoc saved_doc = OpenScopedSavedDocument();
+    ASSERT_TRUE(saved_doc);
     FPDF_PAGE saved = LoadSavedPage(0);
     ASSERT_TRUE(saved);
     auto reloaded = Render(saved);
     EXPECT_EQ(0x000000u, Pixel(reloaded.get(), 80, 330));
     EXPECT_EQ(0xffffffu, Pixel(reloaded.get(), 200, 100));
     CloseSavedPage(saved);
-    CloseSavedDocument();
   }
 }
 
@@ -1082,14 +1094,14 @@ TEST_F(EPDFRedactEmbedderTest,
 
     ClearString();
     ASSERT_TRUE(FPDF_SaveAsCopy(opened.doc.get(), this, FPDF_NO_INCREMENTAL));
-    ASSERT_TRUE(OpenSavedDocument());
+    ScopedSavedDoc saved_doc = OpenScopedSavedDocument();
+    ASSERT_TRUE(saved_doc);
     CPDF_Document* saved = CPDFDocumentFromFPDFDocument(saved_document());
     for (const char* sentinel :
          {"THUMBSECRET", "PIECESECRET", "PAGEMETASECRET", "XMPTHUMBSECRET"}) {
       ExpectNoSentinel(saved, sentinel);
     }
     EXPECT_EQ(1, CountSentinel(saved, "KEEPTHUMB"));
-    CloseSavedDocument();
   }
 }
 
@@ -1123,7 +1135,8 @@ TEST_F(EPDFRedactEmbedderTest, TheCopyOfARedactedFormHoldsNoOtherCopiesOfIt) {
 
     ClearString();
     ASSERT_TRUE(FPDF_SaveAsCopy(opened.doc.get(), this, FPDF_NO_INCREMENTAL));
-    ASSERT_TRUE(OpenSavedDocument());
+    ScopedSavedDoc saved_doc = OpenScopedSavedDocument();
+    ASSERT_TRUE(saved_doc);
     CPDF_Document* saved = CPDFDocumentFromFPDFDocument(saved_document());
     // The page still draws a form: the redacted copy.
     RetainPtr<const CPDF_Dictionary> xobjects = saved->GetPageDictionary(0)
@@ -1135,7 +1148,6 @@ TEST_F(EPDFRedactEmbedderTest, TheCopyOfARedactedFormHoldsNoOtherCopiesOfIt) {
          {"SECRET", "FORMPIECESECRET", "FORMMETASECRET", "OPISECRET"}) {
       ExpectNoSentinel(saved, sentinel);
     }
-    CloseSavedDocument();
   }
 }
 
@@ -1205,7 +1217,8 @@ TEST_F(EPDFRedactEmbedderTest, ARedactedImageKeepsItsLayerAndHowItIsDrawnOnly) {
 
     ClearString();
     ASSERT_TRUE(FPDF_SaveAsCopy(opened.doc.get(), this, FPDF_NO_INCREMENTAL));
-    ASSERT_TRUE(OpenSavedDocument());
+    ScopedSavedDoc saved_doc = OpenScopedSavedDocument();
+    ASSERT_TRUE(saved_doc);
     CPDF_Document* saved = CPDFDocumentFromFPDFDocument(saved_document());
     for (const char* sentinel : {"IMAGEMETASECRET", "ALTSECRET", "OPISECRET"}) {
       ExpectNoSentinel(saved, sentinel);
@@ -1215,7 +1228,6 @@ TEST_F(EPDFRedactEmbedderTest, ARedactedImageKeepsItsLayerAndHowItIsDrawnOnly) {
     auto saved_render = Render(reloaded);
     EXPECT_EQ(0xffffffu, Pixel(saved_render.get(), 400, 200));
     CloseSavedPage(reloaded);
-    CloseSavedDocument();
   }
 }
 
@@ -1272,7 +1284,8 @@ TEST_F(EPDFRedactEmbedderTest, AnExplicitMaskStillMasksTheReplacementImage) {
 
       ClearString();
       ASSERT_TRUE(FPDF_SaveAsCopy(opened.doc.get(), this, FPDF_NO_INCREMENTAL));
-      ASSERT_TRUE(OpenSavedDocument());
+      ScopedSavedDoc saved_doc = OpenScopedSavedDocument();
+      ASSERT_TRUE(saved_doc);
       FPDF_PAGE reloaded = LoadSavedPage(0);
       ASSERT_TRUE(reloaded);
       auto saved_render = Render(reloaded);
@@ -1280,7 +1293,6 @@ TEST_F(EPDFRedactEmbedderTest, AnExplicitMaskStillMasksTheReplacementImage) {
       EXPECT_NE(0xffffffu, Pixel(saved_render.get(), 240, 300));
       EXPECT_EQ(0xffffffu, Pixel(saved_render.get(), 400, 300));
       CloseSavedPage(reloaded);
-      CloseSavedDocument();
     }
   }
 }
@@ -1308,9 +1320,9 @@ TEST_F(EPDFRedactEmbedderTest, RedactingByQuadsRemovesThePageThumbnailToo) {
   }
   ClearString();
   ASSERT_TRUE(FPDF_SaveAsCopy(opened.doc.get(), this, FPDF_NO_INCREMENTAL));
-  ASSERT_TRUE(OpenSavedDocument());
+  ScopedSavedDoc saved_doc = OpenScopedSavedDocument();
+  ASSERT_TRUE(saved_doc);
   ExpectNoSentinel(CPDFDocumentFromFPDFDocument(saved_document()), "SECRET");
-  CloseSavedDocument();
 }
 
 // The page paints through a soft mask whose group shows B of the page's Type3
@@ -1370,7 +1382,8 @@ TEST_F(EPDFRedactEmbedderTest, CopiesOfAType3FontsContentHoldNoOtherCopies) {
 
       ClearString();
       ASSERT_TRUE(FPDF_SaveAsCopy(opened.doc.get(), this, FPDF_NO_INCREMENTAL));
-      ASSERT_TRUE(OpenSavedDocument());
+      ScopedSavedDoc saved_doc = OpenScopedSavedDocument();
+      ASSERT_TRUE(saved_doc);
       CPDF_Document* saved = CPDFDocumentFromFPDFDocument(saved_document());
       ExpectNoSentinel(saved, "NESTEDPRIVATE");
       ExpectNoSentinel(saved, "GLYPHPRIVATE");
@@ -1380,7 +1393,6 @@ TEST_F(EPDFRedactEmbedderTest, CopiesOfAType3FontsContentHoldNoOtherCopies) {
       EXPECT_EQ(Pixel(before.get(), 350, 250),
                 Pixel(saved_render.get(), 350, 250));
       CloseSavedPage(reloaded);
-      CloseSavedDocument();
     }
   }
 }
@@ -1508,13 +1520,13 @@ TEST_F(EPDFRedactEmbedderTest, ARedactedImageKeepsItsSamplesAndFormat) {
 
       ClearString();
       ASSERT_TRUE(FPDF_SaveAsCopy(opened.doc.get(), this, FPDF_NO_INCREMENTAL));
-      ASSERT_TRUE(OpenSavedDocument());
+      ScopedSavedDoc saved_doc = OpenScopedSavedDocument();
+      ASSERT_TRUE(saved_doc);
       FPDF_PAGE reloaded = LoadSavedPage(0);
       ASSERT_TRUE(reloaded);
       auto saved = Render(reloaded);
       ExpectSamePixels(after.get(), saved.get(), 100, 200, 500, 400);
       CloseSavedPage(reloaded);
-      CloseSavedDocument();
     }
   }
 }
@@ -1659,13 +1671,13 @@ TEST_F(EPDFRedactEmbedderTest, ARedactedJpegStaysAJpeg) {
 
       ClearString();
       ASSERT_TRUE(FPDF_SaveAsCopy(opened.doc.get(), this, FPDF_NO_INCREMENTAL));
-      ASSERT_TRUE(OpenSavedDocument());
+      ScopedSavedDoc saved_doc = OpenScopedSavedDocument();
+      ASSERT_TRUE(saved_doc);
       FPDF_PAGE reloaded = LoadSavedPage(0);
       ASSERT_TRUE(reloaded);
       auto saved = Render(reloaded);
       ExpectSamePixels(after.get(), saved.get(), 100, 200, 500, 400);
       CloseSavedPage(reloaded);
-      CloseSavedDocument();
     }
   }
 }
@@ -1954,13 +1966,13 @@ TEST_F(EPDFRedactEmbedderTest, ARedactedJpeg2000IsWrittenAsAJpeg) {
 
       ClearString();
       ASSERT_TRUE(FPDF_SaveAsCopy(opened.doc.get(), this, FPDF_NO_INCREMENTAL));
-      ASSERT_TRUE(OpenSavedDocument());
+      ScopedSavedDoc saved_doc = OpenScopedSavedDocument();
+      ASSERT_TRUE(saved_doc);
       FPDF_PAGE reloaded = LoadSavedPage(0);
       ASSERT_TRUE(reloaded);
       auto saved = Render(reloaded);
       ExpectSamePixels(after.get(), saved.get(), 100, 200, 500, 400);
       CloseSavedPage(reloaded);
-      CloseSavedDocument();
     }
   }
 }

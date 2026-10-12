@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -329,12 +330,17 @@ class EPDFContentRewriteEmbedderTest
     }
   }
 
-  // Saves the document in full and opens the saved copy.
+  // Saves the document in full and opens the saved copy, until
+  // CloseSaved().
   void SaveAndReopen() {
     ClearString();
     ASSERT_TRUE(FPDF_SaveAsCopy(doc_.get(), this, FPDF_NO_INCREMENTAL));
-    ASSERT_TRUE(OpenSavedDocument());
+    saved_.reset();
+    saved_.emplace(OpenScopedSavedDocument());
+    ASSERT_TRUE(*saved_);
   }
+
+  void CloseSaved() { saved_.reset(); }
 
   void ChangeAndSave(const std::function<void()>& change) {
     Change(change);
@@ -377,7 +383,7 @@ class EPDFContentRewriteEmbedderTest
       inspect(saved_document(), saved);
     }
     CloseSavedPage(saved);
-    CloseSavedDocument();
+    CloseSaved();
   }
 
   // Redacts `areas_of(page)` on page `index` of the test file `name` in one
@@ -440,6 +446,8 @@ class EPDFContentRewriteEmbedderTest
   }
 
   ScopedFPDFDocument doc_;
+  // The saved copy SaveAndReopen() opened, until CloseSaved().
+  std::optional<ScopedSavedDoc> saved_;
 
  private:
   std::vector<uint8_t> bytes_;
@@ -523,7 +531,7 @@ TEST_P(EPDFContentRewriteEmbedderTest, EditingAnAppearanceKeepsItsSpotColor) {
   EXPECT_EQ(0xff0000u, PixelAt(after.get(), 250, 535));
   EXPECT_EQ(0, CountChangedPixelsOutside(before.get(), after.get(), {bar}));
   CloseSavedPage(saved);
-  CloseSavedDocument();
+  CloseSaved();
 }
 
 // A form with a /Matrix: its objects carry the matrix, so the content written
@@ -581,7 +589,7 @@ TEST_P(EPDFContentRewriteEmbedderTest,
   EXPECT_EQ(0,
             CountChangedPixelsOutside(before.get(), after.get(), {underline}));
   CloseSavedPage(saved);
-  CloseSavedDocument();
+  CloseSaved();
 }
 
 // A soft mask set under a transform is placed by it.
@@ -862,7 +870,7 @@ TEST_P(EPDFContentRewriteEmbedderTest, AnInactiveFormKeepsNothingItBorrowed) {
   ASSERT_TRUE(resources);
   RetainPtr<const CPDF_Dictionary> spaces = resources->GetDictFor("ColorSpace");
   EXPECT_FALSE(spaces && spaces->KeyExist("CSsep"));
-  CloseSavedDocument();
+  CloseSaved();
 }
 
 // An appearance borrows the page's Type3 font. Its glyph draws /FmG from the

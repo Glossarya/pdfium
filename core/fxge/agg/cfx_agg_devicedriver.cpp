@@ -383,7 +383,7 @@ agg::filling_rule_e GetAlternateOrWindingFillType(
 }
 
 RetainPtr<CFX_DIBitmap> GetClipMaskFromRegion(const CFX_AggClipRgn* r) {
-  return (r && r->GetType() == CFX_AggClipRgn::kMaskF) ? r->GetMask() : nullptr;
+  return r ? r->GetMask() : nullptr;
 }
 
 FX_RECT GetClipBoxFromRegion(const RetainPtr<CFX_DIBitmap>& device,
@@ -1396,8 +1396,8 @@ void CFX_AggDeviceDriver::SetClipMask(agg::rasterizer_scanline_aa& rasterizer) {
     agg::render_scanlines(rasterizer, GetWorkspace().scanline(), final_render,
                           fill_options_.aliased_path);
   }
-  clip_rgn_->IntersectMaskF(path_rect.left, path_rect.top,
-                            std::move(pThisLayer));
+  clip_rgn_->IntersectMask(path_rect.left, path_rect.top,
+                           std::move(pThisLayer));
 }
 
 bool CFX_AggDeviceDriver::SetClip_PathFill(
@@ -1664,22 +1664,20 @@ bool CFX_AggDeviceDriver::FillRect(const FX_RECT& rect, uint32_t fill_color) {
     return true;
   }
 
-  if (!clip_rgn_ || clip_rgn_->GetType() == CFX_AggClipRgn::kRectI) {
-    if (rgb_byte_order_) {
-      RgbByteOrderCompositeRect(bitmap_, draw_rect.left, draw_rect.top,
-                                draw_rect.Width(), draw_rect.Height(),
-                                fill_color);
-    } else {
-      bitmap_->CompositeRect(draw_rect.left, draw_rect.top, draw_rect.Width(),
-                             draw_rect.Height(), fill_color);
-    }
-    return true;
+  if (clip_rgn_ && clip_rgn_->GetMask()) {
+    bitmap_->CompositeMask(draw_rect.left, draw_rect.top, draw_rect.Width(),
+                           draw_rect.Height(), clip_rgn_->GetMask(), fill_color,
+                           draw_rect.left - clip_rect.left,
+                           draw_rect.top - clip_rect.top, BlendMode::kNormal,
+                           nullptr, nullptr, rgb_byte_order_);
+  } else if (rgb_byte_order_) {
+    RgbByteOrderCompositeRect(bitmap_, draw_rect.left, draw_rect.top,
+                              draw_rect.Width(), draw_rect.Height(),
+                              fill_color);
+  } else {
+    bitmap_->CompositeRect(draw_rect.left, draw_rect.top, draw_rect.Width(),
+                           draw_rect.Height(), fill_color);
   }
-  bitmap_->CompositeMask(draw_rect.left, draw_rect.top, draw_rect.Width(),
-                         draw_rect.Height(), clip_rgn_->GetMask(), fill_color,
-                         draw_rect.left - clip_rect.left,
-                         draw_rect.top - clip_rect.top, BlendMode::kNormal,
-                         nullptr, rgb_byte_order_);
   return true;
 }
 
@@ -1705,9 +1703,8 @@ bool CFX_AggDeviceDriver::GetDIBits(RetainPtr<CFX_DIBitmap> bitmap,
     if (!pBack) {
       return true;
     }
-
     pBack->CompositeBitmap(0, 0, pBack->GetWidth(), pBack->GetHeight(), bitmap_,
-                           0, 0, BlendMode::kNormal, nullptr, false);
+                           0, 0, BlendMode::kNormal);
   } else {
     pBack = bitmap_->ClipTo(rect);
     if (!pBack) {
@@ -1740,16 +1737,23 @@ bool CFX_AggDeviceDriver::SetDIBits(RetainPtr<const CFX_DIBBase> bitmap,
     return true;
   }
 
+  const FX_RECT* clip_rect = nullptr;
+  RetainPtr<CFX_DIBitmap> clip_mask;
+  if (clip_rgn_) {
+    clip_rect = &clip_rgn_->GetBox();
+    clip_mask = clip_rgn_->GetMask();
+  }
+
   if (bitmap->IsMaskFormat()) {
     return bitmap_->CompositeMask(left, top, src_rect.Width(),
                                   src_rect.Height(), std::move(bitmap), argb,
                                   src_rect.left, src_rect.top, blend_type,
-                                  clip_rgn_.get(), rgb_byte_order_);
+                                  clip_rect, clip_mask, rgb_byte_order_);
   }
   return bitmap_->CompositeBitmap(left, top, src_rect.Width(),
                                   src_rect.Height(), std::move(bitmap),
                                   src_rect.left, src_rect.top, blend_type,
-                                  clip_rgn_.get(), rgb_byte_order_);
+                                  clip_rect, clip_mask, rgb_byte_order_);
 }
 
 bool CFX_AggDeviceDriver::StretchDIBits(RetainPtr<const CFX_DIBBase> bitmap,
@@ -1804,8 +1808,10 @@ RenderDeviceDriverIface::StartResult CFX_AggDeviceDriver::StartDIBits(
                                 alpha, argb, matrix, options, rgb_byte_order_)};
 }
 
-bool CFX_AggDeviceDriver::ContinueDIBits(CFX_AggImageRenderer* pHandle,
-                                         PauseIndicatorIface* pPause) {
+bool CFX_AggDeviceDriver::ContinueDIBits(
+    RenderDeviceDriverIface::Continuation* continuation,
+    PauseIndicatorIface* pPause) {
+  auto* pHandle = static_cast<CFX_AggImageRenderer*>(continuation);
   return bitmap_->GetBuffer().empty() || pHandle->Continue(pPause);
 }
 

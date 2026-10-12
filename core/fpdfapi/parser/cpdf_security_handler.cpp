@@ -630,7 +630,7 @@ void CPDF_SecurityHandler::OnCreate(CPDF_Dictionary* pEncryptDict,
 
   if (revision_ >= 5) {
     uint32_t random[4];
-    FX_Random_GenerateMT(random);
+    FX_Random::Fill(random);
     CRYPT_sha2_context sha;
     CRYPT_SHA256Start(&sha);
     CRYPT_SHA256Update(&sha, pdfium::as_byte_span(random));
@@ -705,7 +705,7 @@ bool CPDF_SecurityHandler::OnCreateWithPasswords(
   // issues
   static_assert(sizeof(encrypt_key_) == 32);
   uint32_t random_key[8];
-  FX_Random_GenerateMT(random_key);
+  FX_Random::Fill(random_key);
   memcpy(encrypt_key_.data(), random_key, 32);
 
   // Set all password entries (U, UE, O, OE)
@@ -780,10 +780,8 @@ void CPDF_SecurityHandler::AES256_SetPerms(CPDF_Dictionary* pEncryptDict) {
 
   // In ISO 32000 Supplement for ExtensionLevel 3, Algorithm 3.10 says bytes 12
   // to 15 should be random data.
-  uint32_t random_value;
-  FX_Random_GenerateMT(pdfium::span_from_ref(random_value));
-  fxcrt::Copy(pdfium::byte_span_from_ref(random_value),
-              pdfium::span(buf).subspan<12, 4>());
+  FX_Random::Fill(
+      fxcrt::reinterpret_span<uint32_t>(pdfium::span(buf).subspan<12, 4>()));
 
   CRYPT_aes_context aes = {};
   CRYPT_AESSetKey(&aes, encrypt_key_);
@@ -806,7 +804,7 @@ void CPDF_SecurityHandler::AES256_SetPasswords(
   // Use uint8_t array so we can pass to Revision6_Hash directly
   uint8_t salt_buffer[32];
   uint32_t random_salt[8];
-  FX_Random_GenerateMT(random_salt);
+  FX_Random::Fill(random_salt);
   memcpy(salt_buffer, random_salt, 32);
 
   // Create salt spans matching Revision6_Hash signature (span<const uint8_t,8>)

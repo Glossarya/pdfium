@@ -219,7 +219,7 @@ class FPDFEditEmbedderTest : public EmbedderTest {
         size_t inner_idx = 0;
         for (cur_cid = cid; cur_cid < cid + cnt; cur_cid++) {
           int width = arr->GetFloatAt(inner_idx++);
-          EXPECT_EQ(width, typed_font->GetCharWidthF(cur_cid))
+          EXPECT_EQ(width, typed_font->GetCharWidth(cur_cid))
               << " at cid " << cur_cid;
         }
         num_cids_checked += cnt;
@@ -231,7 +231,7 @@ class FPDFEditEmbedderTest : public EmbedderTest {
       ASSERT_FALSE(++idx == widths_array->size());
       int width = widths_array->GetFloatAt(idx);
       for (cur_cid = cid; cur_cid <= last_cid; cur_cid++) {
-        EXPECT_EQ(width, typed_font->GetCharWidthF(cur_cid))
+        EXPECT_EQ(width, typed_font->GetCharWidth(cur_cid))
             << " at cid " << cur_cid;
       }
       num_cids_checked += last_cid - cid + 1;
@@ -3351,9 +3351,9 @@ TEST_F(FPDFEditEmbedderTest, AddCIDFontText) {
   FPDF_PAGE page = FPDFPage_New(CreateNewDocument(), 0, 612, 792);
   CFX_Font cid_font;
   {
-    // First, get the data from the font
-    cid_font.LoadSubst("Noto Sans CJK JP", true, 0, 400, 0,
-                       FX_CodePage::kShiftJIS, false);
+    // First, get the face data from the font
+    cid_font.LoadSubstFace("Noto Sans CJK JP", true, 0, 400, 0,
+                           FX_CodePage::kShiftJIS, false);
     EXPECT_EQ("Noto Sans CJK JP", cid_font.GetFamilyName());
     pdfium::span<const uint8_t> span = cid_font.GetFontSpan();
 
@@ -3874,7 +3874,8 @@ TEST_F(FPDFEditEmbedderTest, AddMarkedTextWithFloat) {
   EXPECT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
 
   // Re-open the file and check the changes were kept in the saved .pdf.
-  ASSERT_TRUE(OpenSavedDocument());
+  ScopedSavedDoc saved_document = OpenScopedSavedDocument();
+  ASSERT_TRUE(saved_document);
   {
     ScopedSavedPage saved_page = LoadScopedSavedPage(0);
     ASSERT_TRUE(saved_page);
@@ -3890,7 +3891,6 @@ TEST_F(FPDFEditEmbedderTest, AddMarkedTextWithFloat) {
     EXPECT_TRUE(FPDFPageObjMark_GetParamFloatValue(mark, "Pi", &float_value));
     EXPECT_FLOAT_EQ(3.14159f, float_value);
   }
-  CloseSavedDocument();
 }
 
 TEST_F(FPDFEditEmbedderTest, MarkGetName) {

@@ -359,7 +359,7 @@ struct CPDF_RichTextLayout::Impl {
         glyph.gid = code;
         glyph.cluster = pdfium::checked_cast<uint32_t>(i);
         const int width =
-            face.pdf_font && code ? face.pdf_font->GetCharWidthF(code) : 0;
+            face.pdf_font && code ? face.pdf_font->GetCharWidth(code) : 0;
         glyph.x_advance = (width * size / 1000.0f + letter_spacing) * scale_x;
         item->glyphs.push_back(glyph);
       }

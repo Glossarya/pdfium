@@ -162,14 +162,13 @@ class CFX_Face final : public Retainable, public Observable {
   bool HasFaceRec() const { return !!GetRec(); }
 
  private:
-  CFX_Face(FXFT_FaceRec* pRec, RetainPtr<Retainable> pDesc);
+  CFX_Face(FT_FaceRec* pRec, RetainPtr<Retainable> pDesc);
   ~CFX_Face() override;
 
-  FXFT_FaceRec* GetRec() { return rec_.get(); }
-  const FXFT_FaceRec* GetRec() const { return rec_.get(); }
+  FT_FaceRec* GetRec() { return rec_.get(); }
+  const FT_FaceRec* GetRec() const { return rec_.get(); }
 
   bool IsTricky() const;
-  bool SetPixelSize(uint32_t width, uint32_t height);
   void AdjustVariationParams(int glyph_index, int dest_width, int weight);
 
   pdfium::span<const FT_CharMap> GetCharMaps() const;

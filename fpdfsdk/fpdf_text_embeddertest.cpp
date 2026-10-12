@@ -1205,9 +1205,9 @@ TEST_F(FPDFTextEmbedderTest, Bug921) {
   static constexpr auto kData = std::to_array<const unsigned int>(
       {1095, 1077, 1083, 1086, 1074, 1077, 1095, 1077, 1089, 1082, 1086, 1077,
        32,   1089, 1090, 1088, 1072, 1076, 1072, 1085, 1080, 1077, 46,   32});
-  static constexpr int kStartIndex = 248;
+  static constexpr int kStartIndex = 238;
 
-  ASSERT_EQ(278, FPDFText_CountChars(textpage.get()));
+  ASSERT_EQ(268, FPDFText_CountChars(textpage.get()));
   for (size_t i = 0; i < std::size(kData); ++i) {
     EXPECT_EQ(kData[i], FPDFText_GetUnicode(textpage.get(), kStartIndex + i));
   }
@@ -1426,13 +1426,11 @@ TEST_F(FPDFTextEmbedderTest, GetText) {
   ASSERT_TRUE(text_object);
 
   // Positive testing.
-  static constexpr char kHelloText[] = "Hello, world!";
-  // Return value includes the terminating NUL that is provided.
-  static constexpr unsigned long kHelloUTF16Size = std::size(kHelloText) * 2;
-  static constexpr wchar_t kHelloWideText[] = L"Hello, world!";
+  static constexpr std::wstring_view kHelloWideText(L"Hello, world!");
   unsigned long size =
       FPDFTextObj_GetText(text_object, text_page.get(), nullptr, 0);
-  ASSERT_EQ(kHelloUTF16Size, size);
+  // `size` is in bytes and includes the terminating NUL.
+  ASSERT_EQ(2 * (kHelloWideText.size() + 1), size);
 
   std::vector<unsigned short> buffer(size);
   ASSERT_EQ(size, FPDFTextObj_GetText(text_object, text_page.get(),
@@ -1450,9 +1448,44 @@ TEST_F(FPDFTextEmbedderTest, GetText) {
   buffer[1] = '\0';
   size = FPDFTextObj_GetText(text_object, text_page.get(), buffer.data(),
                              buffer.size());
-  ASSERT_EQ(kHelloUTF16Size, size);
+  ASSERT_EQ(2 * (kHelloWideText.size() + 1), size);
   ASSERT_EQ('x', buffer[0]);
   ASSERT_EQ('\0', buffer[1]);
+}
+
+TEST_F(FPDFTextEmbedderTest, GetTextShouldNotGetInvisibleSpaces) {
+  static constexpr int kExpectedPageObjectCount = 5;
+  static constexpr std::array<std::wstring_view, kExpectedPageObjectCount>
+      kExpectedText = {
+          std::wstring_view(L""),
+          std::wstring_view(L""),
+          std::wstring_view(L""),
+          std::wstring_view(L"Hello, world!"),
+          std::wstring_view(L"Goodbye, world!"),
+      };
+  ASSERT_TRUE(OpenDocument("hello_world_with_invisible_spaces.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+
+  ScopedFPDFTextPage text_page(FPDFText_LoadPage(page.get()));
+  ASSERT_TRUE(text_page);
+
+  ASSERT_EQ(kExpectedPageObjectCount, FPDFPage_CountObjects(page.get()));
+  for (int i = 0; i < kExpectedPageObjectCount; ++i) {
+    SCOPED_TRACE(testing::Message() << "Object " << i);
+    FPDF_PAGEOBJECT text_object = FPDFPage_GetObject(page.get(), i);
+    ASSERT_TRUE(text_object);
+
+    unsigned long size =
+        FPDFTextObj_GetText(text_object, text_page.get(), nullptr, 0);
+    // `size` is in bytes and includes the terminating NUL.
+    ASSERT_EQ(2 * (kExpectedText[i].size() + 1), size);
+
+    std::vector<unsigned short> buffer(size);
+    ASSERT_EQ(size, FPDFTextObj_GetText(text_object, text_page.get(),
+                                        buffer.data(), size));
+    ASSERT_EQ(kExpectedText[i], GetPlatformWString(buffer.data()));
+  }
 }
 
 TEST_F(FPDFTextEmbedderTest, CroppedText) {
@@ -2196,9 +2229,14 @@ TEST_F(FPDFTextEmbedderTest, Bug1769) {
   ASSERT_TRUE(textpage);
 
   unsigned short buffer[128] = {};
-  static constexpr char kResult[] = "world world";
-  ASSERT_EQ(12, FPDFText_GetText(textpage.get(), 0, 128, buffer));
-  EXPECT_THAT(pdfium::span(buffer).first(12u), ElementsAreArray(kResult));
+  // TODO(crbug.com/42270780): Improve text extraction.
+  // The first instance of "world" is visible to the human eye and should be
+  // extracted as is. The second instance is not, so how it should be
+  // extracted is debatable.
+  static constexpr char kNeedsImprovementResult[] = "wo d wo d";
+  ASSERT_EQ(10, FPDFText_GetText(textpage.get(), 0, 128, buffer));
+  EXPECT_THAT(pdfium::span(buffer).first(10u),
+              ElementsAreArray(kNeedsImprovementResult));
 }
 
 TEST_F(FPDFTextEmbedderTest, Bug384770169) {
@@ -2380,8 +2418,8 @@ TEST_F(FPDFTextEmbedderTest, WhitespaceCharCount) {
 
   ScopedFPDFTextPage textpage(FPDFText_LoadPage(page.get()));
   ASSERT_TRUE(textpage);
-
-  EXPECT_EQ(1, FPDFText_CountChars(textpage.get()));
+  // TODO(crbug.com/40643656): FPDFText_CountChars() should return 1.
+  EXPECT_EQ(0, FPDFText_CountChars(textpage.get()));
 }
 
 TEST_F(FPDFTextEmbedderTest, Bug444176962) {
@@ -2392,8 +2430,11 @@ TEST_F(FPDFTextEmbedderTest, Bug444176962) {
   ScopedFPDFTextPage textpage(FPDFText_LoadPage(page.get()));
   ASSERT_TRUE(textpage);
 
+  // TODO(crbug.com/444176962): FPDFText_GetText() should return 10.
+  // kMissingSpaceResult should be replaced with kResult as "local act"
   unsigned short buffer[128] = {};
-  static constexpr char kResult[] = "local act";
-  ASSERT_EQ(10, FPDFText_GetText(textpage.get(), 0, std::size(buffer), buffer));
-  EXPECT_THAT(pdfium::span(buffer).first<10>(), ElementsAreArray(kResult));
+  static constexpr char kMissingSpaceResult[] = "localact";
+  ASSERT_EQ(9, FPDFText_GetText(textpage.get(), 0, std::size(buffer), buffer));
+  EXPECT_THAT(pdfium::span(buffer).first<9>(),
+              ElementsAreArray(kMissingSpaceResult));
 }

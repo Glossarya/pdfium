@@ -324,7 +324,7 @@ TEST_F(CFXFontMapperSystemFontInfoTest, StandardFontUsesBuiltInFace) {
   };
   for (const Case& test_case : kCases) {
     CFX_SubstFont subst_font;
-    RetainPtr<CFX_Face> face = font_mapper().FindSubstFont(
+    RetainPtr<CFX_Face> face = font_mapper().FindSubstFace(
         test_case.name, test_case.is_truetype, /*flags=*/0, /*weight=*/0,
         /*italic_angle=*/0, FX_CodePage::kDefANSI, &subst_font);
     ASSERT_TRUE(face) << test_case.name;
@@ -339,7 +339,7 @@ TEST_F(CFXFontMapperSystemFontInfoTest, StandardFontUsesBuiltInFace) {
 TEST_F(CFXFontMapperSystemFontInfoTest, StandardFontInCjkCodePageAsksSystem) {
   EXPECT_CALL(system_font_info(), MapFont).WillOnce(Return(nullptr));
   CFX_SubstFont subst_font;
-  font_mapper().FindSubstFont("Helvetica", /*is_truetype=*/false,
+  font_mapper().FindSubstFace("Helvetica", /*is_truetype=*/false,
                               /*flags=*/0, /*weight=*/0, /*italic_angle=*/0,
                               FX_CodePage::kShiftJIS, &subst_font);
 }

@@ -9,6 +9,7 @@
 
 #include "fpdfsdk/fpdf_view_c_api_test.h"
 
+#include "public/epdf_annot.h"
 #include "public/epdf_capture.h"
 #include "public/epdf_font.h"
 #include "public/epdf_measure.h"

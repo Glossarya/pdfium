@@ -41,6 +41,7 @@
 #include <vector>
 
 #include "public/cpp/fpdf_scopers.h"
+#include "public/epdf_annot.h"
 #include "public/epdf_form.h"
 #include "public/epdf_text.h"
 #include "public/fpdf_annot.h"

@@ -1,6 +1,7 @@
 // Copyright 2026 CloudPDF LTD
 // SPDX-License-Identifier: Apache-2.0
 
+#include "public/epdf_annot.h"
 #include "public/epdf_form.h"
 
 #include <string>

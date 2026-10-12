@@ -27,15 +27,12 @@
 #include "core/fxcrt/containers/contains.h"
 #include "core/fxcrt/numerics/safe_conversions.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
+#include "fpdfsdk/epdf_annot_helpers.h"
 #include "fpdfsdk/epdf_page_content_helpers.h"
 
-namespace {
+using epdf::GetAnnotDictFromFPDFAnnotation;
 
-const CPDF_Dictionary* GetAnnotDictFromFPDFAnnotation(
-    const FPDF_ANNOTATION annot) {
-  CPDF_AnnotContext* context = CPDFAnnotContextFromFPDFAnnotation(annot);
-  return context ? context->GetAnnotDict() : nullptr;
-}
+namespace {
 
 std::vector<RedactRegion> GetRedactRegionsFromAnnotDict(
     const CPDF_Dictionary* annot_dict) {

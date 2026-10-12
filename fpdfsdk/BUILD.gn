@@ -12,6 +12,11 @@ source_set("fpdfsdk") {
     "epdf_action_helpers.h",
     # EmbedPDF: action creators and the field/widget event setters.
     "epdf_action_write.cpp",
+    # EmbedPDF: the annotation API (public/epdf_annot.h), and the annotation
+    # handle helpers our files share.
+    "epdf_annot.cpp",
+    "epdf_annot_helpers.cpp",
+    "epdf_annot_helpers.h",
     # EmbedPDF: cross-document appearance Form XObject cloning (shared).
     "epdf_appearance_exporter.h",
     "epdf_base_document.cpp",

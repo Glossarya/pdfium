@@ -297,8 +297,8 @@ unused.
 measurement, redaction overlays, form fields. Mixed into upstream's file, it was the worst conflict
 file. Apart, upstream's file merges cleanly.
 **Where.** `cpdf_appearancegenerator*` and its unit test; the calls in `cpdf_annot.cpp`,
-`fpdf_annot.cpp` (including upstream's `FPDFAnnot_AppendObject` and `FPDFAnnot_SetFontColor`),
-`epdf_form.cpp`, `epdf_redact.cpp` and the rich text writer.
+upstream's `FPDFAnnot_AppendObject` and `FPDFAnnot_SetFontColor` in `fpdf_annot.cpp`,
+`epdf_annot.cpp`, `epdf_form.cpp`, `epdf_redact.cpp` and the rich text writer.
 **Guarded by.** `check-fork-tags.py` fails when upstream's files differ from upstream
 (`fork-pristine.txt`); `upstream-preview.py` lists new upstream callers of `CPDF_GenerateAP::`, and
 upstream's commits to its generator.
@@ -468,9 +468,10 @@ component builds; don't bring back the empty `#else` branch.
 **Rule.** An `EPDF*` function or declaration placed inside an upstream API file
 (`fpdfsdk/fpdf_*.cpp`, `public/fpdf_*.h`), or a core helper that exists only to back one.
 **Why.** It was put there when the API was added.
-**Where.** `fpdf_annot.cpp`, `fpdf_view.cpp`, `fpdf_doc.cpp`, `fpdf_attachment.cpp`,
-`fpdf_save.cpp`, `fpdf_text.cpp` and their headers; core helpers such as
-`CPDF_Dest::GetPageObjectNumber`.
+**Where.** `fpdf_view.cpp`, `fpdf_doc.cpp`, `fpdf_attachment.cpp`, `fpdf_save.cpp`,
+`fpdf_text.cpp` and their headers; the two colour types `public/fpdf_annot.h` adds for
+`public/epdf_annot.h`; core helpers such as `CPDF_Dest::GetPageObjectNumber`. The annotation API
+already lives in `public/epdf_annot.h` and `fpdfsdk/epdf_annot.cpp`.
 **Guarded by.** The embedder tests of each API.
 **When upstream touches this.** Keep ours and take upstream's around it. These move to `epdf_*`
 files (upstream-sync plan, phase P4).

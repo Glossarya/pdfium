@@ -13,6 +13,7 @@
 #include "core/fpdfapi/parser/fpdf_parser_utility.h"
 #include "core/fxge/cfx_defaultrenderdevice.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
+#include "public/epdf_annot.h"
 #include "public/epdf_form.h"
 #include "public/fpdf_annot.h"
 #include "public/fpdf_edit.h"

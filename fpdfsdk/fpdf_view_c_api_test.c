@@ -108,12 +108,14 @@ int CheckPDFiumCApi() {
     CHK(FPDFPage_RemoveAnnot);
 
     // fpdf_attachment.h
+    CHK(FPDFAttachment_GetDescription);
     CHK(FPDFAttachment_GetFile);
     CHK(FPDFAttachment_GetName);
     CHK(FPDFAttachment_GetStringValue);
     CHK(FPDFAttachment_GetSubtype);
     CHK(FPDFAttachment_GetValueType);
     CHK(FPDFAttachment_HasKey);
+    CHK(FPDFAttachment_SetDescription);
     CHK(FPDFAttachment_SetFile);
     CHK(FPDFAttachment_SetStringValue);
     CHK(FPDFDoc_AddAttachment);
@@ -309,6 +311,7 @@ int CheckPDFiumCApi() {
     CHK(FORM_GetFocusedAnnot);
     CHK(FORM_GetFocusedText);
     CHK(FORM_GetSelectedText);
+    CHK(FORM_GetTextDirection);
     CHK(FORM_IsIndexSelected);
     CHK(FORM_OnAfterLoadPage);
     CHK(FORM_OnBeforeClosePage);
@@ -329,6 +332,7 @@ int CheckPDFiumCApi() {
     CHK(FORM_SelectAllText);
     CHK(FORM_SetFocusedAnnot);
     CHK(FORM_SetIndexSelected);
+    CHK(FORM_SetTextDirection);
     CHK(FORM_Undo);
     CHK(FPDFDOC_ExitFormFillEnvironment);
     CHK(FPDFDOC_InitFormFillEnvironment);

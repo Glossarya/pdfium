@@ -82,6 +82,10 @@ class CPVT_Section final {
   CPVT_FloatRect RearrangeCharArray() const;
   CPVT_FloatRect RearrangeTypeset();
   CPVT_FloatRect SplitLines(bool bTypeset, float fFontSize);
+  // Iterates through all lines in the section, laying out words according to
+  // the text alignment and bidi rules (reordering words if necessary), and
+  // assigns final (X, Y) coordinates to each word and line. Returns the
+  // bounding box encompassing all the lines.
   CPVT_FloatRect OutputLines(const CPVT_FloatRect& rect) const;
 
   // Clears [0, word_index] from `word_array_`.
@@ -99,8 +103,8 @@ class CPVT_Section final {
 
   // Like GetWordRangeIteratorPair(), but returns a span into `word_array_`.
   pdfium::span<const std::unique_ptr<CPVT_WordInfo>> GetWordRangeSpan(
-      int32_t begin_index,
-      int32_t end_index) const;
+      int32_t start,
+      int32_t length) const;
 
   CPVT_WordPlace SearchWordPlaceImpl(float fx,
                                      const CPVT_WordRange& range) const;

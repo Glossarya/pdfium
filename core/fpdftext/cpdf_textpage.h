@@ -40,6 +40,7 @@ class CPDF_TextPage {
     kNotUnicode,
     kHyphen,
     kPiece,
+    kActualText,
   };
 
   class CharInfo {
@@ -176,18 +177,25 @@ class CPDF_TextPage {
   void ProcessObject();
   void ProcessFormObject(CPDF_FormObject* form_obj,
                          const CFX_Matrix& form_matrix);
-  void ProcessTextObject(const TransformedTextObject& obj);
   void ProcessTextObject(CPDF_TextObject* text_obj,
                          const CFX_Matrix& form_matrix,
                          const CPDF_PageObjectHolder* obj_list,
                          CPDF_PageObjectHolder::const_iterator obj_iter);
   GenerateCharacter ProcessInsertObject(const CPDF_TextObject* text_obj,
                                         const CFX_Matrix& form_matrix);
+
+  void ProcessTransformedTextObjects();
+
   // Returns whether to continue or not.
   bool ProcessGenerateCharacter(GenerateCharacter type,
                                 const CPDF_TextObject* text_object,
                                 const CFX_Matrix& form_matrix);
-  void ProcessTextObjectItems(CPDF_TextObject* text_object,
+  // Processes character items in `text_object` and appends character info and
+  // text to `temp_char_list_` and `temp_text_buf_`.
+  // Returns true if the caller needs to call ReverseTempTextBufs() because the
+  // text is RTL with a mirrored transformation matrix, requiring the newly
+  // appended character order to be reversed.
+  bool ProcessTextObjectItems(CPDF_TextObject* text_object,
                               const CFX_Matrix& form_matrix,
                               const CFX_Matrix& matrix);
   const CharInfo* GetPrevCharInfo() const;
@@ -209,7 +217,9 @@ class CPDF_TextPage {
   void AppendGeneratedCharacter(wchar_t unicode,
                                 const CFX_Matrix& form_matrix,
                                 bool use_temp_buffer);
-  void SwapTempTextBuf(size_t iCharListStartAppend, size_t iBufStartAppend);
+  // Reverses elements in `temp_char_list_` starting at `char_list_index` and
+  // characters in `temp_text_buf_` starting at `buf_index`.
+  void ReverseTempTextBufs(size_t char_list_index, size_t buf_index);
   WideString GetTextByPredicate(
       const std::function<bool(const CharInfo&)>& predicate) const;
 

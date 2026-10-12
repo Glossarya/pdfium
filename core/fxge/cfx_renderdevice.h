@@ -19,6 +19,12 @@
 #include "core/fxge/dib/fx_dib.h"
 #include "core/fxge/renderdevicedriver_iface.h"
 
+// EmbedPDF(bug-fix): HDC needs windows.h; win32-x64 builds failed without it.
+// Upstream's 3abda657c (Aug 10 2026), taken early; S7 brings the same lines.
+#if BUILDFLAG(IS_WIN)
+#include <windows.h>
+#endif
+
 class CFX_DIBBase;
 class CFX_DIBitmap;
 class CFX_Font;

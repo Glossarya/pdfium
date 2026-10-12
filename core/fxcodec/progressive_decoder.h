@@ -23,11 +23,11 @@
 #include "core/fxge/dib/fx_dib.h"
 
 #ifdef PDF_ENABLE_XFA_BMP
-#include "core/fxcodec/bmp/bmp_decoder.h"
+#include "core/fxcodec/bmp/bmp_decoder_delegate.h"
 #endif  // PDF_ENABLE_XFA_BMP
 
 #ifdef PDF_ENABLE_XFA_GIF
-#include "core/fxcodec/gif/gif_decoder.h"
+#include "core/fxcodec/gif/cfx_gifcontext.h"
 #endif  // PDF_ENABLE_XFA_GIF
 
 #ifdef PDF_ENABLE_XFA_PNG
@@ -46,10 +46,10 @@ class Dummy {};  // Placeholder to work around C++ syntax issues
 
 class ProgressiveDecoder final :
 #ifdef PDF_ENABLE_XFA_BMP
-    public BmpDecoder::Delegate,
+    public BmpDecoderDelegate,
 #endif  // PDF_ENABLE_XFA_BMP
 #ifdef PDF_ENABLE_XFA_GIF
-    public GifDecoder::Delegate,
+    public CFX_GifContext::Delegate,
 #endif  // PDF_ENABLE_XFA_GIF
 #ifdef PDF_ENABLE_XFA_PNG
     public PngDecoderDelegate,
@@ -67,7 +67,7 @@ class ProgressiveDecoder final :
   };
 
   ProgressiveDecoder();
-  ~ProgressiveDecoder();
+  ~ProgressiveDecoder() override;
 
   FXCODEC_STATUS LoadImageInfo(RetainPtr<IFX_SeekableReadStream> pFile,
                                FXCODEC_IMAGE_TYPE imageType,
@@ -93,7 +93,7 @@ class ProgressiveDecoder final :
 #endif  // PDF_ENABLE_XFA_PNG
 
 #ifdef PDF_ENABLE_XFA_GIF
-  // GifDecoder::Delegate
+  // CFX_GifContext::Delegate
   uint32_t GifCurrentPosition() const override;
   bool GifInputRecordPositionBuf(uint32_t rcd_pos,
                                  const FX_RECT& img_rc,
@@ -196,20 +196,10 @@ class ProgressiveDecoder final :
   RetainPtr<CFX_CodecMemory> codec_memory_;
   DataVector<uint8_t> decode_buf_;
   DataVector<FX_ARGB> src_palette_;
-  std::unique_ptr<ProgressiveDecoderContext> jpeg_context_;
-#ifdef PDF_ENABLE_XFA_BMP
-  std::unique_ptr<ProgressiveDecoderContext> bmp_context_;
-#endif  // PDF_ENABLE_XFA_BMP
-#ifdef PDF_ENABLE_XFA_GIF
-  std::unique_ptr<ProgressiveDecoderContext> gif_context_;
-#endif  // PDF_ENABLE_XFA_GIF
+  std::unique_ptr<ProgressiveDecoderContext> context_;
 #ifdef PDF_ENABLE_XFA_PNG
-  std::unique_ptr<ProgressiveDecoderContext> png_context_;
   bool got_png_metadata_ = false;
 #endif  // PDF_ENABLE_XFA_PNG
-#ifdef PDF_ENABLE_XFA_TIFF
-  std::unique_ptr<ProgressiveDecoderContext> tiff_context_;
-#endif  // PDF_ENABLE_XFA_TIFF
   uint32_t offset_ = 0;
   WeightTable weight_horz_;
   int src_width_ = 0;

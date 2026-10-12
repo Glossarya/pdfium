@@ -195,6 +195,9 @@ struct Options {
 #endif  // PDF_ENABLE_V8
   bool pages = false;
   bool md5 = false;
+#ifdef PDF_ENABLE_BROTLI
+  bool enable_brotli = false;
+#endif  // PDF_ENABLE_BROTLI
 #ifdef ENABLE_CALLGRIND
   bool callgrind_delimiters = false;
 #endif
@@ -327,11 +330,13 @@ int ExampleAppAlert(IPDF_JSPLATFORM*,
     printf("[icon=%d,type=%d]", icon, type);
   }
   printf(": %ls\n", GetPlatformWString(msg).c_str());
+  fflush(stdout);
   return 0;
 }
 
 void ExampleAppBeep(IPDF_JSPLATFORM*, int type) {
   printf("BEEP!!! %d\n", type);
+  fflush(stdout);
 }
 
 int ExampleAppResponse(IPDF_JSPLATFORM*,
@@ -347,6 +352,7 @@ int ExampleAppResponse(IPDF_JSPLATFORM*,
          GetPlatformWString(question).c_str(),
          GetPlatformWString(default_value).c_str(),
          GetPlatformWString(label).c_str(), is_password, length);
+  fflush(stdout);
 
   // UTF-16, always LE regardless of platform.
   auto* ptr = static_cast<uint8_t*>(response);
@@ -381,6 +387,7 @@ void ExampleDocMail(IPDF_JSPLATFORM*,
          GetPlatformWString(To).c_str(), GetPlatformWString(CC).c_str(),
          GetPlatformWString(BCC).c_str(), GetPlatformWString(Subject).c_str(),
          GetPlatformWString(Msg).c_str());
+  fflush(stdout);
 }
 
 void ExampleDocPrint(IPDF_JSPLATFORM*,
@@ -394,6 +401,7 @@ void ExampleDocPrint(IPDF_JSPLATFORM*,
                      FPDF_BOOL bAnnotations) {
   printf("Doc Print: %d, %d, %d, %d, %d, %d, %d, %d\n", bUI, nStart, nEnd,
          bSilent, bShrinkToFit, bPrintAsImage, bReverse, bAnnotations);
+  fflush(stdout);
 }
 
 void ExampleDocSubmitForm(IPDF_JSPLATFORM*,
@@ -407,10 +415,12 @@ void ExampleDocSubmitForm(IPDF_JSPLATFORM*,
     printf(" %02x", UNSAFE_TODO(ptr[i]));
   }
   printf("\n");
+  fflush(stdout);
 }
 
 void ExampleDocGotoPage(IPDF_JSPLATFORM*, int page_number) {
   printf("Goto Page: %d\n", page_number);
+  fflush(stdout);
 }
 
 int ExampleFieldBrowse(IPDF_JSPLATFORM*, void* file_path, int length) {
@@ -431,12 +441,14 @@ FPDF_BOOL ExamplePopupMenu(FPDF_FORMFILLINFO* pInfo,
                            float x,
                            float y) {
   printf("Popup: x=%2.1f, y=%2.1f, flags=0x%x\n", x, y, flags);
+  fflush(stdout);
   return true;
 }
 #endif  // PDF_ENABLE_XFA
 
 void ExampleNamedAction(FPDF_FORMFILLINFO* pInfo, FPDF_BYTESTRING name) {
   UNSAFE_TODO(printf("Execute named action: %s\n", name));
+  fflush(stdout);
 }
 
 void ExampleUnsupportedHandler(UNSUPPORT_INFO*, int type) {
@@ -590,6 +602,10 @@ bool ParseCommandLine(const std::vector<std::string>& args,
       options->disable_xfa = true;
 #endif  // PDF_ENABLE_XFA
 #endif  // PDF_ENABLE_V8
+#ifdef PDF_ENABLE_BROTLI
+    } else if (cur_arg == "--enable-brotli") {
+      options->enable_brotli = true;
+#endif  // PDF_ENABLE_BROTLI
 #ifdef ENABLE_CALLGRIND
     } else if (cur_arg == "--callgrind-delim") {
       options->callgrind_delimiters = true;
@@ -1909,6 +1925,10 @@ constexpr char kUsageString[] =
     "  --disable-xfa          - do not process XFA forms\n"
 #endif  // PDF_ENABLE_XFA
 #endif  // PDF_ENABLE_V8
+#ifdef PDF_ENABLE_BROTLI
+    "  --enable-brotli   - Enable support for the experimental PDF 2.0 "
+    "/BrotliDecode filter.\n"
+#endif  // PDF_ENABLE_BROTLI
 #ifdef ENABLE_CALLGRIND
     "  --callgrind-delim      - delimit interesting section when using "
     "callgrind\n"
@@ -1988,12 +2008,17 @@ int main(int argc, const char* argv[]) {
   }
 
   FPDF_LIBRARY_CONFIG config;
-  config.version = 5;
+  config.version = 6;
   config.m_pUserFontPaths = nullptr;
   config.m_pIsolate = nullptr;
   config.m_v8EmbedderSlot = 0;
   config.m_pPlatform = nullptr;
   config.m_FontLibraryType = FPDF_FONTBACKENDTYPE_FREETYPE;
+#ifdef PDF_ENABLE_BROTLI
+  config.m_BrotliEnabled = options.enable_brotli;
+#else
+  config.m_BrotliEnabled = false;
+#endif  // PDF_ENABLE_BROTLI
 
   switch (options.use_renderer_type) {
     case RendererType::kDefault:

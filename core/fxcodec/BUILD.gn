@@ -98,22 +98,30 @@ source_set("fxcodec") {
     sources += [
       "cfx_codec_memory.cpp",
       "cfx_codec_memory.h",
-      "jpeg/jpeg_progressive_decoder.cpp",
-      "jpeg/jpeg_progressive_decoder.h",
+      "jpeg/libjpeg_jpeg_context.cpp",
+      "jpeg/libjpeg_jpeg_context.h",
       "progressive_decoder.cpp",
       "progressive_decoder.h",
+      "progressive_decoder_context.cpp",
       "progressive_decoder_context.h",
     ]
     if (pdf_enable_xfa_bmp) {
-      sources += [
-        "bmp/bmp_decoder.cpp",
-        "bmp/bmp_decoder.h",
-        "bmp/cfx_bmpcontext.cpp",
-        "bmp/cfx_bmpcontext.h",
-        "bmp/cfx_bmpdecompressor.cpp",
-        "bmp/cfx_bmpdecompressor.h",
-        "bmp/fx_bmp.h",
-      ]
+      sources += [ "bmp/bmp_decoder_delegate.h" ]
+      if (pdf_enable_rust_bmp) {
+        sources += [
+          "bmp/skia_bmp_context.cpp",
+          "bmp/skia_bmp_context.h",
+        ]
+        deps += [ "//skia" ]
+      } else {
+        sources += [
+          "bmp/cfx_bmpcontext.cpp",
+          "bmp/cfx_bmpcontext.h",
+          "bmp/cfx_bmpdecompressor.cpp",
+          "bmp/cfx_bmpdecompressor.h",
+          "bmp/fx_bmp.h",
+        ]
+      }
     }
     if (pdf_enable_xfa_gif) {
       sources += [
@@ -121,8 +129,6 @@ source_set("fxcodec") {
         "gif/cfx_gif.h",
         "gif/cfx_gifcontext.cpp",
         "gif/cfx_gifcontext.h",
-        "gif/gif_decoder.cpp",
-        "gif/gif_decoder.h",
         "gif/lzw_decompressor.cpp",
         "gif/lzw_decompressor.h",
       ]
@@ -136,27 +142,32 @@ source_set("fxcodec") {
       # condition avoids affecting the Chromium behavior.)
       if (pdf_use_skia && pdf_enable_rust_png) {
         sources += [
-          "png/skia_png_decoder.cpp",
-          "png/skia_png_decoder.h",
+          "png/skia_png_context.cpp",
+          "png/skia_png_context.h",
         ]
         deps += [ "//skia" ]
       } else {
         sources += [
-          "png/libpng_png_decoder.cpp",
-          "png/libpng_png_decoder.h",
+          "png/libpng_png_context.cpp",
+          "png/libpng_png_context.h",
         ]
         deps += [ "../../third_party:png" ]
       }
     }
     if (pdf_enable_xfa_tiff) {
       sources += [
-        "tiff/tiff_decoder.cpp",
-        "tiff/tiff_decoder.h",
+        "tiff/libtiff_tiff_context.cpp",
+        "tiff/libtiff_tiff_context.h",
       ]
       deps += [ "../../third_party:tiff" ]
     }
+    if (pdf_use_skia) {
+      sources += [
+        "codec_memory_sk_stream.cpp",
+        "codec_memory_sk_stream.h",
+      ]
+    }
   }
-
   visibility = [ "../../*" ]
 }
 
@@ -184,6 +195,10 @@ pdfium_unittest_source_set("unittests") {
         "gif/cfx_gifcontext_unittest.cpp",
         "gif/lzw_decompressor_unittest.cpp",
       ]
+    }
+    if (pdf_use_skia) {
+      sources += [ "codec_memory_sk_stream_unittest.cpp" ]
+      deps += [ "//skia" ]
     }
   }
 }

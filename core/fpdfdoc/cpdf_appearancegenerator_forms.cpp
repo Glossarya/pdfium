@@ -92,7 +92,7 @@ ByteString GenerateTextFieldAP(const CPDF_Dictionary* annot_dict,
       CPDF_FormField::GetFieldAttrForDict(annot_dict, "MaxLen");
   const uint32_t max_len = max_len_field ? max_len_field->GetInteger() : 0;
   vt.SetPlateRect(body_rect);
-  vt.SetAlignment(align);
+  vt.SetAlignment(CPVT_VariableText::ToAlignment(align));
   SetVtFontSize(font_size, vt);
 
   bool is_multi_line = (flags >> 12) & 1;
@@ -496,7 +496,7 @@ void GeneratePushButtonFormAP(fxcrt::ostringstream& app_stream,
   body_rect.Deflate(2.0f * bw, bw);
   CPVT_VariableText vt(&provider);
   vt.SetPlateRect(body_rect);
-  vt.SetAlignment(1);  // centred
+  vt.SetAlignment(CPVT_VariableText::Alignment::kCenter);
   SetVtFontSize(da_info.font_size, vt);
   vt.Initialize();
   vt.SetText(mk.caption);

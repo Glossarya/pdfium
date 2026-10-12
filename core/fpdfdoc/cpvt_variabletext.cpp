@@ -21,6 +21,7 @@
 #include "core/fxcrt/fx_safe_types.h"
 #include "core/fxcrt/span.h"
 #include "core/fxcrt/stl_util.h"
+#include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
 
 namespace {
 
@@ -92,6 +93,19 @@ void CPVT_VariableText::Iterator::SetAt(const CPVT_WordPlace& place) {
   cur_pos_ = place;
 }
 
+float CPVT_VariableText::Iterator::GetLineCaretX(const CPVT_Line& line) {
+  absl::Cleanup scoped_set_at = [this, old_place = GetWordPlace()] {
+    SetAt(old_place);
+  };
+  SetAt(line.lineplace);
+  NextWord();
+  CPVT_Word first_word;
+  bool is_rtl = GetWord(first_word) &&
+                GetWordPlace().nLineIndex == line.lineplace.nLineIndex &&
+                first_word.is_rtl();
+  return is_rtl ? line.ptLine.x + line.fLineWidth : line.ptLine.x;
+}
+
 bool CPVT_VariableText::Iterator::NextWord() {
   if (cur_pos_ == vt_->GetEndWordPlace()) {
     return false;
@@ -139,7 +153,8 @@ bool CPVT_VariableText::Iterator::GetWord(CPVT_Word& word) const {
       vt_->InToOut(CFX_PointF(pInfo->fWordX + pSection->GetRect().left,
                               pInfo->fWordY + pSection->GetRect().top)),
       vt_->GetWordAscent(*pInfo), vt_->GetWordDescent(*pInfo),
-      vt_->GetWordWidth(*pInfo), pInfo->nFontIndex, vt_->GetFontSize());
+      vt_->GetWordWidth(*pInfo), pInfo->nFontIndex, vt_->GetFontSize(),
+      pInfo->is_rtl);
   return true;
 }
 

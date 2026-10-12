@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <limits>
 #include <memory>
 #include <utility>
@@ -46,6 +47,7 @@
 #include "third_party/skia/include/core/SkFont.h"         // nogncheck
 #include "third_party/skia/include/core/SkFontMetrics.h"  // nogncheck
 #include "third_party/skia/include/core/SkFontTypes.h"    // nogncheck
+#include "third_party/skia/include/core/SkPath.h"         // nogncheck
 #include "third_party/skia/include/core/SkRect.h"         // nogncheck
 #endif
 
@@ -413,7 +415,7 @@ RetainPtr<CFX_Face> CFX_Face::New(RetainPtr<Retainable> cache_entry,
   if (raw_font->is_ok()) {
     skrifa_font = std::make_unique<SkrifaFontHolder>(std::move(raw_font));
   }
-#endif
+#endif  // defined(PDF_ENABLE_FONTATIONS)
 
   // Private ctor.
   RetainPtr<CFX_Face> result = pdfium::WrapRetain(
@@ -422,7 +424,7 @@ RetainPtr<CFX_Face> CFX_Face::New(RetainPtr<Retainable> cache_entry,
 
 #if defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   result->GetOrCreateSkTypeface();
-#endif
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return result;
 }
 
@@ -433,8 +435,8 @@ bool CFX_Face::HasGlyphNames() const {
   if (skrifa_font_ && skrifa_font_->font->is_ok()) {
     CHECK_EQ(ft_result, skrifa_font_->font->has_glyph_names());
   }
-#endif
-#endif
+#endif  // defined(PDF_ENABLE_FONTATIONS)
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return ft_result;
 }
 
@@ -444,7 +446,7 @@ bool CFX_Face::IsTtOt() const {
   if (skia_typeface_) {
     CHECK_EQ(ft_result, skia_typeface_->countTables() > 0);
   }
-#endif
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return ft_result;
 }
 
@@ -470,17 +472,20 @@ ByteString CFX_Face::GetFontFormat() {
     }
     CHECK_EQ(ft_result, ByteString(skrifa_format));
   }
-#endif
-#endif
+#endif  // defined(PDF_ENABLE_FONTATIONS)
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return ft_result;
 }
 
 bool CFX_Face::IsTricky() const {
   const bool ft_result = !!(GetRec()->face_flags & FT_FACE_FLAG_TRICKY);
 #if defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
-  // TODO(https://crbug.com/42271123): Compute equivalent result via Skia or
-  // Skrifa.
-#endif
+#if defined(PDF_ENABLE_FONTATIONS)
+  if (skrifa_font_ && skrifa_font_->font->is_ok()) {
+    CHECK_EQ(ft_result, skrifa_font_->font->is_tricky());
+  }
+#endif  // defined(PDF_ENABLE_FONTATIONS)
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return ft_result;
 }
 
@@ -494,8 +499,8 @@ bool CFX_Face::IsFixedWidth() const {
   if (skrifa_font_ && skrifa_font_->font->is_ok()) {
     CHECK_EQ(ft_result, skrifa_font_->font->is_fixed_pitch());
   }
-#endif
-#endif
+#endif  // defined(PDF_ENABLE_FONTATIONS)
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return ft_result;
 }
 
@@ -507,11 +512,11 @@ bool CFX_Face::IsScalable() const {
   if (skrifa_font_ && skrifa_font_->font->is_ok()) {
     CHECK_EQ(ft_result, skrifa_font_->font->is_scalable());
   }
-#endif
-#endif
+#endif  // defined(PDF_ENABLE_FONTATIONS)
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return ft_result;
 }
-#endif
+#endif  // defined(PDF_ENABLE_XFA)
 
 bool CFX_Face::IsItalic() const {
   const bool ft_result = !!(GetRec()->style_flags & FT_STYLE_FLAG_ITALIC);
@@ -519,7 +524,7 @@ bool CFX_Face::IsItalic() const {
   if (skia_typeface_) {
     CHECK_EQ(ft_result, skia_typeface_->isItalic());
   }
-#endif
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return ft_result;
 }
 
@@ -529,19 +534,33 @@ bool CFX_Face::IsBold() const {
   if (skia_typeface_) {
     CHECK_EQ(ft_result, skia_typeface_->isBold());
   }
-#endif
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return ft_result;
 }
 
 ByteString CFX_Face::GetFamilyName() const {
-  const ByteString ft_result(GetRec()->family_name);
+  ByteString ft_result(GetRec()->family_name);
 #if defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
+#if defined(PDF_ENABLE_FONTATIONS)
+  if (skrifa_font_ && skrifa_font_->font->is_ok()) {
+    rust::Str skrifa_result = skrifa_font_->font->family_name();
+    CHECK_EQ(ft_result.IsEmpty(), skrifa_result.empty());
+    if (!ft_result.IsEmpty() && !skrifa_result.empty()) {
+      ByteString skrifa_bs = ByteString(ByteStringView(skrifa_result));
+      ByteString ft_clean = ft_result;
+      ByteString skrifa_clean = skrifa_bs;
+      MaybeRemoveSubsettedFontPrefix(ft_clean);
+      MaybeRemoveSubsettedFontPrefix(skrifa_clean);
+      CHECK_EQ(ft_clean, skrifa_clean);
+    }
+  }
+#endif  // defined(PDF_ENABLE_FONTATIONS)
   if (skia_typeface_) {
     SkString name;
     skia_typeface_->getFamilyName(&name);
     CHECK_EQ(ft_result, ByteString(name.c_str()));
   }
-#endif
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return ft_result;
 }
 
@@ -577,7 +596,7 @@ FX_RECT CFX_Face::GetBBox() const {
     CHECK_EQ(ft_result.right, static_cast<int32_t>(metrics.fXMax));
     CHECK_EQ(ft_result.top, -static_cast<int32_t>(metrics.fBottom));
   }
-#endif
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return ft_result;
 }
 
@@ -585,11 +604,17 @@ uint16_t CFX_Face::GetUnitsPerEm() const {
   const uint16_t ft_result =
       pdfium::checked_cast<uint16_t>(GetRec()->units_per_EM);
 #if defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
+#if defined(PDF_ENABLE_FONTATIONS)
+  if (skrifa_font_ && skrifa_font_->font->is_ok()) {
+    CHECK_EQ(ft_result, pdfium::checked_cast<uint16_t>(
+                            skrifa_font_->font->units_per_em()));
+  }
+#endif  // defined(PDF_ENABLE_FONTATIONS)
   if (skia_typeface_) {
     CHECK_EQ(ft_result,
              pdfium::checked_cast<uint16_t>(skia_typeface_->getUnitsPerEm()));
   }
-#endif
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return ft_result;
 }
 
@@ -600,6 +625,12 @@ int CFX_Face::EmAdjust(int value) const {
 int16_t CFX_Face::GetAscender() const {
   const int16_t ft_result = pdfium::checked_cast<int16_t>(GetRec()->ascender);
 #if defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
+#if defined(PDF_ENABLE_FONTATIONS)
+  if (skrifa_font_ && skrifa_font_->font->is_ok()) {
+    CHECK_EQ(ft_result,
+             static_cast<int16_t>(std::round(skrifa_font_->font->ascent())));
+  }
+#endif  // defined(PDF_ENABLE_FONTATIONS)
   if (skia_typeface_) {
     SkFont font(skia_typeface_, GetUnitsPerEm());
     SkFontMetrics metrics;
@@ -607,13 +638,19 @@ int16_t CFX_Face::GetAscender() const {
     // Freetype ascender is often exactly -metrics.fAscent.
     CHECK_EQ(ft_result, static_cast<int16_t>(-metrics.fAscent));
   }
-#endif
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return ft_result;
 }
 
 int16_t CFX_Face::GetDescender() const {
   const int16_t ft_result = pdfium::checked_cast<int16_t>(GetRec()->descender);
 #if defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
+#if defined(PDF_ENABLE_FONTATIONS)
+  if (skrifa_font_ && skrifa_font_->font->is_ok()) {
+    CHECK_EQ(ft_result,
+             static_cast<int16_t>(std::round(skrifa_font_->font->descent())));
+  }
+#endif  // defined(PDF_ENABLE_FONTATIONS)
   if (skia_typeface_) {
     SkFont font(skia_typeface_, GetUnitsPerEm());
     SkFontMetrics metrics;
@@ -621,7 +658,7 @@ int16_t CFX_Face::GetDescender() const {
     // Freetype descender is often exactly -metrics.fDescent.
     CHECK_EQ(ft_result, static_cast<int16_t>(-metrics.fDescent));
   }
-#endif
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return ft_result;
 }
 
@@ -658,7 +695,7 @@ size_t CFX_Face::GetSfntTable(uint32_t table, pdfium::span<uint8_t> buffer) {
       }
     }
   }
-#endif
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return ft_result;
 }
 
@@ -752,8 +789,8 @@ std::optional<std::array<uint32_t, 2>> CFX_Face::GetOs2CodePageRange() {
     CHECK_EQ((*ft_result)[0], (*skrifa_result)[0]);
     CHECK_EQ((*ft_result)[1], (*skrifa_result)[1]);
   }
-#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
 #endif  // defined(PDF_ENABLE_FONTATIONS)
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
 
   return ft_result;
 }
@@ -780,20 +817,26 @@ std::optional<std::array<uint8_t, 2>> CFX_Face::GetOs2Panose() {
     CHECK_EQ((*ft_result)[0], (*skrifa_result)[0]);
     CHECK_EQ((*ft_result)[1], (*skrifa_result)[1]);
   }
-#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
 #endif  // defined(PDF_ENABLE_FONTATIONS)
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
 
   return ft_result;
 }
-#endif  // defined(PDF_ENABLE_XFA) || BUILDFLAG(IS_ANDROID)
+#endif  // defined(PDF_ENABLE_XFA) || BUILDFLAG(IS_ANDROID) ||
+        // BUILDFLAG(IS_LINUX)
 
 int CFX_Face::GetGlyphCount() const {
   const int ft_result = pdfium::checked_cast<int>(GetRec()->num_glyphs);
 #if defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
+#if defined(PDF_ENABLE_FONTATIONS)
+  if (skrifa_font_ && skrifa_font_->font->is_ok()) {
+    CHECK_EQ(ft_result, static_cast<int>(skrifa_font_->font->num_glyphs()));
+  }
+#endif  // defined(PDF_ENABLE_FONTATIONS)
   if (skia_typeface_) {
     CHECK_EQ(ft_result, skia_typeface_->countGlyphs());
   }
-#endif
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return ft_result;
 }
 
@@ -805,6 +848,8 @@ std::unique_ptr<CFX_GlyphBitmap> CFX_Face::RenderGlyph(
     int dest_width,
     FontAntiAliasingMode anti_alias,
     const CFX_SubstFont* subst_font) {
+  // TODO(https://crbug.com/42271123): Implement glyph rendering in
+  // Skia/Fontations.
   FT_Matrix ft_matrix;
   ft_matrix.xx = matrix.a / 64 * 65536;
   ft_matrix.xy = matrix.c / 64 * 65536;
@@ -901,7 +946,7 @@ std::unique_ptr<CFX_GlyphBitmap> CFX_Face::RenderGlyph(
 #if defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   // TODO(https://crbug.com/42271123): Compute equivalent result via Skia or
   // Skrifa.
-#endif
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return pGlyphBitmap;
 }
 
@@ -920,7 +965,7 @@ std::unique_ptr<CFX_Path> CFX_Face::LoadGlyphPath(
       }
     }
   }
-#endif
+#endif  // defined(PDF_ENABLE_FONTATIONS)
   FT_FaceRec* rec = GetRec();
   FT_Set_Pixel_Sizes(rec, 0, 64);
   FT_Matrix ft_matrix = {65536, 0, 0, 65536};
@@ -983,15 +1028,27 @@ std::unique_ptr<CFX_Path> CFX_Face::LoadGlyphPath(
   return pPath;
 }
 
-int CFX_Face::GetGlyphTTWidth() const {
+int CFX_Face::GetGlyphTTWidth(uint32_t glyph_index) const {
   const auto* fontglyph = GetRec()->glyph;
+  DCHECK_EQ(glyph_index, fontglyph->glyph_index);
+
   const int ft_result =
       NormalizeFontMetric(fontglyph->metrics.horiAdvance, GetUnitsPerEm());
 #if defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
+#if defined(PDF_ENABLE_FONTATIONS)
+  if (skrifa_font_ && skrifa_font_->font->is_ok()) {
+    skrifa::Outline outline;
+    if (skrifa_font_->font->unscaled_outline(glyph_index, outline)) {
+      const int skrifa_result = NormalizeFontMetric(
+          static_cast<int64_t>(outline.advance_width + 0.5), GetUnitsPerEm());
+      CHECK_EQ(ft_result, skrifa_result);
+    }
+  }
+#endif  // defined(PDF_ENABLE_FONTATIONS)
   if (skia_typeface_) {
     SkFont font(skia_typeface_, GetUnitsPerEm());
     font.setHinting(SkFontHinting::kNone);
-    uint16_t skia_glyph_index = static_cast<uint16_t>(fontglyph->glyph_index);
+    uint16_t skia_glyph_index = static_cast<uint16_t>(glyph_index);
     SkScalar width;
     font.getWidths(pdfium::span_from_ref(skia_glyph_index),
                    pdfium::span_from_ref(width));
@@ -999,7 +1056,7 @@ int CFX_Face::GetGlyphTTWidth() const {
         NormalizeFontMetric(static_cast<int64_t>(width + 0.5), GetUnitsPerEm());
     CHECK_EQ(ft_result, sk_result);
   }
-#endif
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return ft_result;
 }
 
@@ -1041,7 +1098,7 @@ int CFX_Face::GetGlyphWidth(uint32_t glyph_index,
     const int sk_result = EmAdjust(static_cast<int>(width + 0.5));
     CHECK_EQ(ft_result, sk_result);
   }
-#endif
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return ft_result;
 }
 
@@ -1060,7 +1117,7 @@ std::optional<FX_RECT> CFX_Face::GetDrawnGlyphBBox(
   if (LoadGlyph(glyph_index, /*scale=*/false) != 0) {
     return std::nullopt;
   }
-  return GetGlyphBBox();
+  return GetGlyphBBox(glyph_index);
 }
 
 ByteString CFX_Face::GetGlyphName(uint32_t glyph_index) {
@@ -1097,9 +1154,33 @@ int CFX_Face::GetCharIndex(uint32_t code) {
       return skrifa_font_->font->unicode_to_gid(code);
     }
   }
-#endif
+#endif  // defined(PDF_ENABLE_FONTATIONS)
   const int ft_result = FT_Get_Char_Index(GetRec(), code);
 #if defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
+#if defined(PDF_ENABLE_FONTATIONS)
+  if (skrifa_font_ && skrifa_font_->font->is_ok()) {
+    int skrifa_result = -1;
+    FT_CharMap charmap = GetRec()->charmap;
+    if (charmap) {
+      if (charmap->encoding == FT_ENCODING_UNICODE) {
+        skrifa_result =
+            static_cast<int>(skrifa_font_->font->unicode_to_gid(code));
+      } else if (skrifa_font_->font->font_type() == skrifa::FaceFormat::Type1 &&
+                 code <= 0xFF) {
+        if (charmap->encoding == FT_ENCODING_ADOBE_CUSTOM ||
+            charmap->encoding == FT_ENCODING_ADOBE_STANDARD ||
+            charmap->encoding == FT_ENCODING_ADOBE_EXPERT ||
+            charmap->encoding == FT_ENCODING_APPLE_ROMAN) {
+          skrifa_result = static_cast<int>(
+              skrifa_font_->font->code_to_gid(static_cast<uint8_t>(code)));
+        }
+      }
+    }
+    if (skrifa_result != -1) {
+      CHECK_EQ(ft_result, skrifa_result);
+    }
+  }
+#endif  // defined(PDF_ENABLE_FONTATIONS)
   if (skia_typeface_) {
     FT_CharMap charmap = GetRec()->charmap;
     if (charmap && charmap->encoding == FT_ENCODING_UNICODE) {
@@ -1107,7 +1188,7 @@ int CFX_Face::GetCharIndex(uint32_t code) {
                skia_typeface_->unicharToGlyph(code));
     }
   }
-#endif
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return ft_result;
 }
 
@@ -1133,15 +1214,37 @@ int CFX_Face::LoadGlyph(uint32_t glyph_index, bool scale) {
   }
   const int ft_result = FT_Load_Glyph(GetRec(), glyph_index, args);
 #if defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
-  // TODO(https://crbug.com/42271123): Compute equivalent result via Skia or
-  // Skrifa.
-#endif
+  if (skia_typeface_) {
+    bool skia_valid =
+        glyph_index < static_cast<uint32_t>(skia_typeface_->countGlyphs());
+    if (ft_result == 0) {
+      CHECK(skia_valid);
+    }
+  }
+#if defined(PDF_ENABLE_FONTATIONS)
+  if (skrifa_font_ && skrifa_font_->font->is_ok()) {
+    bool skrifa_result = skrifa_font_->font->has_outline(glyph_index);
+    CHECK_EQ(ft_result == 0, skrifa_result);
+  }
+#endif  // defined(PDF_ENABLE_FONTATIONS)
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return ft_result;
 }
 
 ByteString CFX_Face::GetPostscriptName() {
   const char* ft_result = FT_Get_Postscript_Name(GetRec());
 #if defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
+#if defined(PDF_ENABLE_FONTATIONS)
+  if (skrifa_font_ && skrifa_font_->font->is_ok()) {
+    rust::Str skrifa_result = skrifa_font_->font->postscript_name();
+    CHECK_EQ(!ft_result, skrifa_result.empty());
+    if (ft_result && !skrifa_result.empty()) {
+      CHECK_EQ(ByteString(ft_result),
+               UNSAFE_BUFFERS(
+                   ByteString(skrifa_result.data(), skrifa_result.size())));
+    }
+  }
+#endif  // defined(PDF_ENABLE_FONTATIONS)
   if (skia_typeface_) {
     SkString name;
     if (skia_typeface_->getPostScriptName(&name)) {
@@ -1150,7 +1253,7 @@ ByteString CFX_Face::GetPostscriptName() {
       CHECK(!ft_result);
     }
   }
-#endif
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return ByteString(ft_result);
 }
 
@@ -1214,7 +1317,7 @@ std::optional<FX_RECT> CFX_Face::GetFontGlyphBBox(uint32_t glyph_index) {
     CHECK_EQ(ft_result.bottom,
              NormalizeFontMetric(static_cast<int32_t>(-bounds.fBottom), em));
   }
-#endif
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return ft_result;
 }
 
@@ -1249,34 +1352,42 @@ FX_RECT CFX_Face::GetCharBBox(uint32_t code, int glyph_index) {
       }
     }
   } else {
-    int err = FT_Load_Glyph(rec, glyph_index, FT_LOAD_NO_SCALE);
+    int err = LoadGlyph(glyph_index, /*scale=*/false);
     if (err == 0) {
-      rect = GetGlyphBBox();
+      rect = GetGlyphBBox(glyph_index);
       if (rect.top <= kMaxRectTop) {
         rect.top += rect.top / 64;
       } else {
         rect.top = std::numeric_limits<int>::max();
       }
-    }
-  }
 #if defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
 #if defined(PDF_ENABLE_FONTATIONS)
-  if (skrifa_font_ && skrifa_font_->font->is_ok()) {
-    skrifa::BoundingBox bbox = skrifa_font_->font->glyph_bounds(glyph_index);
-    const uint16_t upem = GetUnitsPerEm();
-    FX_RECT skrifa_result(NormalizeFontMetric(bbox.x_min, upem),
-                          NormalizeFontMetric(bbox.y_max, upem),
-                          NormalizeFontMetric(bbox.x_max, upem),
-                          NormalizeFontMetric(bbox.y_min, upem));
-    // TODO(tsepez): verify results.
+      if (skrifa_font_ && skrifa_font_->font->is_ok()) {
+        skrifa::BoundingBox bbox =
+            skrifa_font_->font->glyph_bounds(glyph_index);
+        const uint16_t upem = GetUnitsPerEm();
+        FX_RECT skrifa_result(NormalizeFontMetric(bbox.x_min, upem),
+                              NormalizeFontMetric(bbox.y_max, upem),
+                              NormalizeFontMetric(bbox.x_max, upem),
+                              NormalizeFontMetric(bbox.y_min, upem));
+        if (skrifa_result.top <= kMaxRectTop) {
+          skrifa_result.top += skrifa_result.top / 64;
+        } else {
+          skrifa_result.top = std::numeric_limits<int>::max();
+        }
+        CHECK(rect.Near(skrifa_result, 2));
+      }
+#endif  // defined(PDF_ENABLE_FONTATIONS)
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
+    }
   }
-#endif
-#endif
   return rect;
 }
 
-FX_RECT CFX_Face::GetGlyphBBox() const {
+FX_RECT CFX_Face::GetGlyphBBox(uint32_t glyph_index) const {
   const auto* glyph = GetRec()->glyph;
+  DCHECK_EQ(glyph_index, glyph->glyph_index);
+
   pdfium::ClampedNumeric<FT_Pos> left = glyph->metrics.horiBearingX;
   pdfium::ClampedNumeric<FT_Pos> top = glyph->metrics.horiBearingY;
   const uint16_t upem = GetUnitsPerEm();
@@ -1286,23 +1397,45 @@ FX_RECT CFX_Face::GetGlyphBBox() const {
                     NormalizeFontMetric(top - glyph->metrics.height, upem));
 
 #if defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
+#if defined(PDF_ENABLE_FONTATIONS)
+  if (skrifa_font_ && skrifa_font_->font->is_ok()) {
+    skrifa::BoundingBox bbox = skrifa_font_->font->glyph_bounds(glyph_index);
+    FX_RECT skrifa_result(NormalizeFontMetric(bbox.x_min, upem),
+                          NormalizeFontMetric(bbox.y_max, upem),
+                          NormalizeFontMetric(bbox.x_max, upem),
+                          NormalizeFontMetric(bbox.y_min, upem));
+    CHECK(ft_result.Near(skrifa_result, 2));
+  }
+#endif  // defined(PDF_ENABLE_FONTATIONS)
   if (skia_typeface_) {
     SkFont font(skia_typeface_, upem);
     font.setHinting(SkFontHinting::kNone);
-    uint16_t skia_glyph_index = static_cast<uint16_t>(glyph->glyph_index);
-    SkRect bounds = font.getBounds(skia_glyph_index, nullptr);
+    uint16_t skia_glyph_index = static_cast<uint16_t>(glyph_index);
 
-    CHECK_EQ(ft_result.left,
-             NormalizeFontMetric(static_cast<int32_t>(bounds.fLeft), upem));
-    CHECK_EQ(ft_result.top,
-             NormalizeFontMetric(static_cast<int32_t>(-bounds.fTop), upem));
-    CHECK_EQ(ft_result.right,
-             NormalizeFontMetric(static_cast<int32_t>(bounds.fRight), upem));
-    CHECK_EQ(ft_result.bottom,
-             NormalizeFontMetric(static_cast<int32_t>(-bounds.fBottom), upem));
+    std::optional<SkPath> path = font.getPath(skia_glyph_index);
+    int skia_left = 0;
+    int skia_top = 0;
+    int skia_right = 0;
+    int skia_bottom = 0;
+    SkRect path_bounds = SkRect::MakeEmpty();
+    if (path.has_value()) {
+      path_bounds = path->getBounds();
+      skia_left = NormalizeFontMetric(
+          static_cast<int32_t>(std::round(path_bounds.fLeft)), upem);
+      skia_top = NormalizeFontMetric(
+          static_cast<int32_t>(std::round(-path_bounds.fTop)), upem);
+      skia_right = NormalizeFontMetric(
+          static_cast<int32_t>(std::round(path_bounds.fRight)), upem);
+      skia_bottom = NormalizeFontMetric(
+          static_cast<int32_t>(std::round(-path_bounds.fBottom)), upem);
+    }
+
+    CHECK_EQ(ft_result.left, skia_left);
+    CHECK_EQ(ft_result.top, skia_top);
+    CHECK_EQ(ft_result.right, skia_right);
+    CHECK_EQ(ft_result.bottom, skia_bottom);
   }
-#endif
-
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return ft_result;
 }
 
@@ -1344,10 +1477,14 @@ std::vector<CharCodeAndIndex> CFX_Face::GetCharCodesAndIndices(
 }
 
 CFX_Face::CharMap CFX_Face::GetCurrentCharMap() const {
+  // TODO(https://crbug.com/42271123): Implement charmap management in
+  // Skia/Fontations.
   return GetRec()->charmap;
 }
 
 std::optional<fxge::FontEncoding> CFX_Face::GetCurrentCharMapEncoding() const {
+  // TODO(https://crbug.com/42271123): Implement charmap management in
+  // Skia/Fontations.
   if (!GetRec()->charmap) {
     return std::nullopt;
   }
@@ -1355,29 +1492,41 @@ std::optional<fxge::FontEncoding> CFX_Face::GetCurrentCharMapEncoding() const {
 }
 
 CFX_Face::CharMapId CFX_Face::GetCharMapIdByIndex(size_t index) const {
+  // TODO(https://crbug.com/42271123): Implement charmap management in
+  // Skia/Fontations.
   return {.platform_id = GetCharMapPlatformIdByIndex(index),
           .encoding_id = GetCharMapEncodingIdByIndex(index)};
 }
 
 int CFX_Face::GetCharMapPlatformIdByIndex(size_t index) const {
+  // TODO(https://crbug.com/42271123): Implement charmap management in
+  // Skia/Fontations.
   return GetCharMaps()[index]->platform_id;
 }
 
 int CFX_Face::GetCharMapEncodingIdByIndex(size_t index) const {
+  // TODO(https://crbug.com/42271123): Implement charmap management in
+  // Skia/Fontations.
   return GetCharMaps()[index]->encoding_id;
 }
 
 fxge::FontEncoding CFX_Face::GetCharMapEncodingByIndex(size_t index) const {
+  // TODO(https://crbug.com/42271123): Implement charmap management in
+  // Skia/Fontations.
   return ToFontEncoding(GetCharMaps()[index]->encoding);
 }
 
 size_t CFX_Face::GetCharMapCount() const {
+  // TODO(https://crbug.com/42271123): Implement charmap management in
+  // Skia/Fontations.
   return GetRec()->charmaps
              ? pdfium::checked_cast<size_t>(GetRec()->num_charmaps)
              : 0;
 }
 
 pdfium::span<const FT_CharMap> CFX_Face::GetCharMaps() const {
+  // TODO(https://crbug.com/42271123): Implement charmap management in
+  // Skia/Fontations.
   size_t count = GetCharMapCount();
   if (count == 0) {
     return {};
@@ -1387,16 +1536,22 @@ pdfium::span<const FT_CharMap> CFX_Face::GetCharMaps() const {
 }
 
 void CFX_Face::SetCharMap(CharMap map) {
+  // TODO(https://crbug.com/42271123): Implement charmap management in
+  // Skia/Fontations.
   FT_Set_Charmap(GetRec(), static_cast<FT_CharMap>(map));
 }
 
 void CFX_Face::SetCharMapByIndex(size_t index) {
+  // TODO(https://crbug.com/42271123): Implement charmap management in
+  // Skia/Fontations.
   CHECK_LT(index, GetCharMapCount());
   // SAFETY: required from library as enforced by check above.
   SetCharMap(UNSAFE_BUFFERS(GetRec()->charmaps[index]));
 }
 
 bool CFX_Face::SelectCharMap(fxge::FontEncoding encoding) {
+  // TODO(https://crbug.com/42271123): Implement charmap management in
+  // Skia/Fontations.
   FT_Error error = FT_Select_Charmap(GetRec(), ToFTEncoding(encoding));
   return !error;
 }
@@ -1405,12 +1560,15 @@ bool CFX_Face::SelectCharMap(fxge::FontEncoding encoding) {
 int CFX_Face::GetNumFaces() const {
   const int ft_result = pdfium::checked_cast<int>(GetRec()->num_faces);
 #if defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
-  // TODO(https://crbug.com/42271123): Compute equivalent result via Skia or
-  // Skrifa.
-#endif
+#if defined(PDF_ENABLE_FONTATIONS)
+  pdfium::span<const uint8_t> data = GetData();
+  uint32_t skrifa_result = skrifa::get_num_faces(rust::Slice(data));
+  CHECK_EQ(ft_result, static_cast<int>(skrifa_result));
+#endif  // defined(PDF_ENABLE_FONTATIONS)
+#endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
   return ft_result;
 }
-#endif
+#endif  // defined(PDF_ENABLE_XFA)
 
 // EmbedPDF(fonts): the fsType bits decide a registered font's embedding policy.
 uint16_t CFX_Face::GetFsTypeFlags() const {
@@ -1446,8 +1604,8 @@ bool CFX_Face::CanEmbed() {
 
 #if defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
 #if defined(PDF_ENABLE_FONTATIONS)
-  bool skrifa_result = false;
   if (skrifa_font_ && skrifa_font_->font->is_ok()) {
+    bool skrifa_result = false;
     uint16_t fs_type = 0;
     if (skrifa_font_->font->get_os2_fs_type(fs_type)) {
       skrifa_result =
@@ -1455,14 +1613,14 @@ bool CFX_Face::CanEmbed() {
            (fxcrt::to_underlying(skrifa::FsType::RestrictedLicenseEmbedding) |
             fxcrt::to_underlying(skrifa::FsType::BitmapEmbeddingOnly))) == 0;
     }
+    CHECK_EQ(ft_result, skrifa_result);
   }
-  CHECK_EQ(ft_result, skrifa_result);
 #endif  // defined(PDF_ENABLE_FONTATIONS)
 #endif  // defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
 
   return ft_result;
 }
-#endif
+#endif  // BUILDFLAG(IS_WIN)
 
 CFX_Face::CFX_Face(
     RetainPtr<Retainable> cache_entry,
@@ -1475,7 +1633,7 @@ CFX_Face::CFX_Face(
 #if defined(PDF_ENABLE_FONTATIONS)
       ,
       skrifa_font_(std::move(skrifa_font))
-#endif
+#endif  // defined(PDF_ENABLE_FONTATIONS)
 {
   DCHECK(rec_);
 }
@@ -1488,13 +1646,15 @@ SkTypeface* CFX_Face::GetOrCreateSkTypeface() {
   }
   return skia_typeface_.get();
 }
-#endif
+#endif  // defined(PDF_USE_SKIA)
 
 CFX_Face::~CFX_Face() = default;
 
 void CFX_Face::AdjustVariationParams(int glyph_index,
                                      int dest_width,
                                      int weight) {
+  // TODO(https://crbug.com/42271123): Implement variation parameters adjustment
+  // in Skia/Fontations.
   DCHECK_GE(dest_width, 0);
 
   FT_FaceRec* rec = GetRec();
@@ -1564,4 +1724,5 @@ uint32_t CFX_Face::GetFontStyle() {
   }
   return style;
 }
-#endif  // defined(PDF_ENABLE_XFA) || BUILDFLAG(IS_ANDROID)
+#endif  // defined(PDF_ENABLE_XFA) || BUILDFLAG(IS_ANDROID) ||
+        // BUILDFLAG(IS_LINUX)

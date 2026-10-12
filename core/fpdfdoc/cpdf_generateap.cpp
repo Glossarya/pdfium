@@ -308,10 +308,14 @@ bool ValidateOrCreateFontResources(CPDF_Document* doc,
   return true;
 }
 
+// `use_continuous_formatting`: When true, attempts to group consecutive words
+// on the same line into a single text rendering string to reduce the generated
+// AP stream size. This optimization is internally bypassed for individual RTL
+// words where precise positioning is required.
 ByteString GenerateEditAP(IPVT_FontMap* font_map,
                           CPVT_VariableText::Iterator* vt_iterator,
                           const CFX_PointF& offset,
-                          bool continuous,
+                          bool use_continuous_formatting,
                           uint16_t sub_word) {
   fxcrt::ostringstream edit_stream;
   fxcrt::ostringstream line_stream;
@@ -325,8 +329,9 @@ ByteString GenerateEditAP(IPVT_FontMap* font_map,
     CPVT_WordPlace place = vt_iterator->GetWordPlace();
     CPVT_Word word;
     bool has_word = vt_iterator->GetWord(word);
+    const bool is_rtl = has_word && word.is_rtl();
 
-    if (continuous) {
+    if (use_continuous_formatting && !is_rtl) {
       if (place.LineCmp(oldplace) != 0) {
         if (!words.IsEmpty()) {
           line_stream << GetWordRenderString(words.AsStringView());
@@ -339,9 +344,16 @@ ByteString GenerateEditAP(IPVT_FontMap* font_map,
           new_point = word.location() + offset;
         } else {
           CPVT_Line line;
-          vt_iterator->GetLine(line);
-          new_point = line.ptLine + offset;
+          if (vt_iterator->GetLine(line)) {
+            new_point = line.ptLine + offset;
+          }
         }
+        if (new_point != old_point) {
+          WritePoint(line_stream, new_point - old_point) << " Td\n";
+          old_point = new_point;
+        }
+      } else if (words.IsEmpty() && has_word) {
+        new_point = word.location() + offset;
         if (new_point != old_point) {
           WritePoint(line_stream, new_point - old_point) << " Td\n";
           old_point = new_point;
@@ -362,8 +374,14 @@ ByteString GenerateEditAP(IPVT_FontMap* font_map,
         words += GetPDFWordString(font_map, current_font_index, word.word(),
                                   sub_word);
       }
-      oldplace = place;
     } else {
+      if (!words.IsEmpty()) {
+        line_stream << GetWordRenderString(words.AsStringView());
+        edit_stream << line_stream.str();
+        line_stream.str("");
+        words.clear();
+      }
+
       if (has_word) {
         new_point = word.location() + offset;
         if (new_point != old_point) {
@@ -382,6 +400,7 @@ ByteString GenerateEditAP(IPVT_FontMap* font_map,
                 .AsStringView());
       }
     }
+    oldplace = place;
   }
   if (!words.IsEmpty()) {
     line_stream << GetWordRenderString(words.AsStringView());
@@ -779,7 +798,7 @@ ByteString GenerateTextFieldAP(const CPDF_Dictionary* annot_dict,
       CPDF_FormField::GetFieldAttrForDict(annot_dict, "MaxLen");
   const uint32_t max_len = max_len_field ? max_len_field->GetInteger() : 0;
   vt.SetPlateRect(body_rect);
-  vt.SetAlignment(align);
+  vt.SetAlignment(CPVT_VariableText::ToAlignment(align));
   SetVtFontSize(font_size, vt);
 
   const bool is_multi_line = flags & pdfium::form_flags::kTextMultiline;
@@ -1094,7 +1113,8 @@ bool GenerateFreeTextAP(CPDF_Document* doc, CPDF_Dictionary* annot_dict) {
   CPVT_VariableText vt(&provider);
 
   vt.SetPlateRect(body_rect);
-  vt.SetAlignment(annot_dict->GetIntegerFor("Q"));
+  vt.SetAlignment(
+      CPVT_VariableText::ToAlignment(annot_dict->GetIntegerFor("Q")));
   SetVtFontSize(default_appearance_info.value().font_size, vt);
 
   vt.Initialize();
@@ -1104,7 +1124,7 @@ bool GenerateFreeTextAP(CPDF_Document* doc, CPDF_Dictionary* annot_dict) {
   CFX_PointF offset(0.0f, (content_rect.Height() - body_rect.Height()) / 2.0f);
   const ByteString body =
       GenerateEditAP(vt.GetProvider()->GetFontMap(), vt.GetIterator(), offset,
-                     /*continuous=*/true, /*sub_word=*/0);
+                     /*use_continuous_formatting=*/true, /*sub_word=*/0);
   if (body.GetLength() > 0) {
     appearance_stream << "/Tx BMC\n" << "q\n";
     if (content_rect.Width() > body_rect.Width() ||

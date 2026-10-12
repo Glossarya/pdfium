@@ -20,7 +20,6 @@
 #include "core/fxcrt/fx_string.h"
 #include "core/fxcrt/notreached.h"
 #include "core/fxcrt/numerics/safe_conversions.h"
-#include "core/fxge/agg/cfx_agg_devicedriver.h"
 #include "core/fxge/cfx_defaultrenderdevice.h"
 #include "core/fxge/cfx_fillrenderoptions.h"
 #include "core/fxge/cfx_graphstatedata.h"
@@ -29,7 +28,10 @@
 #include "core/fxge/dib/cfx_dibitmap.h"
 #include "core/fxge/render_defines.h"
 #include "core/fxge/win32/cwin32_platform.h"
+
+#if defined(PDF_USE_AGG)
 #include "third_party/agg23/agg_clip_liang_barsky.h"
+#endif
 
 namespace {
 
@@ -343,8 +345,12 @@ unsigned LineClip(float w,
     return clip_liang_barsky(x1, y1, x2, y2, rect, x, y);
   }
 #endif
+#if defined(PDF_USE_AGG)
   pdfium::agg::rect_base<float> rect(0.0f, 0.0f, w, h);
   return pdfium::agg::clip_liang_barsky<float>(x1, y1, x2, y2, rect, x, y);
+#else
+  return 0u;
+#endif
 }
 
 }  // namespace

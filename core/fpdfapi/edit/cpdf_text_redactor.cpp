@@ -266,7 +266,7 @@ float AdvanceThousandths(const CPDF_TextObject* to,
     const uint16_t c = cid->CIDFromCharCode(code);
     w_th = static_cast<float>(cid->GetVertWidth(c));
   } else {
-    w_th = static_cast<float>(font->GetCharWidthF(code));
+    w_th = static_cast<float>(font->GetCharWidth(code));
   }
 
   const float fs = to->GetFontSize();

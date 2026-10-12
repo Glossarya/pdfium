@@ -323,7 +323,7 @@ class ScopedFaceTransform {
  public:
   FX_STACK_ALLOCATED();
 
-  ScopedFaceTransform(FXFT_FaceRec* rec, FT_Matrix* matrix) : rec_(rec) {
+  ScopedFaceTransform(FT_FaceRec* rec, FT_Matrix* matrix) : rec_(rec) {
     FT_Set_Transform(rec_, matrix, nullptr);
   }
 
@@ -333,7 +333,7 @@ class ScopedFaceTransform {
   }
 
  private:
-  UnownedPtr<FXFT_FaceRec> const rec_;
+  UnownedPtr<FT_FaceRec> const rec_;
 };
 
 // EmbedPDF(substitute-font-bounds): keeps the design of a variation face (a
@@ -346,7 +346,7 @@ class ScopedFaceVariation {
   FX_STACK_ALLOCATED();
 
   // Keeps nothing when `active` is false: the face isn't adjusted.
-  ScopedFaceVariation(FXFT_FaceRec* rec, bool active)
+  ScopedFaceVariation(FT_FaceRec* rec, bool active)
       : rec_(active ? rec : nullptr) {
     if (rec_ &&
         FT_Get_MM_Blend_Coordinates(rec_, static_cast<FT_UInt>(design_.size()),
@@ -363,7 +363,7 @@ class ScopedFaceVariation {
   }
 
  private:
-  UnownedPtr<FXFT_FaceRec> rec_;
+  UnownedPtr<FT_FaceRec> rec_;
   // More than any font has axes; FreeType ignores the excess.
   std::array<FT_Fixed, 16> design_ = {};
 };
@@ -375,19 +375,19 @@ RetainPtr<CFX_Face> CFX_Face::New(CFX_FontMgr* font_mgr,
                                   RetainPtr<Retainable> desc,
                                   pdfium::span<const uint8_t> data,
                                   uint32_t face_index) {
-  FXFT_FaceRec* face_rec = nullptr;
+  FT_FaceRec* face_rec = nullptr;
   if (FT_New_Memory_Face(font_mgr->GetFTLibrary(), data.data(),
                          pdfium::checked_cast<FT_Long>(data.size()),
                          pdfium::checked_cast<FT_Long>(face_index),
                          &face_rec) != 0) {
     return nullptr;
   }
+
   // Private ctor.
   auto face = pdfium::WrapRetain(new CFX_Face(face_rec, std::move(desc)));
-  if (!face->SetPixelSize(64, 64)) {
+  if (FT_Set_Pixel_Sizes(face->GetRec(), 64, 64) != 0) {
     return nullptr;
   }
-
   return face;
 }
 
@@ -404,7 +404,6 @@ RetainPtr<CFX_Face> CFX_Face::NewFromSpanStream(
   if (!face) {
     return nullptr;
   }
-  face->SetPixelSize(0, 64);
   face->owned_font_stream_ = std::move(font_stream);
   return face;
 }
@@ -518,8 +517,7 @@ std::optional<std::array<uint8_t, 2>> CFX_Face::GetOs2Panose() {
   if (!os2) {
     return std::nullopt;
   }
-  // SAFETY: required from library.
-  return UNSAFE_BUFFERS(std::array<uint8_t, 2>{os2->panose[0], os2->panose[1]});
+  return std::array<uint8_t, 2>{os2->panose[0], os2->panose[1]};
 }
 #endif  // defined(PDF_ENABLE_XFA) || BUILDFLAG(IS_ANDROID)
 
@@ -575,7 +573,7 @@ std::unique_ptr<CFX_GlyphBitmap> CFX_Face::RenderGlyph(
   if (!IsTtOt()) {
     load_flags |= FT_LOAD_NO_HINTING;
   }
-  FXFT_FaceRec* rec = GetRec();
+  FT_FaceRec* rec = GetRec();
   int error = FT_Load_Glyph(rec, glyph_index, load_flags);
   if (error) {
     // if an error is returned, try to reload glyphs without hinting.
@@ -620,42 +618,45 @@ std::unique_ptr<CFX_GlyphBitmap> CFX_Face::RenderGlyph(
     return nullptr;
   }
 
-  const FT_Bitmap& bitmap = glyph->bitmap;
-  if (bitmap.width > kMaxGlyphDimension || bitmap.rows > kMaxGlyphDimension) {
+  const FT_Bitmap& ft_bitmap = glyph->bitmap;
+  if (ft_bitmap.width > kMaxGlyphDimension ||
+      ft_bitmap.rows > kMaxGlyphDimension) {
     return nullptr;
   }
-  int dib_width = bitmap.width;
-  auto pGlyphBitmap =
-      std::make_unique<CFX_GlyphBitmap>(glyph->bitmap_left, glyph->bitmap_top);
+  int dib_width = ft_bitmap.width;
   const FXDIB_Format format = anti_alias == FontAntiAliasingMode::kMono
                                   ? FXDIB_Format::k1bppMask
                                   : FXDIB_Format::k8bppMask;
-  if (!pGlyphBitmap->GetBitmap()->Create(dib_width, bitmap.rows, format)) {
+  RetainPtr<CFX_DIBitmap> new_bitmap = pdfium::MakeRetain<CFX_DIBitmap>();
+  if (!new_bitmap->Create(dib_width, ft_bitmap.rows, format)) {
     return nullptr;
   }
+  auto pGlyphBitmap = std::make_unique<CFX_GlyphBitmap>(
+      glyph->bitmap_left, glyph->bitmap_top, new_bitmap);
 
-  int dest_pitch = pGlyphBitmap->GetBitmap()->GetPitch();
-  uint8_t* pDestBuf = pGlyphBitmap->GetBitmap()->GetWritableBuffer().data();
-  const uint8_t* pSrcBuf = bitmap.buffer;
+  const int dest_pitch = new_bitmap->GetPitch();
+  uint8_t* pDestBuf = new_bitmap->GetWritableBuffer().data();
+  const uint8_t* pSrcBuf = ft_bitmap.buffer;
   UNSAFE_TODO({
     if (anti_alias != FontAntiAliasingMode::kMono &&
-        bitmap.pixel_mode == FT_PIXEL_MODE_MONO) {
+        ft_bitmap.pixel_mode == FT_PIXEL_MODE_MONO) {
       unsigned int bytes = anti_alias == FontAntiAliasingMode::kLcd ? 3 : 1;
-      for (unsigned int i = 0; i < bitmap.rows; i++) {
-        for (unsigned int n = 0; n < bitmap.width; n++) {
+      for (unsigned int i = 0; i < ft_bitmap.rows; i++) {
+        for (unsigned int n = 0; n < ft_bitmap.width; n++) {
           uint8_t data =
-              (pSrcBuf[i * bitmap.pitch + n / 8] & (0x80 >> (n % 8))) ? 255 : 0;
+              (pSrcBuf[i * ft_bitmap.pitch + n / 8] & (0x80 >> (n % 8))) ? 255
+                                                                         : 0;
           for (unsigned int b = 0; b < bytes; b++) {
             pDestBuf[i * dest_pitch + n * bytes + b] = data;
           }
         }
       }
     } else {
-      FXSYS_memset(pDestBuf, 0, dest_pitch * bitmap.rows);
-      int rowbytes = std::min(abs(bitmap.pitch), dest_pitch);
-      for (unsigned int row = 0; row < bitmap.rows; row++) {
-        FXSYS_memcpy(pDestBuf + row * dest_pitch, pSrcBuf + row * bitmap.pitch,
-                     rowbytes);
+      FXSYS_memset(pDestBuf, 0, dest_pitch * ft_bitmap.rows);
+      int rowbytes = std::min(abs(ft_bitmap.pitch), dest_pitch);
+      for (unsigned int row = 0; row < ft_bitmap.rows; row++) {
+        FXSYS_memcpy(pDestBuf + row * dest_pitch,
+                     pSrcBuf + row * ft_bitmap.pitch, rowbytes);
       }
     }
   });
@@ -667,7 +668,7 @@ std::unique_ptr<CFX_Path> CFX_Face::LoadGlyphPath(
     int dest_width,
     bool is_vertical,
     const CFX_SubstFont* subst_font) {
-  FXFT_FaceRec* rec = GetRec();
+  FT_FaceRec* rec = GetRec();
   FT_Set_Pixel_Sizes(rec, 0, 64);
   FT_Matrix ft_matrix = {65536, 0, 0, 65536};
   if (subst_font) {
@@ -744,7 +745,7 @@ int CFX_Face::GetGlyphWidth(uint32_t glyph_index,
                             const CFX_SubstFont* subst_font) {
   // EmbedPDF(substitute-font-bounds): the design set for this glyph is undone
   // when the call returns.
-  FXFT_FaceRec* rec = GetRec();
+  FT_FaceRec* rec = GetRec();
   const bool adjust_variation =
       subst_font && subst_font->IsBuiltInGenericFont();
   ScopedFaceVariation scoped_variation(rec, adjust_variation);
@@ -845,9 +846,6 @@ std::optional<FX_RECT> CFX_Face::GetFontGlyphBBox(uint32_t glyph_index) {
     result.top = std::min(result.top, static_cast<int>(GetAscender()));
     result.bottom = std::max(result.bottom, static_cast<int>(GetDescender()));
     FT_Done_Glyph(glyph);
-    if (!SetPixelSize(0, 64)) {
-      return std::nullopt;
-    }
     return result;
   }
   if (LoadGlyph(glyph_index, /*scale=*/false) != 0) {
@@ -863,7 +861,7 @@ std::optional<FX_RECT> CFX_Face::GetFontGlyphBBox(uint32_t glyph_index) {
 
 FX_RECT CFX_Face::GetCharBBox(uint32_t code, int glyph_index) {
   FX_RECT rect;
-  FXFT_FaceRec* rec = GetRec();
+  FT_FaceRec* rec = GetRec();
   if (IsTricky()) {
     int err =
         FT_Load_Glyph(rec, glyph_index, FT_LOAD_IGNORE_GLOBAL_ADVANCE_WIDTH);
@@ -994,11 +992,6 @@ bool CFX_Face::SelectCharMap(fxge::FontEncoding encoding) {
   return !error;
 }
 
-bool CFX_Face::SetPixelSize(uint32_t width, uint32_t height) {
-  FT_Error error = FT_Set_Pixel_Sizes(GetRec(), width, height);
-  return !error;
-}
-
 #if defined(PDF_ENABLE_XFA)
 int CFX_Face::GetNumFaces() const {
   return pdfium::checked_cast<int>(GetRec()->num_faces);
@@ -1007,14 +1000,14 @@ int CFX_Face::GetNumFaces() const {
 
 // EmbedPDF(fonts): the fsType bits decide a registered font's embedding policy.
 uint16_t CFX_Face::GetFsTypeFlags() const {
-  return FT_Get_FSType_Flags(const_cast<FXFT_FaceRec*>(GetRec()));
+  return FT_Get_FSType_Flags(const_cast<FT_FaceRec*>(GetRec()));
 }
 
 // EmbedPDF(fonts): CID-keyed CFF glyph identities, to write and read such
 // fonts.
 bool CFX_Face::IsCidKeyed() const {
   FT_Bool is_cid = 0;
-  if (FT_Get_CID_Is_Internally_CID_Keyed(const_cast<FXFT_FaceRec*>(GetRec()),
+  if (FT_Get_CID_Is_Internally_CID_Keyed(const_cast<FT_FaceRec*>(GetRec()),
                                          &is_cid) != 0) {
     return false;  // not a CFF-based face
   }
@@ -1024,7 +1017,7 @@ bool CFX_Face::IsCidKeyed() const {
 std::optional<uint32_t> CFX_Face::GetCidFromGlyphIndex(
     uint32_t glyph_index) const {
   FT_UInt cid = 0;
-  if (FT_Get_CID_From_Glyph_Index(const_cast<FXFT_FaceRec*>(GetRec()),
+  if (FT_Get_CID_From_Glyph_Index(const_cast<FT_FaceRec*>(GetRec()),
                                   glyph_index, &cid) != 0) {
     return std::nullopt;
   }
@@ -1039,7 +1032,7 @@ bool CFX_Face::CanEmbed() {
 }
 #endif
 
-CFX_Face::CFX_Face(FXFT_FaceRec* rec, RetainPtr<Retainable> pDesc)
+CFX_Face::CFX_Face(FT_FaceRec* rec, RetainPtr<Retainable> pDesc)
     : rec_(rec), desc_(std::move(pDesc)) {
   DCHECK(rec_);
 }
@@ -1051,7 +1044,7 @@ void CFX_Face::AdjustVariationParams(int glyph_index,
                                      int weight) {
   DCHECK_GE(dest_width, 0);
 
-  FXFT_FaceRec* rec = GetRec();
+  FT_FaceRec* rec = GetRec();
   ScopedFXFTMMVar variation_desc(rec);
   if (!variation_desc) {
     return;

@@ -97,21 +97,17 @@ TEST_F(EPDFTextEmbedderTest, GetCharGeometry) {
   EXPECT_FLOAT_EQ(geometry.tight_box.top, tight_quad_bounds.top);
 }
 
-TEST_F(EPDFTextEmbedderTest, ZeroFontSizeCharGeometry) {
+// A text object with no width is left out of the text page (upstream
+// 49042621c, Feb 2026), so a zero font size gives no characters to measure.
+// An empty character box is covered by FPDFTextEmbedderTest.Bug399689604.
+TEST_F(EPDFTextEmbedderTest, ZeroFontSizeTextHasNoChars) {
   ASSERT_TRUE(OpenDocument("font_size_zero.pdf"));
   ScopedPage page = LoadScopedPage(0);
   ASSERT_TRUE(page);
 
   ScopedFPDFTextPage text_page(FPDFText_LoadPage(page.get()));
   ASSERT_TRUE(text_page);
-  ASSERT_EQ(1, FPDFText_CountChars(text_page.get()));
-
-  EPDF_CHAR_GEOMETRY geometry = {};
-  ASSERT_TRUE(EPDFText_GetCharGeometry(text_page.get(), 0, &geometry));
-  EXPECT_TRUE(geometry.flags & EPDF_CHARGEO_EMPTY);
-  EXPECT_FALSE(geometry.flags & EPDF_CHARGEO_HAS_TIGHT_BOX);
-  EXPECT_FALSE(geometry.flags & EPDF_CHARGEO_HAS_LOOSE_QUAD);
-  EXPECT_FALSE(geometry.flags & EPDF_CHARGEO_HAS_TIGHT_QUAD);
+  EXPECT_EQ(0, FPDFText_CountChars(text_page.get()));
 }
 
 TEST_F(EPDFTextEmbedderTest, GetRotatedCharGeometry) {

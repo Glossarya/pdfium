@@ -73,7 +73,7 @@ float CalculateBaseSpace(const CPDF_TextObject* pTextObj,
   float base_space = spacing;
   for (size_t i = 0; i < nItems; ++i) {
     CPDF_TextObject::Item item = pTextObj->GetItemInfo(i);
-    if (item.char_code_ == 0xffffffff) {
+    if (item.char_code_ == CPDF_Font::kInvalidCharCode) {
       float kerning = -fontsize_h * item.origin_.x / 1000;
       base_space = std::min(base_space, kerning + spacing);
       bAllChar = false;
@@ -169,7 +169,7 @@ bool IsRightToLeft(const CPDF_TextObject& text_obj) {
   str.Reserve(nItems);
   for (size_t i = 0; i < nItems; ++i) {
     CPDF_TextObject::Item item = text_obj.GetItemInfo(i);
-    if (item.char_code_ == 0xffffffff) {
+    if (item.char_code_ == CPDF_Font::kInvalidCharCode) {
       continue;
     }
     WideString unicode = font->UnicodeFromCharCode(item.char_code_);
@@ -190,7 +190,7 @@ int GetCharWidth(uint32_t charCode, CPDF_Font* font) {
     return 0;
   }
 
-  int w = font->GetCharWidthF(charCode);
+  int w = font->GetCharWidth(charCode);
   if (w > 0) {
     return w;
   }
@@ -216,7 +216,7 @@ float CalculateSpaceThreshold(CPDF_Font* font,
   const uint32_t space_charcode = font->CharCodeFromUnicode(' ');
   float threshold = 0;
   if (space_charcode != CPDF_Font::kInvalidCharCode) {
-    threshold = fontsize_h * font->GetCharWidthF(space_charcode) / 1000;
+    threshold = fontsize_h * font->GetCharWidth(space_charcode) / 1000;
   }
   if (threshold > fontsize_h / 3) {
     threshold = 0;
@@ -948,28 +948,19 @@ void CPDF_TextPage::CloseTempLine() {
   }
 
   WideString str = temp_text_buf_.MakeString();
-  if (str.GetLength() > 1) {
-    bool bPrevSpace = false;
-    for (size_t i = 0; i < str.GetLength(); ++i) {
-      if (str[i] != ' ') {
-        bPrevSpace = false;
-        continue;
-      }
-      if (bPrevSpace) {
-        temp_text_buf_.Delete(i, 1);
-        temp_char_list_.erase(temp_char_list_.begin() + i);
-        str.Delete(i);
-        --i;
-      }
-      bPrevSpace = true;
+  bool bPrevSpace = false;
+  for (size_t i = 0; i < str.GetLength(); ++i) {
+    if (str[i] != ' ') {
+      bPrevSpace = false;
+      continue;
     }
-
-    const size_t last_idx = str.GetLength() - 1;
-    if (bPrevSpace && last_idx > 0 && str[last_idx] == ' ') {
-      temp_text_buf_.Delete(last_idx, 1);
-      temp_char_list_.erase(temp_char_list_.begin() + last_idx);
-      str.Delete(last_idx);
+    if (bPrevSpace) {
+      temp_text_buf_.Delete(i, 1);
+      temp_char_list_.erase(temp_char_list_.begin() + i);
+      str.Delete(i);
+      --i;
     }
+    bPrevSpace = true;
   }
   CFX_BidiString bidi(str);
   if (rtl_) {
@@ -1002,6 +993,10 @@ void CPDF_TextPage::ProcessTextObject(
     const CFX_Matrix& form_matrix,
     const CPDF_PageObjectHolder* pObjList,
     CPDF_PageObjectHolder::const_iterator ObjPos) {
+  if (fabs(pTextObj->GetRect().Width()) < kSizeEpsilon) {
+    return;
+  }
+
   size_t count = text_objects_.size();
   TransformedTextObject new_obj;
   new_obj.text_obj_ = pTextObj;
@@ -1204,6 +1199,9 @@ void CPDF_TextPage::SwapTempTextBuf(size_t iCharListStartAppend,
 
 void CPDF_TextPage::ProcessTextObject(const TransformedTextObject& obj) {
   CPDF_TextObject* const pTextObj = obj.text_obj_;
+  if (fabs(pTextObj->GetRect().Width()) < kSizeEpsilon) {
+    return;
+  }
 
   const CFX_Matrix form_matrix = obj.form_matrix_;
   const MarkedContentState ePreMKC = PreMarkedContent(pTextObj);
@@ -1501,7 +1499,7 @@ void CPDF_TextPage::ProcessTextObjectItems(CPDF_TextObject* text_object,
   const size_t nItems = text_object->CountItems();
   for (size_t i = 0; i < nItems; ++i) {
     CPDF_TextObject::Item item = text_object->GetItemInfo(i);
-    if (item.char_code_ == 0xffffffff) {
+    if (item.char_code_ == CPDF_Font::kInvalidCharCode) {
       WideStringView str = temp_text_buf_.AsStringView();
       if (str.IsEmpty()) {
         str = text_buf_.AsStringView();

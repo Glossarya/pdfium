@@ -16,7 +16,7 @@ namespace {
 // EmbedPDF(thread-confined-globals): each worker thread owns its own
 // CFX_GEModule (FreeType FT_Library + font/glyph caches), created and
 // destroyed on that thread.
-EPDF_TLS CFX_GEModule* g_pGEModule = nullptr;
+EPDF_TLS CFX_GEModule* g_GEModule = nullptr;
 
 }  // namespace
 
@@ -29,22 +29,23 @@ CFX_GEModule::~CFX_GEModule() = default;
 
 // static
 void CFX_GEModule::Create(const char** pUserFontPaths) {
-  DCHECK(!g_pGEModule);
-  g_pGEModule = new CFX_GEModule(pUserFontPaths);
-  g_pGEModule->platform_->Init();
-  g_pGEModule->GetFontMgr()->GetBuiltinMapper()->SetSystemFontInfo(
-      g_pGEModule->platform_->CreateDefaultSystemFontInfo());
+  DCHECK(!g_GEModule);
+  g_GEModule = new CFX_GEModule(pUserFontPaths);
+  g_GEModule->platform_->Init();
+  g_GEModule->font_mgr_->GetBuiltinMapper()->SetSystemFontInfo(
+      g_GEModule->platform_->CreateDefaultSystemFontInfo());
 }
 
 // static
 void CFX_GEModule::Destroy() {
-  DCHECK(g_pGEModule);
-  delete g_pGEModule;
-  g_pGEModule = nullptr;
+  DCHECK(g_GEModule);
+  g_GEModule->platform_->Terminate();
+  delete g_GEModule;
+  g_GEModule = nullptr;
 }
 
 // static
 CFX_GEModule* CFX_GEModule::Get() {
-  DCHECK(g_pGEModule);
-  return g_pGEModule;
+  DCHECK(g_GEModule);
+  return g_GEModule;
 }

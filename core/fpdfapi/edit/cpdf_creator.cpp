@@ -12,10 +12,12 @@
 #include <algorithm>
 #include <array>
 #include <deque>
+#include <map>
 #include <set>
 #include <utility>
 #include <vector>
 
+#include "core/fpdfapi/edit/cpdf_fontsubsetter.h"
 #include "core/fpdfapi/edit/cpdf_save_object_reader.h"
 #include "core/fpdfapi/edit/cpdf_save_trailer.h"
 #include "core/fpdfapi/parser/cpdf_array.h"
@@ -127,13 +129,10 @@ bool CFX_FileBufferArchive::WriteBlock(pdfium::span<const uint8_t> buffer) {
 }
 
 std::array<uint32_t, 4> GenerateFileID(uint32_t dwSeed1, uint32_t dwSeed2) {
-  void* context1 = FX_Random_MT_Start(dwSeed1);
-  void* context2 = FX_Random_MT_Start(dwSeed2);
-  std::array<uint32_t, 4> buffer = {
-      FX_Random_MT_Generate(context1), FX_Random_MT_Generate(context1),
-      FX_Random_MT_Generate(context2), FX_Random_MT_Generate(context2)};
-  FX_Random_MT_Close(context1);
-  FX_Random_MT_Close(context2);
+  FX_Random random1(dwSeed1);
+  FX_Random random2(dwSeed2);
+  std::array<uint32_t, 4> buffer = {random1.Generate(), random1.Generate(),
+                                    random2.Generate(), random2.Generate()};
   return buffer;
 }
 
@@ -313,16 +312,28 @@ bool CPDF_Creator::WriteFullDocument() {
   CPDF_SaveObjectReader reader(document_);
   SaveObjectWorklist pending;
 
+  // Upstream subsets new fonts in WriteNewObjs(), which a full save doesn't
+  // run.
+  std::map<uint32_t, RetainPtr<const CPDF_Object>> font_obj_overrides;
+  if (subset_new_fonts_) {
+    CPDF_FontSubsetter subsetter(document_);
+    font_obj_overrides = subsetter.GenerateObjectOverrides(NewObjectNumbers());
+  }
+
   for (uint32_t number : trailer_->roots()) {
     pending.Add(number);
   }
 
   while (!pending.empty()) {
     const uint32_t object_number = pending.TakeNext();
-    auto object = reader.Read(object_number);
+    RetainPtr<const CPDF_Object> object = reader.Read(object_number);
     if (!object) {
       // Match the existing writer's treatment of unresolved references.
       continue;
+    }
+    if (auto it = font_obj_overrides.find(object_number);
+        it != font_obj_overrides.end()) {
+      object = it->second;
     }
 
     pending.AddReferences(object);
@@ -339,20 +350,44 @@ bool CPDF_Creator::WriteFullDocument() {
   return true;
 }
 
+std::vector<uint32_t> CPDF_Creator::NewObjectNumbers() const {
+  std::vector<uint32_t> numbers;
+  for (const auto& [object_number, object] : *document_) {
+    if (object->GetObjNum() == CPDF_Object::kInvalidObjNum) {
+      continue;
+    }
+    if (parser_ && parser_->IsValidObjectNumber(object_number) &&
+        !parser_->IsObjectFree(object_number)) {
+      continue;
+    }
+    numbers.push_back(object_number);
+  }
+  return numbers;
+}
+
 // EmbedPDF(view-scope, layer-save): objects are read as the layer sees them,
 // and the cross-reference lists only the ones written.
 bool CPDF_Creator::WriteNewObjs() {
   CPDF_DocumentViewScope view(document_);
+  std::map<uint32_t, RetainPtr<const CPDF_Object>> font_obj_overrides;
+  if (subset_new_fonts_) {
+    CPDF_FontSubsetter subsetter(document_);
+    font_obj_overrides = subsetter.GenerateObjectOverrides(new_obj_num_array_);
+  }
   std::vector<uint32_t> written_new_obj_nums;
   for (size_t i = cur_obj_num_; i < new_obj_num_array_.size(); ++i) {
     uint32_t objnum = new_obj_num_array_[i];
-    RetainPtr<const CPDF_Object> pObj = document_->GetIndirectObject(objnum);
-    if (!pObj) {
+    RetainPtr<const CPDF_Object> obj = document_->GetIndirectObject(objnum);
+    if (!obj) {
       continue;
     }
 
     object_offsets_[objnum] = archive_->CurrentOffset();
-    if (!WriteIndirectObj(pObj->GetObjNum(), pObj.Get())) {
+
+    auto it = font_obj_overrides.find(objnum);
+    const CPDF_Object* obj_to_write =
+        it != font_obj_overrides.end() ? it->second.Get() : obj.Get();
+    if (!WriteIndirectObj(objnum, obj_to_write)) {
       return false;
     }
     written_new_obj_nums.push_back(objnum);
@@ -872,6 +907,7 @@ bool CPDF_Creator::Create(Mask<CreateFlags> flags, int32_t file_version) {
     return false;
   }
   is_original_ = !(flags & CreateFlags::kNoOriginal);
+  subset_new_fonts_ = !!(flags & CreateFlags::kSubsetNewFonts);
   if (is_incremental_append_only_ && parser_) {
     static_cast<CFX_FileBufferArchive*>(archive_.get())
         ->SetNotionalStartOffset(document_->GetLayerAppendBaseOffset());

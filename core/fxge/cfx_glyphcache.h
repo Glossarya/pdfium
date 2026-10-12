@@ -51,8 +51,9 @@ class CFX_GlyphCache final : public Retainable, public Observable {
                     int weight);
 
 #if defined(PDF_USE_SKIA)
-  SkTypeface* GetDeviceCache(const CFX_Font* font);
-  static void InitializeGlobals();
+  enum class FontBackend { kFreeType, kFontations };
+  SkTypeface* GetSkTypeface(const CFX_Font* font);
+  static void InitializeGlobals(FontBackend backend);
   static void DestroyGlobals();
 #endif
 

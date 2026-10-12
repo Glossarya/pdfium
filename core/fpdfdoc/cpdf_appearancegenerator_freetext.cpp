@@ -623,7 +623,7 @@ void EmitRichTextBody(fxcrt::ostringstream& s,
       auto nominal_advance = [&](const ShapedGlyph& glyph, uint16_t code) {
         const int width =
             simple
-                ? (code ? face.pdf_font->GetCharWidthF(code) : 0)
+                ? (code ? face.pdf_font->GetCharWidth(code) : 0)
                 : (face.program ? face.program->GetGlyphWidth(glyph.gid) : 0);
         return (width * size / 1000.0f + run.style.letter_spacing) * scale;
       };

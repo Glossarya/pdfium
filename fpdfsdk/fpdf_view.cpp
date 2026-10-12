@@ -253,7 +253,14 @@ FPDF_InitLibraryWithConfig(const FPDF_LIBRARY_CONFIG* config) {
   pdfium::InitializePageModule();
 
 #if defined(PDF_USE_SKIA)
-  CFX_GlyphCache::InitializeGlobals();
+  CFX_GlyphCache::FontBackend backend = CFX_GlyphCache::FontBackend::kFreeType;
+  if (config && config->version >= 5 &&
+      config->m_FontLibraryType != FPDF_FONTBACKENDTYPE_FREETYPE) {
+    CHECK_EQ(config->m_FontLibraryType, FPDF_FONTBACKENDTYPE_FONTATIONS);
+    CHECK_EQ(config->m_RendererType, FPDF_RENDERERTYPE_SKIA);
+    backend = CFX_GlyphCache::FontBackend::kFontations;
+  }
+  CFX_GlyphCache::InitializeGlobals(backend);
 #endif
 
 #ifdef PDF_ENABLE_XFA
@@ -264,11 +271,12 @@ FPDF_InitLibraryWithConfig(const FPDF_LIBRARY_CONFIG* config) {
     void* platform = config->version >= 3 ? config->m_pPlatform : nullptr;
     IJS_Runtime::Initialize(config->m_v8EmbedderSlot, config->m_pIsolate,
                             platform);
-
-    if (config->version >= 4) {
-      SetRendererType(config->m_RendererType);
-    }
   }
+
+  if (config && config->version >= 4) {
+    SetRendererType(config->m_RendererType);
+  }
+
   g_bLibraryInitialized = true;
 }
 
@@ -1093,7 +1101,7 @@ void RenderBitmap(CFX_RenderDevice* device,
 
   dest->Clear(0xffffffff);
   dest->CompositeBitmap(0, 0, size_x_bm, size_y_bm, std::move(source), 0, 0,
-                        BlendMode::kNormal, nullptr, false);
+                        BlendMode::kNormal);
 
   if (device->GetDeviceType() == DeviceType::kPrinter) {
     device->StretchDIBits(std::move(dest), mask_area.left, mask_area.top,
@@ -1179,7 +1187,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDF_RenderPage(HDC dc,
                               pBitmap->GetPitch() * size_y),
                           -1);
         dest_bitmap->CompositeBitmap(0, 0, size_x, size_y, pBitmap, 0, 0,
-                                     BlendMode::kNormal, nullptr, false);
+                                     BlendMode::kNormal);
         win_dc.StretchDIBits(std::move(dest_bitmap), 0, 0, size_x, size_y);
         bitsStretched = true;
       }

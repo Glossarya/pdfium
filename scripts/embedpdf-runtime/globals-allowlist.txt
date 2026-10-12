@@ -4,8 +4,7 @@
 # reason (docs/embedpdf/fork-ledger.md, rule thread-confined-globals).
 
 # --- Ours and PDFium's: must stay thread-local (EPDF_TLS or thread_local).
-thread-local | *::g_pGEModule | The graphics module: FreeType and the font caches.
-thread-local | *::g_GEModule | Upstream's name for g_pGEModule since Feb 17 2026.
+thread-local | *::g_GEModule | The graphics module: FreeType and the font caches.
 thread-local | *::g_FontGlobals | Font globals: CMaps and standard fonts.
 thread-local | *::g_registry | The registered-font registry.
 thread-local | *::g_stock_colorspaces | Stock colour spaces.
@@ -14,8 +13,7 @@ thread-local | *::g_CurrentRecursionDepth | Render recursion depth.
 thread-local | CPDF_SyntaxParser::s_CurrentRecursionDepth | Parser recursion depth: the guard against deeply nested PDFs.
 thread-local | *::g_bLibraryInitialized | Whether this thread initialized PDFium.
 thread-local | *::g_last_error | FPDF_GetLastError.
-thread-local | *::g_bHaveGlobalSeed | Random seed state.
-thread-local | *::g_nGlobalSeed | Random seed state.
+thread-local | *GetNextGlobalSeed()::global_seed | Random seed state: each thread its own (upstream made it one function-local counter in Feb 2026).
 thread-local | *::g_pwl_timer_map | Form-fill timers.
 thread-local | *DefaultLocaltimeFunction*::result | localtime's result buffer.
 thread-local | *::g_decoded_image_store | Decoded images kept across page loads.

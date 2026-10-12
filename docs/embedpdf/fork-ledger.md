@@ -118,7 +118,7 @@ edits, and the copy happens outside any transaction. On a frozen base it writes 
 (`CreateForReading`), `cpdf_linklist.cpp` and `cpdf_annotlist.cpp`; in-memory appearances in
 `cpdf_annot.cpp`.
 **Guarded by.** `cpdf_read_only_graph_guard_unittest.cpp`,
-`FPDFAnnotEmbedderTest.DrawingARedactionMarkWithoutAppearanceWritesNone`; layer mode's list of
+`EPDFAnnotEmbedderTest.DrawingARedactionMarkWithoutAppearanceWritesNone`; layer mode's list of
 tests that write (`testing/embedpdf_layer_mode_writers.txt`): a test that only reads must leave
 nothing in a layer.
 **When upstream touches this.** A new read path that calls `GetMutable*` or the appearance

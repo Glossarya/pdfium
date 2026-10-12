@@ -44,4 +44,4 @@ FPDFViewEmbedderTest.LoadDocumentWithEmptyXRefConsistently FPDF_DocumentHasValid
 
 # --- Fork bugs found by layer mode.
 EPDFRedactEmbedderTest.FullyRemovedSpanLeavesNoPropertyOrStructureResidue BUG (rule view-scope): EPDFPage_ApplyRedactions reads references without a CPDF_DocumentViewScope (ApplyAllRedactionsCore), so it can read the base's old version of an object the layer changed.
-FPDFAnnotEmbedderTest.ApplyRedactionFallsBackToRectForNonFiniteQuad BUG (rule view-scope): EPDFAnnot_ApplyRedaction reads references without a CPDF_DocumentViewScope (ApplySingleRedactionCore).
+EPDFAnnotEmbedderTest.ApplyRedactionFallsBackToRectForNonFiniteQuad BUG (rule view-scope): EPDFAnnot_ApplyRedaction reads references without a CPDF_DocumentViewScope (ApplySingleRedactionCore).

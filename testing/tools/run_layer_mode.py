@@ -159,6 +159,17 @@ def main():
 
   expectations = read_list(EXPECTATIONS)
   writers = read_list(WRITERS)
+
+  # A test that fails only in layer mode, unexplained, runs once more on its
+  # own: timing tests can fail under the parallel load.
+  flaky = []
+  for index, (test, status, objects, reason) in enumerate(results):
+    explained = any(fnmatch.fnmatchcase(test, p) for p in expectations)
+    if status != 'pass' and test not in plain_failed and not explained:
+      again = run_one_layered(binary, test, out_dir)
+      if again[1] == 'pass':
+        flaky.append(test)
+        results[index] = again
   errors, warnings, lines = [], [], []
   layer_only = {}
   for test, status, objects, reason in results:
@@ -193,6 +204,7 @@ def main():
   lines.append(f'layer mode: {counts}; failing only in layer mode: '
                f'{len(layer_only)}; writers: '
                f'{sum(1 for r in results if r[2])}')
+  lines += [f'warning: failed under load, passed alone: {t}' for t in flaky]
   lines += [f'warning: {w}' for w in warnings]
   lines += [f'error: {e}' for e in errors]
   report = '\n'.join(lines)

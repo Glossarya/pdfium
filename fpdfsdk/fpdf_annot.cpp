@@ -1256,6 +1256,9 @@ FPDFAnnot_RemoveInkList(FPDF_ANNOTATION annot) {
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 FPDFAnnot_AppendObject(FPDF_ANNOTATION annot, FPDF_PAGEOBJECT obj) {
+  // EmbedPDF(view-scope): resolve through the document's view scope; a
+  // layer's annotation reaches fonts and resources its base still holds.
+  ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* pAnnot = CPDFAnnotContextFromFPDFAnnotation(annot);
   CPDF_PageObject* pObj = CPDFPageObjectFromFPDFPageObject(obj);
   if (!pAnnot || !pObj) {
@@ -2439,6 +2442,9 @@ FPDFAnnot_SetFontColor(FPDF_FORMHANDLE handle,
                        unsigned int R,
                        unsigned int G,
                        unsigned int B) {
+  // EmbedPDF(view-scope): resolve through the document's view scope; a
+  // layer's annotation reaches fonts and resources its base still holds.
+  ScopedFPDFAnnotationView annot_view(annot);
   RetainPtr<CPDF_Dictionary> annot_dict =
       GetMutableAnnotDictFromFPDFAnnotation(annot);
   if (!annot_dict || R > 255 || G > 255 || B > 255) {
@@ -2477,6 +2483,9 @@ FPDFAnnot_GetFontColor(FPDF_FORMHANDLE hHandle,
                        unsigned int* R,
                        unsigned int* G,
                        unsigned int* B) {
+  // EmbedPDF(view-scope): resolve through the document's view scope; a
+  // layer's annotation reaches fonts and resources its base still holds.
+  ScopedFPDFAnnotationView annot_view(annot);
   if (!R || !G || !B) {
     return false;
   }
@@ -3274,6 +3283,9 @@ EPDFAnnot_SetBorderStyle(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_GenerateAppearance(FPDF_ANNOTATION annot) {
+  // EmbedPDF(view-scope): resolve through the document's view scope; a
+  // layer's annotation reaches fonts and resources its base still holds.
+  ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* pContext = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!pContext) {
     return false;
@@ -3301,6 +3313,9 @@ EPDFAnnot_GenerateAppearance(FPDF_ANNOTATION annot) {
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_GenerateAppearanceWithBlend(FPDF_ANNOTATION annot,
                                       FPDF_BLENDMODE blend) {
+  // EmbedPDF(view-scope): resolve through the document's view scope; a
+  // layer's annotation reaches fonts and resources its base still holds.
+  ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* ctx = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!ctx) {
     return false;
@@ -3431,6 +3446,9 @@ FPDF_EXPORT unsigned long FPDF_CALLCONV
 EPDFAnnot_GetRichTextJSON(FPDF_ANNOTATION annot,
                           char* buffer,
                           unsigned long buflen) {
+  // EmbedPDF(view-scope): resolve through the document's view scope; a
+  // layer's annotation reaches fonts and resources its base still holds.
+  ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* context = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!context) {
     return 0;
@@ -3483,6 +3501,9 @@ RetainPtr<const CPDF_Dictionary> AcroFormDictOf(FPDF_ANNOTATION annot) {
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetRichTextJSON(FPDF_ANNOTATION annot, FPDF_BYTESTRING json_utf8) {
+  // EmbedPDF(view-scope): resolve through the document's view scope; a
+  // layer's annotation reaches fonts and resources its base still holds.
+  ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* context = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!context || !json_utf8) {
     return false;
@@ -3510,6 +3531,9 @@ EPDFAnnot_SetRichTextJSON(FPDF_ANNOTATION annot, FPDF_BYTESTRING json_utf8) {
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetRichTextXHTML(FPDF_ANNOTATION annot, FPDF_WIDESTRING xhtml) {
+  // EmbedPDF(view-scope): resolve through the document's view scope; a
+  // layer's annotation reaches fonts and resources its base still holds.
+  ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* context = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!context || !xhtml) {
     return false;
@@ -3760,6 +3784,9 @@ EPDFAnnot_SetDefaultAppearance(FPDF_ANNOTATION annot,
                                unsigned int R,
                                unsigned int G,
                                unsigned int B) {
+  // EmbedPDF(view-scope): resolve through the document's view scope; a
+  // layer's annotation reaches fonts and resources its base still holds.
+  ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* context = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!context) {
     return false;
@@ -3805,6 +3832,9 @@ EPDFAnnot_SetDefaultAppearanceRegisteredFont(FPDF_ANNOTATION annot,
                                              unsigned int R,
                                              unsigned int G,
                                              unsigned int B) {
+  // EmbedPDF(view-scope): resolve through the document's view scope; a
+  // layer's annotation reaches fonts and resources its base still holds.
+  ScopedFPDFAnnotationView annot_view(annot);
   // EmbedPDF(fonts): annotation-specific bridge from public API to the
   // registered font AP pipeline. Generic EPDFFont_* registration lives in
   // epdf_font.cpp because the same registry is also used for page-rendering
@@ -3846,6 +3876,9 @@ EPDFAnnot_GetDefaultAppearance(FPDF_ANNOTATION annot,
                                unsigned int* R,
                                unsigned int* G,
                                unsigned int* B) {
+  // EmbedPDF(view-scope): resolve through the document's view scope; a
+  // layer's annotation reaches fonts and resources its base still holds.
+  ScopedFPDFAnnotationView annot_view(annot);
   // Standard validation for output parameters and annotation handle.
   if (!font || !font_size || !R || !G || !B) {
     return false;
@@ -3930,6 +3963,9 @@ EPDFAnnot_GetDefaultAppearanceFontFace(FPDF_ANNOTATION annot,
                                        unsigned long buflen,
                                        int* weight,
                                        FPDF_BOOL* italic) {
+  // EmbedPDF(view-scope): resolve through the document's view scope; a
+  // layer's annotation reaches fonts and resources its base still holds.
+  ScopedFPDFAnnotationView annot_view(annot);
   if (!weight || !italic) {
     return 0;
   }
@@ -4700,6 +4736,9 @@ static bool RefitPlacedAppearance(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_UpdateAppearanceToRect(FPDF_ANNOTATION annot, EPDF_STAMP_FIT fit) {
+  // EmbedPDF(view-scope): resolve through the document's view scope; a
+  // layer's annotation reaches fonts and resources its base still holds.
+  ScopedFPDFAnnotationView annot_view(annot);
   return RefitPlacedAppearance(
       annot, fit, EpdfGetAnnotOpacity(GetAnnotDictFromFPDFAnnotation(annot)));
 }
@@ -4708,6 +4747,9 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetStampOpacity(FPDF_ANNOTATION annot,
                           EPDF_STAMP_FIT fit,
                           float opacity) {
+  // EmbedPDF(view-scope): resolve through the document's view scope; a
+  // layer's annotation reaches fonts and resources its base still holds.
+  ScopedFPDFAnnotationView annot_view(annot);
   RetainPtr<CPDF_Dictionary> dict = GetMutableAnnotDictFromFPDFAnnotation(annot);
   if (!dict || !(opacity >= 0.f && opacity <= 1.f)) {
     return false;
@@ -5330,6 +5372,9 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetAppearanceFromPage(FPDF_ANNOTATION annot,
                                 FPDF_DOCUMENT src_doc_handle,
                                 int page_index) {
+  // EmbedPDF(view-scope): resolve through the document's view scope; a
+  // layer's annotation reaches fonts and resources its base still holds.
+  ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* ctx = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!ctx) {
     return false;
@@ -5364,6 +5409,9 @@ FPDF_EXPORT FPDF_DOCUMENT FPDF_CALLCONV
 EPDFAnnot_ExportAppearance(FPDF_ANNOTATION annot,
                            float degrees,
                            const FS_RECTF* unrotated_box) {
+  // EmbedPDF(view-scope): resolve through the document's view scope; a
+  // layer's annotation reaches fonts and resources its base still holds.
+  ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* ctx = CPDFAnnotContextFromFPDFAnnotation(annot);
   IPDF_Page* annot_page = ctx ? ctx->GetPage() : nullptr;
   CPDF_Document* src_doc = annot_page ? annot_page->GetDocument() : nullptr;
@@ -5679,6 +5727,9 @@ EPDFAnnot_GetAPMatrix(FPDF_ANNOTATION annot,
 
 FPDF_EXPORT int FPDF_CALLCONV
 EPDFAnnot_GetAvailableAppearanceModes(FPDF_ANNOTATION annot) {
+  // EmbedPDF(view-scope): resolve through the document's view scope; a
+  // layer's annotation reaches fonts and resources its base still holds.
+  ScopedFPDFAnnotationView annot_view(annot);
   const CPDF_Dictionary* pAnnotDict = GetAnnotDictFromFPDFAnnotation(annot);
   if (!pAnnotDict) {
     return 0;
@@ -5744,6 +5795,9 @@ static std::vector<ByteString> GetAppearanceStateNames(
 FPDF_EXPORT int FPDF_CALLCONV
 EPDFAnnot_GetAppearanceStateCount(FPDF_ANNOTATION annot,
                                   FPDF_ANNOT_APPEARANCEMODE appearanceMode) {
+  // EmbedPDF(view-scope): resolve through the document's view scope; a
+  // layer's annotation reaches fonts and resources its base still holds.
+  ScopedFPDFAnnotationView annot_view(annot);
   return pdfium::checked_cast<int>(
       GetAppearanceStateNames(annot, appearanceMode).size());
 }
@@ -5754,6 +5808,9 @@ EPDFAnnot_GetAppearanceStateName(FPDF_ANNOTATION annot,
                                  int index,
                                  void* buffer,
                                  unsigned long buflen) {
+  // EmbedPDF(view-scope): resolve through the document's view scope; a
+  // layer's annotation reaches fonts and resources its base still holds.
+  ScopedFPDFAnnotationView annot_view(annot);
   std::vector<ByteString> names =
       GetAppearanceStateNames(annot, appearanceMode);
   if (index < 0 || static_cast<size_t>(index) >= names.size()) {
@@ -5768,6 +5825,9 @@ FPDF_EXPORT unsigned long FPDF_CALLCONV
 EPDFAnnot_GetAppearanceState(FPDF_ANNOTATION annot,
                              void* buffer,
                              unsigned long buflen) {
+  // EmbedPDF(view-scope): resolve through the document's view scope; a
+  // layer's annotation reaches fonts and resources its base still holds.
+  ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* context = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!context) {
     return 0;
@@ -5790,6 +5850,9 @@ EPDFAnnot_GetAppearanceState(FPDF_ANNOTATION annot,
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_HasAppearanceStream(FPDF_ANNOTATION annot,
                               FPDF_ANNOT_APPEARANCEMODE appearanceMode) {
+  // EmbedPDF(view-scope): resolve through the document's view scope; a
+  // layer's annotation reaches fonts and resources its base still holds.
+  ScopedFPDFAnnotationView annot_view(annot);
   const CPDF_Dictionary* pAnnotDict = GetAnnotDictFromFPDFAnnotation(annot);
   if (!pAnnotDict) {
     return false;
@@ -6058,6 +6121,9 @@ FPDF_EXPORT int FPDF_CALLCONV EPDFAnnot_GetMKRotation(FPDF_ANNOTATION annot) {
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_GenerateFormFieldAP(FPDF_ANNOTATION annot) {
+  // EmbedPDF(view-scope): resolve through the document's view scope; a
+  // layer's annotation reaches fonts and resources its base still holds.
+  ScopedFPDFAnnotationView annot_view(annot);
   CPDF_AnnotContext* pContext = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!pContext) {
     return false;

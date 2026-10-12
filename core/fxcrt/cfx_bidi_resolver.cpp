@@ -10,7 +10,12 @@
 #include "core/fxcrt/check_op.h"
 #include "core/fxcrt/fx_safe_types.h"
 #include "core/fxcrt/ptr_util.h"
+
+#if defined(USE_SYSTEM_ICUUC)
+#include <unicode/ubidi.h>
+#else
 #include "third_party/icu/source/common/unicode/ubidi.h"
+#endif
 
 void CFX_BidiResolver::UBiDiDeleter::operator()(UBiDi* bidi) const {
   ubidi_close(bidi);
@@ -44,8 +49,8 @@ CFX_BidiResolver::CFX_BidiResolver(std::u16string utf16_text,
            std::numeric_limits<int32_t>::max() / kIcuRunSize);
 
   UErrorCode status = U_ZERO_ERROR;
-  ScopedUBiDi bidi(
-      ubidi_openSized(static_cast<int32_t>(utf16_text_.size()), 0, &status));
+  ScopedUBiDi bidi(ubidi_openSized(static_cast<int32_t>(utf16_text_.size()),
+                                   /*maxRunCount=*/0, &status));
   if (U_FAILURE(status)) {
     return;
   }
@@ -58,8 +63,8 @@ CFX_BidiResolver::CFX_BidiResolver(std::u16string utf16_text,
   }
 
   ubidi_setPara(bidi.get(), utf16_text_.data(),
-                static_cast<int32_t>(utf16_text_.size()), para_level, nullptr,
-                &status);
+                static_cast<int32_t>(utf16_text_.size()), para_level,
+                /*embeddingLevels=*/nullptr, &status);
   if (U_FAILURE(status)) {
     return;
   }
@@ -72,18 +77,20 @@ CFX_BidiResolver::~CFX_BidiResolver() = default;
 std::vector<CFX_BidiResolver::ResolvedRun>
 CFX_BidiResolver::GetVisualRunsForLine(int line_start, int line_length) const {
   std::vector<ResolvedRun> runs;
-  if (line_length <= 0) {
+  if (line_start < 0 || line_length <= 0) {
     return runs;
   }
 
   UErrorCode status = U_ZERO_ERROR;
-  ScopedUBiDi line_bidi(ubidi_openSized(line_length, 0, &status));
+  ScopedUBiDi line_bidi(
+      ubidi_openSized(line_length, /*maxRunCount=*/0, &status));
   if (U_FAILURE(status)) {
     return runs;
   }
 
   FX_SAFE_INT32 safe_line_end = pdfium::CheckAdd(line_start, line_length);
-  if (!safe_line_end.IsValid()) {
+  if (!safe_line_end.IsValid() ||
+      safe_line_end.ValueOrDie() > utf16_text_.size()) {
     return runs;
   }
 

@@ -37,6 +37,7 @@
 #include "core/fpdfapi/parser/cpdf_string.h"
 #include "core/fpdfapi/parser/fpdf_parser_utility.h"
 #include "core/fxcrt/check.h"
+#include "core/fxcrt/check_op.h"
 #include "core/fxcrt/containers/contains.h"
 #include "core/fxcrt/fixed_size_data_vector.h"
 #include "core/fxcrt/fx_extension.h"
@@ -728,7 +729,7 @@ CPDF_Creator::Stage CPDF_Creator::WriteDoc_Stage3() {
 }
 
 CPDF_Creator::Stage CPDF_Creator::WriteDoc_Stage4() {
-  DCHECK(stage_ >= Stage::kWriteTrailerAndFinish90);
+  DCHECK_GE(stage_, Stage::kWriteTrailerAndFinish90);
 
   // EmbedPDF(layer-save): an append-only delta writes a cross-reference
   // table, never a stream.

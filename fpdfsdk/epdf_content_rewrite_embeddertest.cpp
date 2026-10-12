@@ -371,18 +371,20 @@ class EPDFContentRewriteEmbedderTest
       FPDF_BITMAP before,
       const std::vector<FS_RECTF>& areas,
       const std::function<void(FPDF_DOCUMENT, FPDF_PAGE)>& inspect = {}) {
-    FPDF_PAGE saved = LoadSavedPage(index);
-    ASSERT_TRUE(saved);
-    ScopedFPDFBitmap after = RenderAtPageSize(saved);
-    std::string where;
-    EXPECT_EQ(0, CountChangedPixelsOutside(before, after.get(), areas, &where))
-        << where;
-    EXPECT_EQ(0, CountInkInside(after.get(), areas));
-    EXPECT_EQ(L"", TextInside(saved, areas));
-    if (inspect) {
-      inspect(saved_document(), saved);
+    {
+      ScopedSavedPage saved = LoadScopedSavedPage(index);
+      ASSERT_TRUE(saved);
+      ScopedFPDFBitmap after = RenderAtPageSize(saved.get());
+      std::string where;
+      EXPECT_EQ(0,
+                CountChangedPixelsOutside(before, after.get(), areas, &where))
+          << where;
+      EXPECT_EQ(0, CountInkInside(after.get(), areas));
+      EXPECT_EQ(L"", TextInside(saved.get(), areas));
+      if (inspect) {
+        inspect(saved_document(), saved.get());
+      }
     }
-    CloseSavedPage(saved);
     CloseSaved();
   }
 
@@ -476,9 +478,9 @@ TEST_P(EPDFContentRewriteEmbedderTest, KeepsEveryColorSpace) {
             << content;
         EXPECT_NE(std::string::npos, content.find("/CSsep CS 1 SCN"))
             << content;
-        EXPECT_NE(std::string::npos, content.find("/CSdn cs .30000001 1 scn"))
+        EXPECT_NE(std::string::npos, content.find("/CSdn cs .3 1 scn"))
             << content;
-        EXPECT_NE(std::string::npos, content.find("/CSpat cs 0 .60000002 0 /"))
+        EXPECT_NE(std::string::npos, content.find("/CSpat cs 0 .6 0 /"))
             << content;
       });
 }
@@ -525,12 +527,13 @@ TEST_P(EPDFContentRewriteEmbedderTest, EditingAnAppearanceKeepsItsSpotColor) {
     ASSERT_TRUE(FPDFAnnot_UpdateObject(stamp.get(), object));
   });
 
-  FPDF_PAGE saved = LoadSavedPage(kAppearanceInASpotColor);
-  ASSERT_TRUE(saved);
-  ScopedFPDFBitmap after = RenderAtPageSize(saved);
-  EXPECT_EQ(0xff0000u, PixelAt(after.get(), 250, 535));
-  EXPECT_EQ(0, CountChangedPixelsOutside(before.get(), after.get(), {bar}));
-  CloseSavedPage(saved);
+  {
+    ScopedSavedPage saved = LoadScopedSavedPage(kAppearanceInASpotColor);
+    ASSERT_TRUE(saved);
+    ScopedFPDFBitmap after = RenderAtPageSize(saved.get());
+    EXPECT_EQ(0xff0000u, PixelAt(after.get(), 250, 535));
+    EXPECT_EQ(0, CountChangedPixelsOutside(before.get(), after.get(), {bar}));
+  }
   CloseSaved();
 }
 
@@ -582,13 +585,14 @@ TEST_P(EPDFContentRewriteEmbedderTest,
     ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
   });
 
-  FPDF_PAGE saved = LoadSavedPage(0);
-  ASSERT_TRUE(saved);
-  ScopedFPDFBitmap after = RenderAtPageSize(saved);
-  EXPECT_EQ(0xffffffu, PixelAt(after.get(), 150, 333));
-  EXPECT_EQ(0,
-            CountChangedPixelsOutside(before.get(), after.get(), {underline}));
-  CloseSavedPage(saved);
+  {
+    ScopedSavedPage saved = LoadScopedSavedPage(0);
+    ASSERT_TRUE(saved);
+    ScopedFPDFBitmap after = RenderAtPageSize(saved.get());
+    EXPECT_EQ(0xffffffu, PixelAt(after.get(), 150, 333));
+    EXPECT_EQ(
+        0, CountChangedPixelsOutside(before.get(), after.get(), {underline}));
+  }
   CloseSaved();
 }
 
@@ -735,10 +739,10 @@ TEST_P(EPDFContentRewriteEmbedderTest, KeepsICCBasedDefaultsAndCMYKPatterns) {
       kICCBasedDefaultsAndCMYKPattern, [](FPDF_DOCUMENT saved, FPDF_PAGE) {
         const std::string content =
             PageContent(saved, kICCBasedDefaultsAndCMYKPattern);
-        EXPECT_NE(std::string::npos, content.find("/CSicc cs .2 .40000001"))
+        EXPECT_NE(std::string::npos, content.find("/CSicc cs .2 .4"))
             << content;
         EXPECT_NE(std::string::npos,
-                  content.find("/CSpatk cs 0 .60000002 1 0 /"))
+                  content.find("/CSpatk cs 0 .6 1 0 /"))
             << content;
         RetainPtr<const CPDF_Dictionary> spaces =
             CPDFDocumentFromFPDFDocument(saved)

@@ -84,7 +84,7 @@ class ReadableSubStream final : public IFX_SeekableReadStream {
 
 // static
 // EmbedPDF(thread-confined-globals): each thread parses with its own depth.
-EPDF_TLS int CPDF_SyntaxParser::s_CurrentRecursionDepth = 0;
+EPDF_TLS uint32_t CPDF_SyntaxParser::s_CurrentRecursionDepth = 0;
 
 // static
 std::unique_ptr<CPDF_SyntaxParser> CPDF_SyntaxParser::CreateForTesting(
@@ -107,7 +107,7 @@ CPDF_SyntaxParser::CPDF_SyntaxParser(RetainPtr<CPDF_ReadValidator> validator,
     : file_access_(std::move(validator)),
       header_offset_(HeaderOffset),
       file_len_(file_access_->GetSize()) {
-  DCHECK(header_offset_ <= file_len_);
+  DCHECK_LE(header_offset_, file_len_);
 }
 
 CPDF_SyntaxParser::~CPDF_SyntaxParser() = default;
@@ -552,7 +552,7 @@ RetainPtr<CPDF_Object> CPDF_SyntaxParser::GetObjectBody(
 RetainPtr<CPDF_Object> CPDF_SyntaxParser::GetObjectBodyInternal(
     CPDF_IndirectObjectHolder* pObjList,
     ParseType parse_type) {
-  AutoRestorer<int> depth_restorer(&s_CurrentRecursionDepth);
+  AutoRestorer<uint32_t> depth_restorer(&s_CurrentRecursionDepth);
   if (++s_CurrentRecursionDepth > kParserMaxRecursionDepth) {
     return nullptr;
   }

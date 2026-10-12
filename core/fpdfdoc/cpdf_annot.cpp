@@ -29,6 +29,7 @@
 #include "core/fpdfapi/render/cpdf_renderoptions.h"
 #include "core/fpdfdoc/cpdf_appearancegenerator.h"
 #include "core/fxcrt/check.h"
+#include "core/fxcrt/check_op.h"
 #include "core/fxge/cfx_fillrenderoptions.h"
 #include "core/fxge/cfx_graphstatedata.h"
 #include "core/fxge/cfx_path.h"
@@ -447,7 +448,7 @@ std::optional<CFX_FloatRect> CPDF_Annot::GetPopupAnnotRect() const {
 CFX_FloatRect CPDF_Annot::RectFromQuadPointsArray(const CPDF_Array* pArray,
                                                   size_t nIndex) {
   DCHECK(pArray);
-  DCHECK(nIndex < pArray->size() / 8);
+  DCHECK_LT(nIndex, pArray->size() / 8);
 
   // EmbedPDF(text-geometry): an oriented quad's corners can come in any
   // order, so the bounds take all four points and skip non-finite ones.

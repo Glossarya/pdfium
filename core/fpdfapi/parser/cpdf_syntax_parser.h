@@ -39,6 +39,8 @@ class CPDF_SyntaxParser {
     bool is_number;
   };
 
+  static constexpr uint32_t kParserMaxRecursionDepth = 64;
+
   static std::unique_ptr<CPDF_SyntaxParser> CreateForTesting(
       RetainPtr<IFX_SeekableReadStream> pFileAccess,
       FX_FILESIZE HeaderOffset);
@@ -98,9 +100,8 @@ class CPDF_SyntaxParser {
   friend class CPDF_DataAvail;
   friend class cpdf_syntax_parser_ReadHexString_Test;
 
-  static constexpr int kParserMaxRecursionDepth = 64;
   // EmbedPDF(thread-confined-globals): each thread parses with its own depth.
-  static EPDF_TLS int s_CurrentRecursionDepth;
+  static EPDF_TLS uint32_t s_CurrentRecursionDepth;
 
   bool ReadBlockAt(FX_FILESIZE read_pos);
   bool GetCharAtBackward(FX_FILESIZE pos, uint8_t* ch);

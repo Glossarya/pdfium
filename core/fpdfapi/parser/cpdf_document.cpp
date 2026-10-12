@@ -331,7 +331,7 @@ void CPDF_Document::LoadPages() {
 
   uint32_t first_page_num = linearized_header->GetFirstPageNo();
   uint32_t page_count = linearized_header->GetPageCount();
-  DCHECK(first_page_num < page_count);
+  DCHECK_LT(first_page_num, page_count);
   // EmbedPDF(layer-seam): a layer keeps its own page list.
   ResizePageList(page_count);
   SetPageObjNumAt(first_page_num, objnum);

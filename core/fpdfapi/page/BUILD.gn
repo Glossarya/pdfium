@@ -157,6 +157,7 @@ pdfium_unittest_source_set("unittests") {
     "cpdf_colorspace_unittest.cpp",
     "cpdf_contentnames_unittest.cpp",
     "cpdf_devicecs_unittest.cpp",
+    "cpdf_dib_unittest.cpp",
     "cpdf_function_unittest.cpp",
     "cpdf_page_unittest.cpp",
     "cpdf_pageimagecache_unittest.cpp",

@@ -76,21 +76,26 @@ source_set("contentstream_write_utils") {
     "../../../:pdfium_strict_config",
     "../../../:pdfium_noshorten_config",
   ]
-  deps = [ "../../fxcrt" ]
+  deps = [
+    "../../fxcrt",
+    "//third_party/dragonbox",
+  ]
 }
 
 pdfium_unittest_source_set("unittests") {
   sources = [
+    "cpdf_contentstream_write_utils_unittest.cpp",
     "cpdf_creator_unittest.cpp",
-    "cpdf_save_trailer_unittest.cpp",
     "cpdf_npagetooneexporter_unittest.cpp",
     "cpdf_pagecontentgenerator_unittest.cpp",
     "cpdf_path_redactor_unittest.cpp",
     "cpdf_redaction_copies_unittest.cpp",
+    "cpdf_save_trailer_unittest.cpp",
     "cpdf_text_redactor_unittest.cpp",
     "cpdf_tounicodecmap_unittest.cpp",
   ]
   deps = [
+    ":contentstream_write_utils",
     ":edit",
     "../../fxge",
     "../font",

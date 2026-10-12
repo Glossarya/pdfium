@@ -253,14 +253,14 @@ class FPDFFormFillTextFormEmbedderTest
   }
 
   static CFX_PointF CharLimitFormAtX(float x) {
-    DCHECK(x >= kFormBeginX);
-    DCHECK(x <= kFormEndX);
+    DCHECK_GE(x, kFormBeginX);
+    DCHECK_LE(x, kFormEndX);
     return CFX_PointF(x, kCharLimitFormY);
   }
 
   static CFX_PointF RegularFormAtX(float x) {
-    DCHECK(x >= kFormBeginX);
-    DCHECK(x <= kFormEndX);
+    DCHECK_GE(x, kFormBeginX);
+    DCHECK_LE(x, kFormEndX);
     return CFX_PointF(x, kRegularFormY);
   }
 
@@ -297,14 +297,14 @@ class FPDFFormFillComboBoxFormEmbedderTest
   }
 
   void SelectEditableFormOption(int item_index) {
-    DCHECK(item_index >= 0);
-    DCHECK(item_index < 3);
+    DCHECK_GE(item_index, 0);
+    DCHECK_LT(item_index, 3);
     SelectOption(item_index, EditableFormDropDown());
   }
 
   void SelectNonEditableFormOption(int item_index) {
-    DCHECK(item_index >= 0);
-    DCHECK(item_index < 26);
+    DCHECK_GE(item_index, 0);
+    DCHECK_LT(item_index, 26);
     SelectOption(item_index, NonEditableFormDropDown());
   }
 
@@ -347,14 +347,14 @@ class FPDFFormFillComboBoxFormEmbedderTest
   }
 
   static CFX_PointF EditableFormAtX(float x) {
-    DCHECK(x >= kFormBeginX);
-    DCHECK(x <= kFormEndX);
+    DCHECK_GE(x, kFormBeginX);
+    DCHECK_LE(x, kFormEndX);
     return CFX_PointF(x, kEditableFormY);
   }
 
   static CFX_PointF NonEditableFormAtX(float x) {
-    DCHECK(x >= kFormBeginX);
-    DCHECK(x <= kFormEndX);
+    DCHECK_GE(x, kFormBeginX);
+    DCHECK_LE(x, kFormEndX);
     return CFX_PointF(x, kNonEditableFormY);
   }
 
@@ -443,8 +443,8 @@ class FPDFFormFillListBoxFormEmbedderTest
   void ClickOnSingleSelectFormOption(int item_index) {
     // Only the first two indices are visible so can only click on those
     // without scrolling.
-    DCHECK(item_index >= 0);
-    DCHECK(item_index < 2);
+    DCHECK_GE(item_index, 0);
+    DCHECK_LT(item_index, 2);
     if (item_index == 0) {
       ClickOnFormFieldAtPoint(SingleSelectFirstVisibleOption());
     } else {
@@ -455,8 +455,8 @@ class FPDFFormFillListBoxFormEmbedderTest
   void ClickOnMultiSelectFormOption(int item_index) {
     // Only the first two indices are visible so can only click on those
     // without scrolling.
-    DCHECK(item_index >= 0);
-    DCHECK(item_index < 2);
+    DCHECK_GE(item_index, 0);
+    DCHECK_LT(item_index, 2);
     if (item_index == 0) {
       ClickOnFormFieldAtPoint(MultiSelectFirstVisibleOption());
     } else {
@@ -467,8 +467,8 @@ class FPDFFormFillListBoxFormEmbedderTest
   void ClickOnMultiSelectMultipleValuesFormOption(int item_index) {
     // Only two indices are visible so can only click on those
     // without scrolling.
-    DCHECK(item_index >= 0);
-    DCHECK(item_index < 2);
+    DCHECK_GE(item_index, 0);
+    DCHECK_LT(item_index, 2);
     if (item_index == 0) {
       ClickOnFormFieldAtPoint(MultiSelectMultipleValuesFirstVisibleOption());
     } else {
@@ -479,8 +479,8 @@ class FPDFFormFillListBoxFormEmbedderTest
   void ClickOnSingleSelectLastSelectedFormOption(int item_index) {
     // Only two indices are visible so can only click on those
     // without scrolling.
-    DCHECK(item_index >= 0);
-    DCHECK(item_index < 2);
+    DCHECK_GE(item_index, 0);
+    DCHECK_LT(item_index, 2);
     if (item_index == 0) {
       ClickOnFormFieldAtPoint(SingleSelectLastSelectedFirstVisibleOption());
     } else {
@@ -941,21 +941,14 @@ TEST_F(FPDFFormFillEmbedderTest, DoNotHandleShortcutsOnKeyDown) {
   EXPECT_TRUE(FORM_OnKeyDown(form_handle(), page.get(), FWL_VKEY_Up, 0));
   EXPECT_TRUE(FORM_OnKeyDown(form_handle(), page.get(), FWL_VKEY_Right, 0));
 
-  // Edit shortcuts should not be handled by PDFium so that embedders can handle
-  // these shortcuts on platforms like MacOS which don't send OnChar events for
-  // the shortcuts.
-  EXPECT_FALSE(
-      FORM_OnKeyDown(form_handle(), page.get(), FWL_VKEY_A, kModifier));
+  // Clipboard shortcuts (C, V, X) should not be handled by PDFium so that
+  // embedders can handle these shortcuts via platform clipboard handlers.
   EXPECT_FALSE(
       FORM_OnKeyDown(form_handle(), page.get(), FWL_VKEY_C, kModifier));
   EXPECT_FALSE(
       FORM_OnKeyDown(form_handle(), page.get(), FWL_VKEY_V, kModifier));
   EXPECT_FALSE(
       FORM_OnKeyDown(form_handle(), page.get(), FWL_VKEY_X, kModifier));
-  EXPECT_FALSE(
-      FORM_OnKeyDown(form_handle(), page.get(), FWL_VKEY_Z, kModifier));
-  EXPECT_FALSE(FORM_OnKeyDown(form_handle(), page.get(), FWL_VKEY_Z,
-                              kModifier | FWL_EVENTFLAG_ShiftKey));
 }
 
 #ifdef PDF_ENABLE_XFA
@@ -1674,9 +1667,10 @@ TEST_F(FPDFFormFillEmbedderTest,
   ScopedFPDFAnnotation annot(FPDFPage_GetAnnot(page.get(), 0));
   ASSERT_TRUE(annot);
 
-  // Focus the field and type "ABC"
+  // Focus the field and type BiDi text.
   EXPECT_TRUE(FORM_OnFocus(form_handle(), page.get(), 0, 120.0, 120.0));
-  constexpr auto kInput = std::to_array<uint32_t>({'A', 'B', 'C'});
+  constexpr auto kInput =
+      std::to_array<uint32_t>({'A', ' ', 0x05E9, ' ', 0x05DE, ' ', 'B'});
   for (uint32_t c : kInput) {
     EXPECT_TRUE(FORM_OnChar(form_handle(), page.get(), c, 0));
   }
@@ -1684,34 +1678,31 @@ TEST_F(FPDFFormFillEmbedderTest,
   EXPECT_EQ(FPDF_TEXTDIR_AUTO,
             FORM_GetTextDirection(form_handle(), annot.get()));
 
-  // Change text direction to Right-to-Left (RTL).
+  // Live rendering in AUTO direction (resolves to LTR for this input).
+  ScopedFPDFBitmap bitmap_auto = RenderLoadedPage(page.get());
+
+  // Change text direction to Right-to-Left (RTL) while remaining focused.
   EXPECT_TRUE(
       FORM_SetTextDirection(form_handle(), annot.get(), FPDF_TEXTDIR_RTL));
   EXPECT_EQ(FPDF_TEXTDIR_RTL,
             FORM_GetTextDirection(form_handle(), annot.get()));
 
-  // Type 'D' and kill focus. This forces the form filler to flush its
-  // in-memory state and regenerate the PDF appearance stream with the new RTL
-  // layout.
-  EXPECT_TRUE(FORM_OnChar(form_handle(), page.get(), 'D', 0));
-  FORM_ForceToKillFocus(form_handle());
+  // Live rendering should immediately reflect RTL.
   ScopedFPDFBitmap bitmap_rtl = RenderLoadedPage(page.get());
 
-  // Refocus the field and change text direction back to Left-to-Right (LTR).
-  EXPECT_TRUE(FORM_OnFocus(form_handle(), page.get(), 0, 120.0, 120.0));
+  // Change text direction back to Left-to-Right (LTR) while remaining focused.
   EXPECT_TRUE(
       FORM_SetTextDirection(form_handle(), annot.get(), FPDF_TEXTDIR_LTR));
   EXPECT_EQ(FPDF_TEXTDIR_LTR,
             FORM_GetTextDirection(form_handle(), annot.get()));
 
-  // Type 'E' and kill focus to flush the new LTR layout into the appearance
-  // stream.
-  EXPECT_TRUE(FORM_OnChar(form_handle(), page.get(), 'E', 0));
-  FORM_ForceToKillFocus(form_handle());
+  // Live rendering should immediately reflect LTR.
   ScopedFPDFBitmap bitmap_ltr = RenderLoadedPage(page.get());
 
   // Rendering should be visually different when the text direction changes.
+  EXPECT_NE(HashBitmap(bitmap_auto.get()), HashBitmap(bitmap_rtl.get()));
   EXPECT_NE(HashBitmap(bitmap_rtl.get()), HashBitmap(bitmap_ltr.get()));
+  EXPECT_EQ(HashBitmap(bitmap_auto.get()), HashBitmap(bitmap_ltr.get()));
 }
 
 TEST_F(FPDFFormFillTextFormEmbedderTest, FormTextFieldBiDiLiveEdit) {
@@ -3459,20 +3450,47 @@ TEST_F(FPDFFormFillTextFormEmbedderTest, RedoCutSelection) {
   EXPECT_EQ(Selection(), "");
 }
 
-TEST_F(FPDFFormFillTextFormEmbedderTest, SelectAllWithKeyboardShortcut) {
+TEST_F(FPDFFormFillTextFormEmbedderTest, DoNotHandleSelectAllOnChar) {
   // Start with a couple of letters in the text form.
   TypeTextIntoTextField(2, RegularFormBegin());
   EXPECT_EQ(FocusedFieldText(), "AB");
   EXPECT_EQ(Selection(), "");
 
-  // Select all with the keyboard shortcut.
+  // FORM_OnChar should not handle Select All; this is now handled via
+  // OnKeyDown.
 #if BUILDFLAG(IS_APPLE)
   static constexpr int kCorrectModifier = FWL_EVENTFLAG_MetaKey;
 #else
   static constexpr int kCorrectModifier = FWL_EVENTFLAG_ControlKey;
 #endif
-  FORM_OnChar(form_handle(), page(), pdfium::ascii::kControlA,
-              kCorrectModifier);
+  EXPECT_FALSE(FORM_OnChar(form_handle(), page(), pdfium::ascii::kControlA,
+                           kCorrectModifier));
+  EXPECT_EQ(Selection(), "");
+
+  // Select all with the keyboard shortcut using the wrong modifier key.
+#if BUILDFLAG(IS_APPLE)
+  static constexpr int kWrongModifier = FWL_EVENTFLAG_ControlKey;
+#else
+  static constexpr int kWrongModifier = FWL_EVENTFLAG_MetaKey;
+#endif
+  FORM_OnChar(form_handle(), page(), pdfium::ascii::kControlA, kWrongModifier);
+  EXPECT_EQ(Selection(), "");
+}
+
+TEST_F(FPDFFormFillTextFormEmbedderTest, SelectAllWithOnKeyDown) {
+  // Start with a couple of letters in the text form.
+  TypeTextIntoTextField(2, RegularFormBegin());
+  EXPECT_EQ(FocusedFieldText(), "AB");
+  EXPECT_EQ(Selection(), "");
+
+  // Select all with the keyboard shortcut via OnKeyDown.
+#if BUILDFLAG(IS_APPLE)
+  static constexpr int kCorrectModifier = FWL_EVENTFLAG_MetaKey;
+#else
+  static constexpr int kCorrectModifier = FWL_EVENTFLAG_ControlKey;
+#endif
+  EXPECT_TRUE(
+      FORM_OnKeyDown(form_handle(), page(), FWL_VKEY_A, kCorrectModifier));
   EXPECT_EQ(Selection(), "AB");
 
   // Reset the selection again.
@@ -3485,8 +3503,81 @@ TEST_F(FPDFFormFillTextFormEmbedderTest, SelectAllWithKeyboardShortcut) {
 #else
   static constexpr int kWrongModifier = FWL_EVENTFLAG_MetaKey;
 #endif
-  FORM_OnChar(form_handle(), page(), pdfium::ascii::kControlA, kWrongModifier);
+  EXPECT_FALSE(
+      FORM_OnKeyDown(form_handle(), page(), FWL_VKEY_A, kWrongModifier));
   EXPECT_EQ(Selection(), "");
+
+  // Select all with Shift key pressed should not be handled.
+  EXPECT_FALSE(FORM_OnKeyDown(form_handle(), page(), FWL_VKEY_A,
+                              kCorrectModifier | FWL_EVENTFLAG_ShiftKey));
+  EXPECT_EQ(Selection(), "");
+}
+
+TEST_F(FPDFFormFillTextFormEmbedderTest, UndoWithOnKeyDown) {
+  // Start with a couple of letters in the text form.
+  TypeTextIntoTextField(2, RegularFormBegin());
+  EXPECT_EQ(FocusedFieldText(), "AB");
+
+  // Undo with the keyboard shortcut via OnKeyDown.
+#if BUILDFLAG(IS_APPLE)
+  static constexpr int kCorrectModifier = FWL_EVENTFLAG_MetaKey;
+#else
+  static constexpr int kCorrectModifier = FWL_EVENTFLAG_ControlKey;
+#endif
+  // First undo reverts 'B'.
+  EXPECT_TRUE(
+      FORM_OnKeyDown(form_handle(), page(), FWL_VKEY_Z, kCorrectModifier));
+  EXPECT_EQ(FocusedFieldText(), "A");
+
+  // Second undo reverts 'A'.
+  EXPECT_TRUE(
+      FORM_OnKeyDown(form_handle(), page(), FWL_VKEY_Z, kCorrectModifier));
+  EXPECT_EQ(FocusedFieldText(), "");
+
+  // First redo restores 'A'.
+  EXPECT_TRUE(FORM_OnKeyDown(form_handle(), page(), FWL_VKEY_Z,
+                             kCorrectModifier | FWL_EVENTFLAG_ShiftKey));
+  EXPECT_EQ(FocusedFieldText(), "A");
+
+  // Second redo restores 'B'.
+  EXPECT_TRUE(FORM_OnKeyDown(form_handle(), page(), FWL_VKEY_Z,
+                             kCorrectModifier | FWL_EVENTFLAG_ShiftKey));
+  EXPECT_EQ(FocusedFieldText(), "AB");
+
+  // Undo with the keyboard shortcut using the wrong modifier key.
+#if BUILDFLAG(IS_APPLE)
+  static constexpr int kWrongModifier = FWL_EVENTFLAG_ControlKey;
+#else
+  static constexpr int kWrongModifier = FWL_EVENTFLAG_MetaKey;
+#endif
+  EXPECT_FALSE(
+      FORM_OnKeyDown(form_handle(), page(), FWL_VKEY_Z, kWrongModifier));
+  EXPECT_EQ(FocusedFieldText(), "AB");
+}
+
+TEST_F(FPDFFormFillTextFormEmbedderTest, RedoWithCtrlYKeyboardShortcut) {
+  // Start with a letter in the text form.
+  TypeTextIntoTextField(1, RegularFormBegin());
+  EXPECT_EQ(FocusedFieldText(), "A");
+
+  // Undo with the keyboard shortcut.
+  EXPECT_TRUE(FORM_OnKeyDown(form_handle(), page(), FWL_VKEY_Z, kModifier));
+  EXPECT_EQ(FocusedFieldText(), "");
+
+  // Shortcut with Shift key pressed should not be handled.
+  EXPECT_FALSE(FORM_OnKeyDown(form_handle(), page(), FWL_VKEY_Y,
+                              kModifier | FWL_EVENTFLAG_ShiftKey));
+  EXPECT_EQ(FocusedFieldText(), "");
+
+#if BUILDFLAG(IS_APPLE)
+  // On Apple platforms, Cmd+Y is not Redo and should not be handled.
+  EXPECT_FALSE(FORM_OnKeyDown(form_handle(), page(), FWL_VKEY_Y, kModifier));
+  EXPECT_EQ(FocusedFieldText(), "");
+#else
+  // On non-Apple platforms, Ctrl+Y is Redo.
+  EXPECT_TRUE(FORM_OnKeyDown(form_handle(), page(), FWL_VKEY_Y, kModifier));
+  EXPECT_EQ(FocusedFieldText(), "A");
+#endif
 }
 
 class FPDFXFAFormBug1055869EmbedderTest

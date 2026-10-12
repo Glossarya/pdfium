@@ -158,7 +158,7 @@ FPDFAnnotEmbedderTest.GetSetStringValue 1
 FPDFAnnotEmbedderTest.InkAnnotation 1
 FPDFAnnotEmbedderTest.LineAnnotation 1
 FPDFAnnotEmbedderTest.ModifyAnnotationFlags 1
-FPDFAnnotEmbedderTest.ModifyRectQuadpointsWithAP 4
+FPDFAnnotEmbedderTest.ModifyRectQuadpointsWithAP 3
 FPDFAnnotEmbedderTest.PolygonAnnotation 1
 FPDFAnnotEmbedderTest.RemoveAnnotation 2
 FPDFAnnotEmbedderTest.RemoveOptionalAP 3

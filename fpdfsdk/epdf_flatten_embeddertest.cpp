@@ -144,11 +144,10 @@ TEST_F(EPDFFlattenEmbedderTest, FlattenSpecificAnnotationByHandle) {
   ASSERT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
   ScopedSavedDoc saved_doc = OpenScopedSavedDocument();
   ASSERT_TRUE(saved_doc);
-  FPDF_PAGE saved_page = LoadSavedPage(0);
+  ScopedSavedPage saved_page = LoadScopedSavedPage(0);
   ASSERT_TRUE(saved_page);
-  EXPECT_EQ(5, FPDFPage_GetAnnotCount(saved_page));
-  EXPECT_FALSE(EPDFPage_GetAnnotByObjectNumber(saved_page, 4u));
-  CloseSavedPage(saved_page);
+  EXPECT_EQ(5, FPDFPage_GetAnnotCount(saved_page.get()));
+  EXPECT_FALSE(EPDFPage_GetAnnotByObjectNumber(saved_page.get(), 4u));
 }
 
 TEST_F(EPDFFlattenEmbedderTest,

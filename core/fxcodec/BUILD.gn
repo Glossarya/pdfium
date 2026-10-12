@@ -5,6 +5,46 @@
 import("../../pdfium.gni")
 import("../../testing/test.gni")
 
+if (pdf_enable_rust_bmp || pdf_enable_rust_png) {
+  import("//build/rust/rust_static_library.gni")
+}
+
+if (pdf_enable_rust_bmp || pdf_enable_rust_png) {
+  config("pdfium_rust_ffi_config") {
+    include_dirs = [ "$target_gen_dir/../.." ]
+  }
+}
+
+if (pdf_enable_rust_bmp) {
+  rust_static_library("rust_bmp_ffi") {
+    crate_name = "rust_bmp_ffi"
+    allow_unsafe = true
+    crate_root = "bmp/rust_bmp_ffi.rs"
+    sources = [ crate_root ]
+    cxx_bindings = [ crate_root ]
+    public_configs = [ ":pdfium_rust_ffi_config" ]
+    deps = [
+      "//build/rust:cxx_cppdeps",
+      "//third_party/rust/image/v0_25:lib",
+    ]
+  }
+}
+
+if (pdf_enable_rust_png) {
+  rust_static_library("pdfium_rust_png_ffi") {
+    crate_name = "pdfium_rust_png_ffi"
+    allow_unsafe = true
+    crate_root = "png/rust_png_ffi.rs"
+    sources = [ crate_root ]
+    cxx_bindings = [ crate_root ]
+    public_configs = [ ":pdfium_rust_ffi_config" ]
+    deps = [
+      "//build/rust:cxx_cppdeps",
+      "//third_party/rust/png/v0_18:lib",
+    ]
+  }
+}
+
 source_set("fxcodec") {
   sources = [
     "basic/basicmodule.cpp",
@@ -58,8 +98,6 @@ source_set("fxcodec") {
     "jbig2/jbig2_symbol_dict.h",
     "jbig2/jbig2_trd_proc.cpp",
     "jbig2/jbig2_trd_proc.h",
-    "jpeg/jpeg_common.c",
-    "jpeg/jpeg_common.h",
     "jpeg/jpeg_writer.cpp",
     "jpeg/jpeg_writer.h",
     "jpeg/jpegmodule.cpp",
@@ -84,7 +122,6 @@ source_set("fxcodec") {
     "../../third_party:png",
     "../../third_party:zlib",
     "../fxge",
-    "//third_party:jpeg",
   ]
   defines = []
   if (pdf_enable_brotli) {
@@ -98,68 +135,67 @@ source_set("fxcodec") {
     sources += [
       "cfx_codec_memory.cpp",
       "cfx_codec_memory.h",
-      "jpeg/libjpeg_jpeg_context.cpp",
-      "jpeg/libjpeg_jpeg_context.h",
+      "gif/cfx_gif.cpp",
+      "gif/cfx_gif.h",
+      "gif/cfx_gifcontext.cpp",
+      "gif/cfx_gifcontext.h",
+      "gif/lzw_decompressor.cpp",
+      "gif/lzw_decompressor.h",
       "progressive_decoder.cpp",
       "progressive_decoder.h",
       "progressive_decoder_context.cpp",
       "progressive_decoder_context.h",
+      "progressive_decoder_context_delegate.h",
+      "tiff/libtiff_tiff_context.cpp",
+      "tiff/libtiff_tiff_context.h",
     ]
-    if (pdf_enable_xfa_bmp) {
-      sources += [ "bmp/bmp_decoder_delegate.h" ]
-      if (pdf_enable_rust_bmp) {
-        sources += [
-          "bmp/skia_bmp_context.cpp",
-          "bmp/skia_bmp_context.h",
-        ]
-        deps += [ "//skia" ]
-      } else {
-        sources += [
-          "bmp/cfx_bmpcontext.cpp",
-          "bmp/cfx_bmpcontext.h",
-          "bmp/cfx_bmpdecompressor.cpp",
-          "bmp/cfx_bmpdecompressor.h",
-          "bmp/fx_bmp.h",
-        ]
-      }
-    }
-    if (pdf_enable_xfa_gif) {
+    deps += [ "../../third_party:tiff" ]
+    if (pdf_enable_rust_bmp) {
       sources += [
-        "gif/cfx_gif.cpp",
-        "gif/cfx_gif.h",
-        "gif/cfx_gifcontext.cpp",
-        "gif/cfx_gifcontext.h",
-        "gif/lzw_decompressor.cpp",
-        "gif/lzw_decompressor.h",
+        "bmp/rust_bmp_context.cpp",
+        "bmp/rust_bmp_context.h",
+      ]
+      deps += [
+        ":rust_bmp_ffi",
+        "//build/rust:cxx_cppdeps",
+      ]
+    } else {
+      sources += [
+        "bmp/cfx_bmpcontext.cpp",
+        "bmp/cfx_bmpcontext.h",
+        "bmp/cfx_bmpdecompressor.cpp",
+        "bmp/cfx_bmpdecompressor.h",
+        "bmp/fx_bmp.h",
       ]
     }
-    if (pdf_enable_xfa_png) {
-      sources += [ "png/png_decoder_delegate.h" ]
+    if (pdf_enable_rust_jpeg) {
+      sources += [
+        "jpeg/skia_jpeg_context.cpp",
+        "jpeg/skia_jpeg_context.h",
+      ]
+      deps += [ "//skia" ]
+    } else {
+      sources += [
+        "jpeg/libjpeg_jpeg_context.cpp",
+        "jpeg/libjpeg_jpeg_context.h",
+      ]
+    }
 
-      # TODO(https://crbug.com/444045690): Remove `pdf_enable_rust_png` from the
-      # condition below once this build mode has been tested and stabilized.
-      # (Chromium already sets `pdf_use_skia_override = true` so having an extra
-      # condition avoids affecting the Chromium behavior.)
-      if (pdf_use_skia && pdf_enable_rust_png) {
-        sources += [
-          "png/skia_png_context.cpp",
-          "png/skia_png_context.h",
-        ]
-        deps += [ "//skia" ]
-      } else {
-        sources += [
-          "png/libpng_png_context.cpp",
-          "png/libpng_png_context.h",
-        ]
-        deps += [ "../../third_party:png" ]
-      }
-    }
-    if (pdf_enable_xfa_tiff) {
+    if (pdf_enable_rust_png) {
       sources += [
-        "tiff/libtiff_tiff_context.cpp",
-        "tiff/libtiff_tiff_context.h",
+        "png/rust_png_context.cpp",
+        "png/rust_png_context.h",
       ]
-      deps += [ "../../third_party:tiff" ]
+      deps += [
+        ":pdfium_rust_png_ffi",
+        "//build/rust:cxx_cppdeps",
+      ]
+    } else {
+      sources += [
+        "png/libpng_png_context.cpp",
+        "png/libpng_png_context.h",
+      ]
+      deps += [ "../../third_party:png" ]
     }
     if (pdf_use_skia) {
       sources += [
@@ -167,6 +203,25 @@ source_set("fxcodec") {
         "codec_memory_sk_stream.h",
       ]
     }
+  }
+
+  # Windows requires libjpeg for JpegModule::JpegEncode (used for EMF printing)
+  # regardless of whether Rust JPEG is enabled for decoding. Libjpeg is also
+  # used as fallback for CMYK / 4-component JPEG decoding in JpegModule.
+  sources += [
+    "jpeg/jpeg_common.c",
+    "jpeg/jpeg_common.h",
+    "jpeg/libjpeg_scanline_decoder.cpp",
+    "jpeg/libjpeg_scanline_decoder.h",
+  ]
+  deps += [ "//third_party:jpeg" ]
+
+  if (pdf_enable_rust_jpeg) {
+    sources += [
+      "jpeg/skia_scanline_decoder.cpp",
+      "jpeg/skia_scanline_decoder.h",
+    ]
+    deps += [ "//skia" ]
   }
   visibility = [ "../../*" ]
 }
@@ -178,6 +233,7 @@ pdfium_unittest_source_set("unittests") {
     "flate/flatemodule_unittest.cpp",
     "jbig2/jbig2_bit_stream_unittest.cpp",
     "jbig2/jbig2_image_unittest.cpp",
+    "jpeg/jpegmodule_unittest.cpp",
     "jpx/jpx_unittest.cpp",
   ]
   deps = [
@@ -188,14 +244,12 @@ pdfium_unittest_source_set("unittests") {
   pdfium_root_dir = "../../"
 
   if (pdf_enable_xfa) {
-    sources += [ "progressive_decoder_unittest.cpp" ]
+    sources += [
+      "gif/cfx_gifcontext_unittest.cpp",
+      "gif/lzw_decompressor_unittest.cpp",
+      "progressive_decoder_unittest.cpp",
+    ]
     deps += [ "../fxge" ]
-    if (pdf_enable_xfa_gif) {
-      sources += [
-        "gif/cfx_gifcontext_unittest.cpp",
-        "gif/lzw_decompressor_unittest.cpp",
-      ]
-    }
     if (pdf_use_skia) {
       sources += [ "codec_memory_sk_stream_unittest.cpp" ]
       deps += [ "//skia" ]

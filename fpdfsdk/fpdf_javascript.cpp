@@ -24,6 +24,8 @@ struct CPDF_JavaScript {
 
 namespace {
 
+// EmbedPDF(actions): FPDFDoc_GetJavaScriptAction()'s lookup, moved here so
+// EPDFDoc_GetNamedJavaScriptActionModel() shares it.
 RetainPtr<CPDF_Dictionary> GetNamedJavaScriptActionDictionary(
     CPDF_Document* doc,
     int index,
@@ -33,6 +35,7 @@ RetainPtr<CPDF_Dictionary> GetNamedJavaScriptActionDictionary(
     return nullptr;
   }
 
+  // EmbedPDF(reads-dont-write): read the name tree without mutable getters.
   auto name_tree = CPDF_NameTree::CreateForReading(doc, "JavaScript");
   if (!name_tree || static_cast<size_t>(index) >= name_tree->GetCount()) {
     return nullptr;
@@ -56,18 +59,22 @@ RetainPtr<CPDF_Dictionary> GetNamedJavaScriptActionDictionary(
 
 FPDF_EXPORT int FPDF_CALLCONV
 FPDFDoc_GetJavaScriptActionCount(FPDF_DOCUMENT document) {
+  // EmbedPDF(view-scope): read through the document's view scope.
   ScopedFPDFDocumentView document_view(document);
   CPDF_Document* doc = document_view.Get();
   if (!doc) {
     return -1;
   }
 
+  // EmbedPDF(reads-dont-write): read the name tree without mutable getters.
   auto name_tree = CPDF_NameTree::CreateForReading(doc, "JavaScript");
   return name_tree ? pdfium::checked_cast<int>(name_tree->GetCount()) : 0;
 }
 
 FPDF_EXPORT FPDF_JAVASCRIPT_ACTION FPDF_CALLCONV
 FPDFDoc_GetJavaScriptAction(FPDF_DOCUMENT document, int index) {
+  // EmbedPDF(view-scope, actions): read through the document's view scope;
+  // the lookup is shared with the action model (see above).
   ScopedFPDFDocumentView document_view(document);
   WideString name;
   std::optional<WideString> script;
@@ -82,6 +89,7 @@ FPDFDoc_GetJavaScriptAction(FPDF_DOCUMENT document, int index) {
   return FPDFJavaScriptActionFromCPDFJavaScriptAction(js.release());
 }
 
+// EmbedPDF(epdf-api): EPDFDoc_GetNamedJavaScriptActionModel.
 FPDF_EXPORT EPDF_ACTION_MODEL FPDF_CALLCONV
 EPDFDoc_GetNamedJavaScriptActionModel(FPDF_DOCUMENT document, int index) {
   ScopedFPDFDocumentView document_view(document);

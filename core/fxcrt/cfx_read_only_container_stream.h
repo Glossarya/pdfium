@@ -32,6 +32,7 @@ concept HasPtrSpanMethod = requires(const Container& t) {
 template <typename Container>
 class CFX_ReadOnlyContainerStream final : public CFX_ReadOnlySpanStream {
  public:
+  // EmbedPDF(layer-door): its bytes outlive any clone, so clones share them.
   // The container is owned: the bytes live as long as this stream does.
   bool IsSelfContained() const override { return true; }
 

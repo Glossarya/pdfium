@@ -83,7 +83,7 @@
 namespace {
 
 constexpr int kRenderMaxRecursionDepth = 64;
-// EmbedPDF: thread-confined runtime - per-thread render recursion counter so
+// EmbedPDF(thread-confined-globals): per-thread render recursion counter so
 // concurrent renders on different workers don't corrupt each other's depth.
 EPDF_TLS int g_CurrentRecursionDepth = 0;
 
@@ -218,6 +218,9 @@ void CPDF_RenderStatus::RenderObjectList(
     const CFX_Matrix& mtObj2Device) {
   CFX_FloatRect clip_rect = mtObj2Device.GetInverse().TransformRect(
       CFX_FloatRect(device_->GetClipBox()));
+  // EmbedPDF(render-speedup): pass over runs of objects whose bounds miss the
+  // clip; every object in them would fail the same test, so the output is
+  // unchanged.
   auto misses_clip = [&clip_rect](const CFX_FloatRect& rect) {
     return rect.left > clip_rect.right || rect.right < clip_rect.left ||
            rect.bottom > clip_rect.top || rect.top < clip_rect.bottom;
@@ -246,6 +249,7 @@ void CPDF_RenderStatus::RenderObjectList(
       continue;
     }
 
+    // EmbedPDF(render-speedup): the same test the run skip above uses.
     if (misses_clip(pCurObj->GetRect())) {
       continue;
     }
@@ -432,6 +436,8 @@ bool CPDF_RenderStatus::ProcessForm(const CPDF_FormObject* pFormObj,
   status.SetDropObjects(drop_objects_);
   status.SetFormResource(std::move(pResources));
   status.SetInGroup(in_group_);
+  // EmbedPDF(bug-fix): upstream passed a form's fill alpha on to its content,
+  // so nested forms applied it more than once.
   CPDF_GraphicStates initial_states = pFormObj->graphic_states();
   // Form content already carries the inherited fill alpha in its objects or
   // applies it when compositing a transparency group.
@@ -1463,6 +1469,8 @@ RetainPtr<CFX_DIBitmap> CPDF_RenderStatus::LoadSMask(
   CFX_Matrix matrix = smask_matrix;
   matrix.Translate(-clip_rect.left, -clip_rect.top);
 
+  // EmbedPDF(reads-dont-write): read the page resources without the mutable
+  // getter; the form only reads them.
   CPDF_Form form(context_->GetDocument(),
                  pdfium::WrapRetain(const_cast<CPDF_Dictionary*>(
                      context_->GetPageResources())),

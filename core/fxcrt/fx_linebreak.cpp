@@ -4,8 +4,9 @@
 
 // Original code copyright 2014 Foxit Software Inc. http://www.foxitsoftware.com
 
-// EmbedPDF: lifted from xfa/fgas/layout/fgas_linebreak.cpp so the rich text
-// layout in core/fpdfdoc can use the UAX #14 pair table without XFA.
+// EmbedPDF(rich-text): lifted from xfa/fgas/layout/fgas_linebreak.cpp so the
+// rich text layout in core/fpdfdoc can use the UAX #14 pair table without
+// XFA.
 
 #include "core/fxcrt/fx_linebreak.h"
 

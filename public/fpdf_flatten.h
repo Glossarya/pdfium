@@ -22,6 +22,7 @@
 // Flatten for print.
 #define FLAT_PRINT 1
 
+// EmbedPDF(epdf-api): the EPDF_FLATTEN_STATUS_* values.
 // Per-annotation outcome of EPDFPage_FlattenAnnotations().
 // Painted into the page content and removed from /Annots.
 #define EPDF_FLATTEN_STATUS_APPLIED 0
@@ -46,6 +47,8 @@ extern "C" {
 // cause.
 FPDF_EXPORT int FPDF_CALLCONV FPDFPage_Flatten(FPDF_PAGE page, int nFlag);
 
+// EmbedPDF(epdf-api): EPDFPage_Flatten, EPDFPage_FlattenAnnotations and
+// EPDFPage_ExportAnnotationsAsDocument.
 // Experimental EmbedPDF Extension API.
 // Flatten every eligible annotation appearance on a page. This is the
 // layer-safe counterpart to FPDFPage_Flatten(): the page dictionary is

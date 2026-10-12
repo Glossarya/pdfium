@@ -52,6 +52,9 @@ class CPDF_ColorState {
   void SetStrokePattern(RetainPtr<CPDF_Pattern> pattern,
                         pdfium::span<float> values);
 
+  // EmbedPDF(faithful-content-rewrite): the resource names the content
+  // generator writes colour spaces and patterns under, so pruning keeps
+  // those resources.
   const ByteString& GetFillColorSpaceResName() const;
   const ByteString& GetStrokeColorSpaceResName() const;
   void SetFillColorSpaceResName(ByteString name);
@@ -62,6 +65,8 @@ class CPDF_ColorState {
   void SetFillPatternResName(ByteString name);
   void SetStrokePatternResName(ByteString name);
 
+  // EmbedPDF(faithful-content-rewrite): HasRef() and ColorData's base below
+  // mean what upstream's do, spelled differently; upstream's lines are fine.
   bool HasRef() const { return ref_.GetObject() != nullptr; }
 
  private:
@@ -78,6 +83,7 @@ class CPDF_ColorState {
     CPDF_Color fill_color_;
     CPDF_Color stroke_color_;
 
+    // EmbedPDF(faithful-content-rewrite): see GetFillColorSpaceResName().
     ByteString fill_colorspace_res_name_;
     ByteString stroke_colorspace_res_name_;
     ByteString fill_pattern_res_name_;

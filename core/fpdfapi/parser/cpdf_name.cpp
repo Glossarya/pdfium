@@ -34,6 +34,7 @@ ByteString CPDF_Name::GetString() const {
 }
 
 void CPDF_Name::SetString(const ByteString& str) {
+  // EmbedPDF(write-generation): a write past the layer's door is a bug.
   DCHECK_PDF_WRITABLE(this);
   name_ = str;
 }
@@ -46,6 +47,7 @@ WideString CPDF_Name::GetUnicodeText() const {
   return PDF_DecodeText(name_.unsigned_span());
 }
 
+// EmbedPDF(save-generations): writers carry the write context.
 bool CPDF_Name::WriteTo(IFX_ArchiveStream* archive,
                         const CPDF_Encryptor* encryptor,
                         const CPDF_WriteContext* context) const {

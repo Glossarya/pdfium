@@ -41,6 +41,8 @@ class CPDF_Color {
   uint32_t ComponentCount() const;
   bool IsColorSpaceRGB() const;
   bool IsColorSpaceGray() const;
+  // EmbedPDF(faithful-content-rewrite): the content generator writes a
+  // DeviceCMYK colour with `k`/`K`.
   bool IsColorSpaceCMYK() const;
   // Wrapper around GetRGB() that returns the RGB value as FX_COLORREF. The
   // GetRGB() return value is clamped to fit into FX_COLORREF, where the color
@@ -48,6 +50,8 @@ class CPDF_Color {
   std::optional<FX_COLORREF> GetColorRef() const;
   std::optional<FX_RGB_STRUCT<float>> GetRGB() const;
 
+  // EmbedPDF(faithful-content-rewrite): the components as read and the space
+  // they were read in, so the content generator writes them back unchanged.
   pdfium::span<const float> GetRawNonPatternComps() const;
   
   const CPDF_ColorSpace* GetColorSpace() const { return cs_.Get(); }
@@ -55,9 +59,10 @@ class CPDF_Color {
   // Should only be called if IsPattern() returns true.
   RetainPtr<CPDF_Pattern> GetPattern() const;
 
-  // EmbedPDF: should only be called if IsPattern() returns true. The colour
-  // an uncoloured pattern paints in: one component for each of its pattern
-  // colour space's base, none for a coloured pattern.
+  // EmbedPDF(faithful-content-rewrite): should only be called if IsPattern()
+  // returns true. The colour an uncoloured pattern paints in: one component
+  // for each of its pattern colour space's base, none for a coloured
+  // pattern.
   pdfium::span<const float> GetPatternComps() const;
 
  protected:

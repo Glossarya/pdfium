@@ -59,6 +59,8 @@ ByteString CPDF_String::GetString() const {
 }
 
 void CPDF_String::SetString(const ByteString& str) {
+  // EmbedPDF(write-generation, reads-dont-write): a write past the layer's
+  // door, or one during a read-only walk, is a bug.
   DCHECK_PDF_GRAPH_MUTABLE_FOR(this);
   DCHECK_PDF_WRITABLE(this);
   data_ = str;
@@ -72,6 +74,7 @@ WideString CPDF_String::GetUnicodeText() const {
   return PDF_DecodeText(data_.unsigned_span());
 }
 
+// EmbedPDF(save-generations): writers carry the write context.
 bool CPDF_String::WriteTo(IFX_ArchiveStream* archive,
                           const CPDF_Encryptor* encryptor,
                           const CPDF_WriteContext* context) const {

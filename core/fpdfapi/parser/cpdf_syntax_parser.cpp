@@ -67,8 +67,8 @@ class ReadableSubStream final : public IFX_SeekableReadStream {
 
   FX_FILESIZE GetSize() override { return part_size_; }
 
-  // EmbedPDF: a sub-stream is one range of its reader; the reader is what a
-  // holder recognises as storage it owns (CPDF_Stream sharing).
+  // EmbedPDF(layer-door): a sub-stream is one range of its reader; the reader
+  // is what a holder recognises as storage it owns (CPDF_Stream sharing).
   IFX_SeekableReadStream* GetUnderlyingStream() override {
     return file_read_->GetUnderlyingStream();
   }
@@ -83,6 +83,7 @@ class ReadableSubStream final : public IFX_SeekableReadStream {
 }  // namespace
 
 // static
+// EmbedPDF(thread-confined-globals): each thread parses with its own depth.
 EPDF_TLS int CPDF_SyntaxParser::s_CurrentRecursionDepth = 0;
 
 // static
@@ -456,10 +457,10 @@ void CPDF_SyntaxParser::RecordingToNextWord() {
   while (true) {
     uint8_t ch;
     if (!GetNextChar(ch)) {
-      // EmbedPDF: a "%%EOF" that is the very last thing in the file, with no
-      // line ending after it, still closes its revision. Many writers end
-      // there; without this the last revision has no end and every
-      // signature in the file is judged on a broken chain.
+      // EmbedPDF(signatures): a "%%EOF" that is the very last thing in the
+      // file, with no line ending after it, still closes its revision. Many
+      // writers end there; without this the last revision has no end and
+      // every signature in the file is judged on a broken chain.
       if (eof_state == EofState::kF) {
         trailer_ends_->push_back(pos_);
       }
@@ -922,6 +923,7 @@ RetainPtr<CPDF_ReadValidator> CPDF_SyntaxParser::GetValidator() const {
   return file_access_;
 }
 
+// EmbedPDF(layer-open): a layer reads the base file's bytes before its delta.
 RetainPtr<IFX_SeekableReadStream> CPDF_SyntaxParser::GetFileAccess() const {
   return file_access_ ? file_access_->GetFileAccess() : nullptr;
 }

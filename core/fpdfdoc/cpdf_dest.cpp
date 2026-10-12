@@ -73,6 +73,8 @@ int CPDF_Dest::GetDestPageIndex(CPDF_Document* doc) const {
   return doc->GetPageIndex(pPage->GetObjNum());
 }
 
+// EmbedPDF(epdf-api): backs EPDFDest_GetPageObjectNumber: the destination's
+// page by object number, not by index.
 uint32_t CPDF_Dest::GetPageObjectNumber(CPDF_Document* doc) const {
   if (!doc || !array_) {
     return 0;

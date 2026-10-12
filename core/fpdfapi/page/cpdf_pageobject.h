@@ -67,6 +67,10 @@ class CPDF_PageObject {
   bool IsActive() const { return is_active_; }
   void TransformClipPath(const CFX_Matrix& matrix);
 
+  // EmbedPDF(lean-page-objects): SetOriginalRect() and GetOriginalRect()
+  // moved to the text and image objects.
+  // EmbedPDF(render-speedup): a held object's new rect makes its holder's
+  // object groups stale.
   void SetRect(const CFX_FloatRect& rect) {
     rect_ = rect;
     if (held_) {
@@ -75,8 +79,9 @@ class CPDF_PageObject {
   }
   const CFX_FloatRect& GetRect() const { return rect_; }
 
-  // Counts, process-wide, the changes to GetRect() of objects that a holder
-  // lists. A holder's object groups are current while it is unchanged.
+  // EmbedPDF(render-speedup): counts, process-wide, the changes to GetRect()
+  // of objects that a holder lists. A holder's object groups are current
+  // while it is unchanged.
   static uint64_t HeldBoundsGeneration();
 
   FX_RECT GetBBox() const;
@@ -144,17 +149,21 @@ class CPDF_PageObject {
 
   void SetDefaultStates();
 
+  // EmbedPDF(lean-page-objects): original_matrix() and
+  // InitializeOriginalMatrix() moved to CPDF_ImageObject.
  protected:
   void CopyData(const CPDF_PageObject* pSrcObject);
 
  private:
-  // Only a holder lists and unlists objects.
+  // EmbedPDF(render-speedup): only a holder lists and unlists objects.
   friend class CPDF_PageObjectHolder;
 
   static void NoteHeldBoundsChanged();
 
   CPDF_GraphicStates graphic_states_;
   CFX_FloatRect rect_;
+  // EmbedPDF(lean-page-objects): original_rect_ and original_matrix_ moved to
+  // CPDF_TextObject and CPDF_ImageObject, the only objects that use them.
   CPDF_ContentMarks content_marks_;
   // Modifying `is_active_` automatically set `dirty_` to be true, but
   // otherwise `dirty_` and `is_active_` are independent.  A
@@ -165,7 +174,7 @@ class CPDF_PageObject {
   // object was created with (`CPDF_ImageObject::original_matrix()`).
   bool matrix_dirty_ = false;
   bool is_active_ = true;
-  // Whether a holder lists this object.
+  // EmbedPDF(render-speedup): whether a holder lists this object.
   bool held_ = false;
   int32_t content_stream_;
   // The resource name for this object.

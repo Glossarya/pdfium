@@ -27,6 +27,7 @@ class CPDF_AnnotList final : public CPDF_PageRenderContext::AnnotListIface {
   explicit CPDF_AnnotList(CPDF_Page* pPage);
   ~CPDF_AnnotList() override;
 
+  // EmbedPDF(annot-appearance): annotations and widgets draw independently.
   // Draws the annotations that aren't widgets when |bShowAnnots|, then the
   // widgets when |bShowWidget|, so a caller can draw either, both or neither.
   void DisplayAnnots(CPDF_RenderContext* context,

@@ -52,6 +52,8 @@ class CPDF_DIB final : public CFX_DIBBase {
   RetainPtr<CPDF_ColorSpace> GetColorSpace() const { return color_space_; }
   uint32_t GetMatteColor() const { return matte_color_; }
   bool IsJBigImage() const;
+  // EmbedPDF(decoded-image-store): the store keeps a JPX decode per
+  // resolution levels skipped.
   bool IsJpxImage() const;
 
   // The JPX resolution levels a decode to `max_size_required` skips, for an
@@ -132,6 +134,7 @@ class CPDF_DIB final : public CFX_DIBBase {
   CPDF_ColorSpace::Family group_family_ = CPDF_ColorSpace::Family::kUnknown;
   uint32_t matte_color_ = 0;
   LoadState status_ = LoadState::kFail;
+  // EmbedPDF(decoded-image-store): see resolution_levels_to_skip().
   uint8_t resolution_levels_to_skip_ = 0;
   bool load_mask_ = false;
   bool default_decode_ = true;

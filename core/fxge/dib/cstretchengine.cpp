@@ -28,6 +28,8 @@ static_assert(
 
 namespace {
 
+// EmbedPDF(render-speedup): dedicated resampling loops that give the general
+// loops' exact bytes; SetSpecializedLoopsEnabledForTesting() turns them off.
 bool g_specialized_loops_enabled = true;
 
 // How the bits `first` to `last` of a 1 bpp scanline are set. Bits are
@@ -178,6 +180,7 @@ size_t TotalBytesForWeightCount(size_t weight_count) {
 
 }  // namespace
 
+// EmbedPDF(render-speedup): the off switch the off/on comparisons use.
 // static
 void CStretchEngine::SetSpecializedLoopsEnabledForTesting(bool enabled) {
   g_specialized_loops_enabled = enabled;
@@ -473,6 +476,7 @@ bool CStretchEngine::ContinueStretchHorz(PauseIndicatorIface* pPause) {
       rows_to_go = kStrechPauseRows;
     }
 
+    // EmbedPDF(render-speedup): StretchOpaqueRow() reads the row as a span.
     pdfium::span<const uint8_t> src_row = source_->GetScanline(cur_row_);
     const uint8_t* src_scan = src_row.data();
     pdfium::span<uint8_t> dest_span = inter_buf_.subspan(
@@ -485,6 +489,7 @@ bool CStretchEngine::ContinueStretchHorz(PauseIndicatorIface* pPause) {
         for (int col = dest_clip_.left; col < dest_clip_.right; ++col) {
           const PixelWeight* pWeights = weight_table_.GetPixelWeight(col);
           uint32_t dest_a = 0;
+          // EmbedPDF(render-speedup): runs of clear or set bits at once.
           // Clear bits add nothing, and set bits add 255 times each weight,
           // which is 255 times the weights' sum. Only a window with both
           // needs its bits one by one.
@@ -553,6 +558,8 @@ bool CStretchEngine::ContinueStretchHorz(PauseIndicatorIface* pPause) {
         break;
       }
       case TransformMethod::kManyBpptoManyBpp: {
+        // EmbedPDF(render-speedup): opaque 3 and 4 byte rows in a dedicated
+        // loop.
         if (g_specialized_loops_enabled && (Bpp == 3 || Bpp == 4)) {
           if (Bpp == 3) {
             StretchOpaqueRow<3>(src_row, dest_span, weight_table_,
@@ -655,6 +662,7 @@ void CStretchEngine::StretchVert() {
       }
       case TransformMethod::k8BppToManyBpp:
       case TransformMethod::kManyBpptoManyBpp: {
+        // EmbedPDF(render-speedup): the vertical pass in a dedicated loop.
         if (g_specialized_loops_enabled) {
           StretchVertRow(inter_buf_, inter_pitch_, src_clip_.top, pWeights,
                          DestBpp, dest_clip_.Width(), dest_scanline_);

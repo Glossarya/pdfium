@@ -38,12 +38,13 @@ class CPDF_Type3Font final : public CPDF_SimpleFont {
   void SetPageResources(CPDF_Dictionary* pResources) {
     page_resources_.Reset(pResources);
   }
-  // EmbedPDF: whether the font's glyph procedures look names up in the
-  // resources of the content using the font (SetPageResources()): when the
-  // font has no /Resources of its own.
+  // EmbedPDF(faithful-content-rewrite, redaction): whether the font's glyph
+  // procedures look names up in the resources of the content using the font
+  // (SetPageResources()): when the font has no /Resources of its own.
   static bool GlyphsUseContentResources(const CPDF_Dictionary* font_dict);
   CPDF_Type3Char* LoadChar(uint32_t charcode);
-  // EmbedPDF: the /CharProcs name of the glyph `charcode` draws, or null.
+  // EmbedPDF(redaction): the /CharProcs name of the glyph `charcode` draws, or
+  // null.
   const char* GetCharProcName(uint32_t charcode) const;
   void CheckType3FontMetrics();
 

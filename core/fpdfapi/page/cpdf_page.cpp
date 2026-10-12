@@ -27,6 +27,7 @@
 #include "core/fxcrt/check_op.h"
 #include "core/fxcrt/containers/contains.h"
 
+// EmbedPDF(page-residency): for IsContentCurrent().
 namespace {
 
 // A content check made at no epoch: the next one compares again.
@@ -39,6 +40,8 @@ CPDF_Page::CPDF_Page(CPDF_Document* document,
     : CPDF_PageObjectHolder(document, std::move(pPageDict), nullptr, nullptr),
       page_size_(100, 100),
       pdf_document_(document) {
+  // EmbedPDF(view-scope, reads-dont-write): read the page's resources
+  // through the document's view and without the mutable getter.
   CPDF_DocumentViewScope document_view(document);
 
   // Cannot initialize |resources_| and |page_resources_| via the
@@ -53,6 +56,7 @@ CPDF_Page::CPDF_Page(CPDF_Document* document,
   UpdateDimensions();
   transparency_.SetIsolated();
   LoadTransparencyInfo();
+  // EmbedPDF(page-residency): a page just made matches the document.
   content_checked_epoch_ = document ? document->GetOverlayEpoch() : 0;
 }
 
@@ -82,6 +86,7 @@ bool CPDF_Page::IsPage() const {
   return true;
 }
 
+// EmbedPDF(overlay-epoch): re-read /Resources when the overlay epoch moved.
 RetainPtr<const CPDF_Dictionary> CPDF_Page::GetResources() const {
   RefreshResourcesIfNeeded();
   return CPDF_PageObjectHolder::GetResources();
@@ -93,6 +98,7 @@ RetainPtr<const CPDF_Dictionary> CPDF_Page::GetPageResources() const {
 }
 
 void CPDF_Page::ParseContent() {
+  // EmbedPDF(view-scope): parse through the document's view.
   CPDF_DocumentViewScope document_view(GetDocument());
 
   if (GetParseState() == ParseState::kParsed) {
@@ -107,6 +113,8 @@ void CPDF_Page::ParseContent() {
   ContinueParse(nullptr);
 }
 
+// EmbedPDF(page-residency): what the parsed page costs, and whether it still
+// matches the document.
 const CPDF_ParsedSize& CPDF_Page::GetParsedSize() const {
   if (GetParseState() == ParseState::kParsed &&
       parsed_size_edits_ != GetObjectEdits()) {
@@ -177,6 +185,9 @@ RetainPtr<CPDF_Object> CPDF_Page::GetMutablePageAttr(ByteStringView name) {
   return pdfium::WrapRetain(const_cast<CPDF_Object*>(GetPageAttr(name).Get()));
 }
 
+// EmbedPDF(layer-door): the page's resources open for writing on their first
+// actual write. On a layer, inherited resources become the page's own copy
+// rather than a write to the parent's.
 void CPDF_Page::EnsureMutableBackingObjectForResources() {
   RetainPtr<CPDF_Dictionary> page_dict = GetMutableDict();
   if (GetDocument() && GetDocument()->IsLayerDocument() &&
@@ -192,6 +203,7 @@ void CPDF_Page::EnsureMutableBackingObjectForPageResources() {
   page_resources_ = resources_;
 }
 
+// EmbedPDF(overlay-epoch): re-read /Resources when the overlay epoch moved.
 void CPDF_Page::RefreshResourcesIfNeeded() const {
   CPDF_Document* document = GetDocument();
   if (!document) {
@@ -217,6 +229,8 @@ void CPDF_Page::RefreshResourcesIfNeeded() const {
 }
 
 RetainPtr<const CPDF_Object> CPDF_Page::GetPageAttr(ByteStringView name) const {
+  // EmbedPDF(view-scope): inherited attributes resolve through the
+  // document's view.
   CPDF_DocumentViewScope document_view(GetDocument());
 
   std::set<RetainPtr<const CPDF_Dictionary>> visited;
@@ -332,7 +346,8 @@ CFX_Matrix CPDF_Page::GetDisplayMatrix() const {
 }
 
 int CPDF_Page::GetPageRotation() const {
-  // EmbedPDF: If rotation override is set, use it instead of dictionary value
+  // EmbedPDF(rotation-override): if a rotation override is set, use it
+  // instead of the dictionary value.
   if (rotation_override_.has_value()) {
     return rotation_override_.value();
   }
@@ -347,6 +362,8 @@ int CPDF_Page::GetOriginalRotation() const {
   return (rotation < 0) ? (rotation + 4) : rotation;
 }
 
+// EmbedPDF(rotation-override): set (or with -1, clear) the override and
+// compute the page's size and matrix again.
 void CPDF_Page::SetRotationOverride(int rotation) {
   // Set override (-1 clears it)
   if (rotation < 0) {
@@ -406,7 +423,8 @@ void CPDF_Page::UpdateDimensions() {
   page_size_.width = bbox_.Width();
   page_size_.height = bbox_.Height();
 
-  // EmbedPDF: what this page now shows, for IsContentCurrent().
+  // EmbedPDF(page-residency): what this page now shows, for
+  // IsContentCurrent().
   read_mediabox_ = GetBox(pdfium::page_object::kMediaBox);
   read_cropbox_ = GetBox(pdfium::page_object::kCropBox);
   read_rotation_ = GetOriginalRotation();

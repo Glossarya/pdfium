@@ -39,7 +39,7 @@ namespace {
 
 constexpr char kQuadPoints[] = "QuadPoints";
 
-// EmbedPDF: thread-confined runtime - config callbacks, NOT runtime knobs.
+// EmbedPDF(thread-confined-globals): config callbacks, NOT runtime knobs.
 // These two process-globals are intentionally left process-wide (not EPDF_TLS):
 // they are immutable configuration that MUST be set once during process
 // bootstrap, before any worker thread starts, and MUST NOT be mutated while
@@ -91,9 +91,10 @@ unsigned long GetStreamMaybeCopyAndReturnLengthImpl(
   }
 
   pdfium::span<const uint8_t> stream_data_span = stream_acc->GetSpan();
-  // EmbedPDF: copy when the buffer is large enough, as every caller's API
-  // documents. The comparison was inverted: a larger buffer came back
-  // unfilled (with success), and a smaller one failed fxcrt::Copy()'s CHECK.
+  // EmbedPDF(bug-fix): copy when the buffer is large enough, as every
+  // caller's API documents. The comparison was inverted: a larger buffer came
+  // back unfilled (with success), and a smaller one failed fxcrt::Copy()'s
+  // CHECK.
   if (!buffer.empty() && buffer.size() >= stream_data_span.size()) {
     fxcrt::Copy(stream_data_span, buffer);
   }
@@ -234,6 +235,8 @@ FPDF_DOCUMENT FPDFDocumentFromCPDFDocument(CPDF_Document* doc) {
   return reinterpret_cast<FPDF_DOCUMENT>(doc);
 }
 
+// EmbedPDF(sliced-load): a page still loading in slices finishes its load
+// before a read sees it; CPDFPageFromFPDFPageAsIs() is the mid-load view.
 CPDF_Page* CPDFPageFromFPDFPage(FPDF_PAGE page) {
   CPDF_Page* pdf_page = CPDFPageFromFPDFPageAsIs(page);
   if (pdf_page && pdf_page->GetParseState() ==
@@ -247,6 +250,8 @@ CPDF_Page* CPDFPageFromFPDFPageAsIs(FPDF_PAGE page) {
   return page ? IPDFPageFromFPDFPage(page)->AsPDFPage() : nullptr;
 }
 
+// EmbedPDF(view-scope): read entry points unwrap a handle and open its
+// document's view scope in one step.
 ScopedFPDFDocumentView::ScopedFPDFDocumentView(FPDF_DOCUMENT document)
     : document_(CPDFDocumentFromFPDFDocument(document)),
       view_scope_(document_) {}
@@ -259,11 +264,15 @@ ScopedFPDFPageView::ScopedFPDFPageView(FPDF_PAGE page)
 
 ScopedFPDFPageView::~ScopedFPDFPageView() = default;
 
+// EmbedPDF(annot-identity): a handle whose annotation is gone unwraps to
+// null.
 CPDF_AnnotContext* CPDFAnnotContextFromFPDFAnnotation(FPDF_ANNOTATION annot) {
   auto* context = reinterpret_cast<CPDF_AnnotContext*>(annot);
   return context && context->IsValid() ? context : nullptr;
 }
 
+// EmbedPDF(view-scope): an annotation handle unwrapped with its document's
+// view scope open.
 ScopedFPDFAnnotationView::ScopedFPDFAnnotationView(
     FPDF_ANNOTATION annotation)
     : annotation_(CPDFAnnotContextFromFPDFAnnotation(annotation)),
@@ -349,8 +358,9 @@ RetainPtr<const CPDF_Array> GetQuadPointsArrayFromDictionary(
 
 RetainPtr<CPDF_Array> GetMutableQuadPointsArrayFromDictionary(
     CPDF_Dictionary* dict) {
-  // EmbedPDF: the mutable accessor, so an indirect /QuadPoints opens through
-  // the document's write door (a layer transaction copies it up).
+  // EmbedPDF(layer-door): the mutable accessor, so an indirect /QuadPoints
+  // opens through the document's write door (a layer transaction copies it
+  // up).
   return dict->GetMutableArrayFor("QuadPoints");
 }
 

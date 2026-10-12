@@ -30,7 +30,8 @@
 // D50 - Widely used
 const cmsCIEXYZ* CMSEXPORT cmsD50_XYZ(void)
 {
-    // EmbedPDF: immutable shared D50 constant is safe for concurrent readers.
+    // EmbedPDF(thread-confined-globals): an immutable shared D50 constant is
+    // safe for concurrent readers.
     static const cmsCIEXYZ D50XYZ = {cmsD50X, cmsD50Y, cmsD50Z};
 
     return &D50XYZ;
@@ -38,10 +39,10 @@ const cmsCIEXYZ* CMSEXPORT cmsD50_XYZ(void)
 
 const cmsCIExyY* CMSEXPORT cmsD50_xyY(void)
 {
-    // EmbedPDF: thread-confined runtime.
-    // This is equivalent to cmsXYZ2xyY(cmsD50_XYZ()), but avoids writing to a
-    // shared static on every call. ThreadSanitizer flags the old lazy
-    // recomputation when multiple documents create ICC transforms in parallel.
+    // EmbedPDF(thread-confined-globals): this is equivalent to
+    // cmsXYZ2xyY(cmsD50_XYZ()), but avoids writing to a shared static on
+    // every call. ThreadSanitizer flags the old lazy recomputation when
+    // multiple documents create ICC transforms in parallel.
     static const cmsCIExyY D50xyY = {
         cmsD50X / (cmsD50X + cmsD50Y + cmsD50Z),
         cmsD50Y / (cmsD50X + cmsD50Y + cmsD50Z),

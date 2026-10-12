@@ -71,6 +71,8 @@ class CPDF_SyntaxParser {
   ByteString PeekNextWord();
 
   RetainPtr<CPDF_ReadValidator> GetValidator() const;
+  // EmbedPDF(layer-open): a layer reads the base file's bytes before its
+  // delta.
   RetainPtr<IFX_SeekableReadStream> GetFileAccess() const;
   uint32_t GetDirectNum();
   bool GetNextChar(uint8_t& ch);
@@ -97,6 +99,7 @@ class CPDF_SyntaxParser {
   friend class cpdf_syntax_parser_ReadHexString_Test;
 
   static constexpr int kParserMaxRecursionDepth = 64;
+  // EmbedPDF(thread-confined-globals): each thread parses with its own depth.
   static EPDF_TLS int s_CurrentRecursionDepth;
 
   bool ReadBlockAt(FX_FILESIZE read_pos);

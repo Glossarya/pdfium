@@ -179,6 +179,8 @@ CPDF_DocPageData* CPDF_DocPageData::FromDocument(const CPDF_Document* doc) {
 
 CPDF_DocPageData::CPDF_DocPageData() = default;
 
+// EmbedPDF(layer-seam): a layer's page data falls back to its base's for
+// objects the layer hasn't promoted, so both share one parsed copy.
 CPDF_DocPageData::CPDF_DocPageData(CPDF_DocPageData* fallback)
     : fallback_(fallback) {}
 
@@ -224,6 +226,7 @@ RetainPtr<CPDF_Font> CPDF_DocPageData::GetFont(
     return pdfium::WrapRetain(it->second.Get());
   }
 
+  // EmbedPDF(layer-seam): an unpromoted base object uses the base's entry.
   if (fallback_ && CanUseFallbackForObject(font_dict.Get())) {
     return fallback_->GetFont(font_dict);
   }
@@ -237,10 +240,14 @@ RetainPtr<CPDF_Font> CPDF_DocPageData::GetFont(
   return font;
 }
 
+// EmbedPDF(measurement): a caption's render-only font leaves the cache before
+// its scratch holder dies.
 void CPDF_DocPageData::ForgetEphemeralFont(const CPDF_Dictionary* font_dict) {
   font_map_.erase(pdfium::WrapRetain(font_dict));
 }
 
+// EmbedPDF(layer-transaction): a dropped or replaced version leaves no
+// derived entry behind.
 void CPDF_DocPageData::ForgetObjectTree(const CPDF_Object* root) {
   CPDF_ObjectWalker walker(pdfium::WrapRetain(root));
   while (RetainPtr<const CPDF_Object> object = walker.GetNext()) {
@@ -400,6 +407,7 @@ RetainPtr<CPDF_ColorSpace> CPDF_DocPageData::GetColorSpaceInternal(
     return pdfium::WrapRetain(it->second.Get());
   }
 
+  // EmbedPDF(layer-seam): an unpromoted base object uses the base's entry.
   if (fallback_ && CanUseFallbackForObject(pArray.Get())) {
     return fallback_->GetColorSpaceGuarded(pCSObj, pResources, pVisited);
   }
@@ -424,6 +432,7 @@ RetainPtr<CPDF_Pattern> CPDF_DocPageData::GetPattern(
     return pdfium::WrapRetain(it->second.Get());
   }
 
+  // EmbedPDF(layer-seam): an unpromoted base object uses the base's entry.
   if (fallback_ && CanUseFallbackForObject(pPatternObj.Get())) {
     return fallback_->GetPattern(pPatternObj, matrix);
   }
@@ -455,6 +464,7 @@ RetainPtr<CPDF_ShadingPattern> CPDF_DocPageData::GetShading(
     return pdfium::WrapRetain(it->second->AsShadingPattern());
   }
 
+  // EmbedPDF(layer-seam): an unpromoted base object uses the base's entry.
   if (fallback_ && CanUseFallbackForObject(pPatternObj.Get())) {
     return fallback_->GetShading(pPatternObj, matrix);
   }
@@ -469,12 +479,15 @@ RetainPtr<CPDF_Image> CPDF_DocPageData::GetImage(uint32_t dwStreamObjNum) {
   DCHECK(dwStreamObjNum);
   auto it = image_map_.find(dwStreamObjNum);
   if (it != image_map_.end()) {
+    // EmbedPDF(overlay-epoch): a cached image re-reads its stream once the
+    // layer has promoted it.
     if (GetDocument()->IsObjectPromoted(dwStreamObjNum)) {
       it->second->RebindStreamIfPromoted();
     }
     return it->second;
   }
 
+  // EmbedPDF(layer-seam): images never use the base's entry.
   // CPDF_Image carries a document back-pointer and CPDF_PageImageCache rejects
   // cross-document images. Build a document-local CPDF_Image even when the
   // underlying stream falls through to a shared base document.
@@ -500,6 +513,7 @@ RetainPtr<CPDF_IccProfile> CPDF_DocPageData::GetIccProfile(
     return it->second;
   }
 
+  // EmbedPDF(layer-seam): an unpromoted base object uses the base's entry.
   if (fallback_ && CanUseFallbackForObject(pProfileStream.Get())) {
     return fallback_->GetIccProfile(pProfileStream);
   }
@@ -538,6 +552,7 @@ RetainPtr<CPDF_StreamAcc> CPDF_DocPageData::GetFontFileStreamAcc(
     return it->second;
   }
 
+  // EmbedPDF(layer-seam): an unpromoted base object uses the base's entry.
   if (fallback_ && CanUseFallbackForObject(font_stream.Get())) {
     return fallback_->GetFontFileStreamAcc(font_stream);
   }
@@ -578,6 +593,8 @@ void CPDF_DocPageData::MaybePurgeFontFileStreamAcc(
   }
 }
 
+// EmbedPDF(layer-seam): only an indirect object the layer hasn't promoted is
+// the base's, so only it may use the base's entry.
 bool CPDF_DocPageData::CanUseFallbackForObject(
     const CPDF_Object* object) const {
   if (!object) {

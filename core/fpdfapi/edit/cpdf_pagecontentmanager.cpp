@@ -32,8 +32,9 @@ CPDF_PageContentManager::CPDF_PageContentManager(
     : page_obj_holder_(page_obj_holder),
       document_(document),
       objects_with_multi_refs_(GetObjectsWithMultipleReferences(document_)) {
-  // For Form XObjects, the content is the XObject stream itself, not a
-  // separate "Contents" entry. Use GetMutableFormStream() to detect this.
+  // EmbedPDF(faithful-content-rewrite): for Form XObjects, the content is the
+  // XObject stream itself, not a separate "Contents" entry. Use
+  // GetMutableFormStream() to detect this.
   RetainPtr<CPDF_Stream> form_stream = page_obj_holder_->GetMutableFormStream();
   if (form_stream) {
     is_form_xobject_ = true;
@@ -82,7 +83,8 @@ CPDF_PageContentManager::~CPDF_PageContentManager() {
 }
 
 bool CPDF_PageContentManager::HasStreamAtIndex(size_t stream_index) {
-  // For Form XObjects, stream 0 is always the Form XObject stream itself.
+  // EmbedPDF(faithful-content-rewrite): for Form XObjects, stream 0 is always
+  // the Form XObject stream itself.
   if (is_form_xobject_ && stream_index == 0) {
     return true;
   }
@@ -111,8 +113,9 @@ RetainPtr<CPDF_Stream> CPDF_PageContentManager::GetStreamByIndex(
 }
 
 size_t CPDF_PageContentManager::AddStream(fxcrt::ostringstream* buf) {
-  // For Form XObjects, there's only one content stream (the XObject itself).
-  // We cannot add additional streams; instead, update the existing one.
+  // EmbedPDF(faithful-content-rewrite): for Form XObjects, there's only one
+  // content stream (the XObject itself). We cannot add additional streams;
+  // instead, update the existing one.
   if (is_form_xobject_) {
     RetainPtr<CPDF_Stream> form_stream = GetContentsStream();
     if (form_stream) {
@@ -160,7 +163,8 @@ size_t CPDF_PageContentManager::AddStream(fxcrt::ostringstream* buf) {
 void CPDF_PageContentManager::UpdateStream(size_t stream_index,
                                            fxcrt::ostringstream* buf) {
   // If `buf` is now empty, remove the stream instead of setting the data.
-  // For Form XObjects, we can't remove the stream, just clear its content.
+  // EmbedPDF(faithful-content-rewrite): for Form XObjects, we can't remove
+  // the stream, just clear its content.
   if (buf->tellp() <= 0) {
     if (is_form_xobject_) {
       RetainPtr<CPDF_Stream> form_stream = GetContentsStream();
@@ -174,7 +178,8 @@ void CPDF_PageContentManager::UpdateStream(size_t stream_index,
     return;
   }
 
-  // For Form XObjects, always update the form stream directly.
+  // EmbedPDF(faithful-content-rewrite): for Form XObjects, always update the
+  // form stream directly.
   if (is_form_xobject_) {
     RetainPtr<CPDF_Stream> form_stream = GetContentsStream();
     if (form_stream) {
@@ -234,8 +239,9 @@ void CPDF_PageContentManager::ExecuteScheduledRemovals() {
     return;
   }
 
-  // For Form XObjects, we cannot remove the stream (it IS the XObject).
-  // The stream content has already been cleared in UpdateStream().
+  // EmbedPDF(faithful-content-rewrite): for Form XObjects, we cannot remove
+  // the stream (it IS the XObject). The stream content has already been
+  // cleared in UpdateStream().
   if (is_form_xobject_) {
     return;
   }

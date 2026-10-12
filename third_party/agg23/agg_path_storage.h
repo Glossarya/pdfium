@@ -100,6 +100,7 @@ public:
     unsigned vertex(float* x, float* y);
     void add_vertex(float x, float y, unsigned cmd);
     void end_poly();
+    // EmbedPDF(render-speedup): one path storage draws many paths.
     // Empties the path and keeps its blocks, so it can be filled again
     // without allocating.
     void remove_all()

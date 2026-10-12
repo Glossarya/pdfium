@@ -23,7 +23,8 @@ class CFX_XMLElement final : public CFX_XMLNode {
   Type GetType() const override;
   CFX_XMLNode* Clone(CFX_XMLDocument* doc) override;
   void Save(const RetainPtr<IFX_RetainableWriteStream>& pXMLStream) override;
-  // EmbedPDF: element serialization without formatting whitespace.
+  // EmbedPDF(forms-model): element serialization without formatting
+  // whitespace.
   void SaveCompact(
       const RetainPtr<IFX_RetainableWriteStream>& pXMLStream) override;
 

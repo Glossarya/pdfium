@@ -38,6 +38,7 @@ class CStretchEngine {
 
   // Indicates whether to manually set interpolate bilinear option to true to
   // achieve a smoother rendering results.
+  // EmbedPDF(render-speedup): the off switch the off/on comparisons use.
   // Turns off the specialized loops (runs of clear or set bits in 1 bpp
   // sources, opaque 3 and 4 byte rows), so a test can resample with the
   // general loops and compare.

@@ -58,6 +58,7 @@ FPDFCatalog_GetLanguage(FPDF_DOCUMENT document,
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 FPDFCatalog_SetLanguage(FPDF_DOCUMENT document, FPDF_WIDESTRING language);
 
+// EmbedPDF(epdf-api): EPDFCatalog_GetLanguage.
 // Experimental EmbedPDF API.
 // Gets the Catalog /Lang value as a UTF-16LE string with trailing NUL.
 //

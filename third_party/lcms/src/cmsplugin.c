@@ -1057,9 +1057,9 @@ cmsBool _cmsGetTime(struct tm* ptr_time)
 
     _cmsEnterCriticalSectionPrimitive(&_cmsContextPoolHeadMutex);
     t = gmtime(&now);
-    // EmbedPDF: copy gmtime()'s shared static result while still holding the
-    // LCMS mutex. ThreadSanitizer flags copying it after unlock when ICC
-    // profiles are created concurrently.
+    // EmbedPDF(thread-confined-globals): copy gmtime()'s shared static
+    // result while still holding the LCMS mutex. ThreadSanitizer flags
+    // copying it after unlock when ICC profiles are created concurrently.
     if (t != NULL)
         *ptr_time = *t;
     _cmsLeaveCriticalSectionPrimitive(&_cmsContextPoolHeadMutex);

@@ -12,6 +12,7 @@
 #include "core/fxcrt/check.h"
 #include "core/fxcrt/data_vector.h"
 
+// EmbedPDF(save-generations): the encryptor carries the object's generation.
 CPDF_Encryptor::CPDF_Encryptor(const CPDF_CryptoHandler* pHandler,
                                int objnum,
                                uint32_t generation)
@@ -24,6 +25,8 @@ DataVector<uint8_t> CPDF_Encryptor::Encrypt(
   if (src_data.empty()) {
     return DataVector<uint8_t>();
   }
+  // EmbedPDF(save-generations): encrypt with the object's own generation,
+  // not 0.
   return handler_->EncryptContent(obj_num_, generation_, src_data);
 }
 

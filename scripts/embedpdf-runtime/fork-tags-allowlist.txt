@@ -1,0 +1,6 @@
+# Upstream files whose EmbedPDF changes need no per-block tags, one per line:
+# <path> <reason>
+# Read by check-fork-tags.py. Every entry needs a reason; keep this list short.
+
+core/fpdfdoc/cpdf_generateap.cpp Our appearance generator; moves to its own files and this file goes back to upstream's (upstream-sync plan §6.2, phase P4).
+core/fpdfdoc/cpdf_generateap.h Our appearance generator; moves to its own files and this file goes back to upstream's (upstream-sync plan §6.2, phase P4).

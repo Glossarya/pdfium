@@ -5,6 +5,8 @@
 #ifndef PUBLIC_FPDF_ATTACHMENT_H_
 #define PUBLIC_FPDF_ATTACHMENT_H_
 
+// EmbedPDF(epdf-api): the EPDFAttachment_* functions use uint64_t and
+// FPDF_FILEWRITE.
 #include <stdint.h>
 
 // NOLINTNEXTLINE(build/include)
@@ -63,6 +65,8 @@ FPDFDoc_GetAttachment(FPDF_DOCUMENT document, int index);
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 FPDFDoc_DeleteAttachment(FPDF_DOCUMENT document, int index);
 
+// EmbedPDF(epdf-api): EPDFDoc_GetAttachmentKey and
+// EPDFDoc_GetAttachmentIndexByKey.
 // Experimental EmbedPDF API.
 // Get the |document|'s EmbeddedFiles name-tree KEY at |index|, encoded in
 // UTF-16LE. The key is the tree's unique identifier for the entry; it is
@@ -212,6 +216,8 @@ FPDFAttachment_GetFile(FPDF_ATTACHMENT attachment,
                        unsigned long buflen,
                        unsigned long* out_buflen);
 
+// EmbedPDF(epdf-api): EPDFAttachmentExtractStatus and the
+// EPDFAttachment_ExtractFile* functions.
 // Detailed outcome of the EPDFAttachment_ExtractFile* APIs.
 typedef enum {
   EPDFAttachmentExtractStatus_kSuccess = 0,
@@ -294,6 +300,7 @@ FPDFAttachment_GetSubtype(FPDF_ATTACHMENT attachment,
                           FPDF_WCHAR* buffer,
                           unsigned long buflen);
 
+// EmbedPDF(epdf-api): the EPDFAttachment_* setters and getters.
 // Experimental EmbedPDF API.
 // Set the MIME type (Subtype) of the embedded file |attachment|.
 //

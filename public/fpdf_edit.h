@@ -119,6 +119,7 @@ FPDF_EXPORT FPDF_PAGE FPDF_CALLCONV FPDFPage_New(FPDF_DOCUMENT document,
                                                  double width,
                                                  double height);
 
+// EmbedPDF(epdf-api): EPDFPage_InsertBlankRaw.
 // Experimental EmbedPDF Extension API.
 // Insert a blank page without loading it: FPDFPage_New() for a caller that
 // only writes the page into the document.
@@ -804,6 +805,7 @@ FPDFImageObj_SetBitmap(FPDF_PAGE* pages,
                        FPDF_PAGEOBJECT image_object,
                        FPDF_BITMAP bitmap);
 
+// EmbedPDF(epdf-api): EPDFImageObj_SetPng and EPDFImageObj_SetJpeg.
 // Set a PNG image on |image_object|. Decodes the PNG buffer, applies
 // FlateDecode with PNG prediction filters for optimal compression, and
 // handles alpha transparency via an SMask stream.
@@ -1742,6 +1744,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 FPDFFormObj_RemoveObject(FPDF_PAGEOBJECT form_object,
                          FPDF_PAGEOBJECT page_object);
 
+// EmbedPDF(epdf-api): EPDFText_RedactInRect and EPDFText_RedactInQuads.
 // Experimental API.
 //
 // Redact text in a given rectangle on a page.

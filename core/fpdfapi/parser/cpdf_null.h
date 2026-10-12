@@ -18,6 +18,7 @@ class CPDF_Null final : public CPDF_Object {
   Type GetType() const override;
   RetainPtr<CPDF_Object> Clone() const override;
   CPDF_Null* AsMutableNull() override;
+  // EmbedPDF(save-generations): writers carry the write context.
   using CPDF_Object::WriteTo;
   bool WriteTo(IFX_ArchiveStream* archive,
                const CPDF_Encryptor* encryptor,

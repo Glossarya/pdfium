@@ -48,6 +48,7 @@ const CPDF_ImageObject* CPDF_ImageObject::AsImage() const {
 
 void CPDF_ImageObject::CalcBoundingBox() {
   static constexpr CFX_FloatRect kRect(0.0f, 0.0f, 1.0f, 1.0f);
+  // EmbedPDF(lean-page-objects): the original rect lives on this class.
   original_rect_ = kRect;
   SetRect(matrix_.TransformRect(kRect));
 }
@@ -74,6 +75,7 @@ RetainPtr<CFX_DIBitmap> CPDF_ImageObject::GetIndependentBitmap() const {
 }
 
 void CPDF_ImageObject::SetInitialImageMatrix(const CFX_Matrix& matrix) {
+  // EmbedPDF(lean-page-objects): the original matrix lives on this class.
   original_matrix_ = matrix;
   SetImageMatrix(matrix);
 }

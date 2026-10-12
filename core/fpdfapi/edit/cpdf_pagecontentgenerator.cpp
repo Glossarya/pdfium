@@ -61,12 +61,15 @@
 
 namespace {
 
+// EmbedPDF(faithful-content-rewrite): kResourceKeys is now
+// CPDF_ResourceUse::kTypes, with colour spaces, patterns and shadings.
 
 // Key: The resource type.
 // Value: The resource names of a given type.
 using ResourcesMap = std::map<ByteString, std::set<ByteString>>;
 
-// Whether `holder`, or a form it draws, shows text or clips with it.
+// EmbedPDF(faithful-content-rewrite): whether `holder`, or a form it draws,
+// shows text or clips with it (WriteInheritedTextState()).
 bool ShowsText(const CPDF_PageObjectHolder* holder) {
   for (const auto& object : *holder) {
     if (!object->IsActive()) {
@@ -83,6 +86,8 @@ bool ShowsText(const CPDF_PageObjectHolder* holder) {
   return false;
 }
 
+// EmbedPDF(faithful-content-rewrite): text shown with TJ adjustments is
+// written back as a TJ array.
 bool TextObjectNeedsTJ(const CPDF_TextObject* obj) {
   // We don’t have a public accessor for char_codes_, but we can reuse CountItems()
   // and GetItemInfo(i). GetItemInfo() gives us char_code_ and (for vert writing)
@@ -134,10 +139,11 @@ void EndProcessGraphics(fxcrt::ostringstream& buf) {
   buf << " Q\n";
 }
 
-// EmbedPDF: a colour space array as its PDF text. The holder's cache and the
-// resources are matched on it, so the same colour space finds the same name
-// whether it is held directly or by reference, or as the copy a layer
-// transaction, or a form borrowing its parent's resources, makes of it.
+// EmbedPDF(faithful-content-rewrite): a colour space array as its PDF text.
+// The holder's cache and the resources are matched on it, so the same colour
+// space finds the same name whether it is held directly or by reference, or
+// as the copy a layer transaction, or a form borrowing its parent's
+// resources, makes of it.
 ByteString ColorSpaceKey(const CPDF_Object* object) {
   RetainPtr<const CPDF_Object> array = object ? object->GetDirect() : nullptr;
   if (!array || !array->IsArray()) {
@@ -149,8 +155,9 @@ ByteString ColorSpaceKey(const CPDF_Object* object) {
   return ByteString(buf);
 }
 
-// EmbedPDF: the name `resources` give the colour space `key` describes,
-// `hint` when that is one; empty when they give it none.
+// EmbedPDF(faithful-content-rewrite): the name `resources` give the colour
+// space `key` describes, `hint` when that is one; empty when they give it
+// none.
 ByteString FindColorSpaceName(const CPDF_Dictionary* resources,
                               const ByteString& key,
                               const ByteString& hint) {
@@ -172,8 +179,8 @@ ByteString FindColorSpaceName(const CPDF_Dictionary* resources,
   return ByteString();
 }
 
-// EmbedPDF: the line width, cap, join, miter limit and dash: each one the
-// defaults don't already give, or `all` of them.
+// EmbedPDF(faithful-content-rewrite): the line width, cap, join, miter limit
+// and dash: each one the defaults don't already give, or `all` of them.
 void WriteLineState(fxcrt::ostringstream& buf,
                     const CFX_GraphState& state,
                     bool all) {
@@ -207,7 +214,8 @@ void WriteLineState(fxcrt::ostringstream& buf,
   }
 }
 
-// EmbedPDF: whether one of the ExtGStates `names` sets a line parameter.
+// EmbedPDF(faithful-content-rewrite): whether one of the ExtGStates `names`
+// sets a line parameter.
 bool SetsLineState(const CPDF_Dictionary* resources,
                    pdfium::span<const ByteString> names) {
   RetainPtr<const CPDF_Dictionary> states =
@@ -242,6 +250,7 @@ void RecordPageObjectResourceUsage(const CPDF_PageObject* page_object,
       case CPDF_PageObject::Type::kPath:
         break;
       case CPDF_PageObject::Type::kShading:
+        // EmbedPDF(faithful-content-rewrite): shading objects are written too.
         seen_resources["Shading"].insert(resource_name);
         break;
     }
@@ -250,6 +259,8 @@ void RecordPageObjectResourceUsage(const CPDF_PageObject* page_object,
     CHECK(!name.IsEmpty());
     seen_resources["ExtGState"].insert(name);
   }
+  // EmbedPDF(faithful-content-rewrite): the colour spaces and patterns the
+  // object's colours were written with.
   const CPDF_ColorState& cs = page_object->color_state();
   if (cs.HasRef()) {
     if (!cs.GetFillColorSpaceResName().IsEmpty())
@@ -261,7 +272,8 @@ void RecordPageObjectResourceUsage(const CPDF_PageObject* page_object,
     if (!cs.GetStrokePatternResName().IsEmpty())
       seen_resources["Pattern"].insert(cs.GetStrokePatternResName());
   }
-  // EmbedPDF: the fonts of the text it is clipped by, written with it.
+  // EmbedPDF(faithful-content-rewrite): the fonts of the text it is clipped
+  // by, written with it.
   const CPDF_ClipPath& clip_path = page_object->clip_path();
   if (clip_path.HasRef()) {
     for (size_t i = 0; i < clip_path.GetTextCount(); ++i) {
@@ -271,8 +283,9 @@ void RecordPageObjectResourceUsage(const CPDF_PageObject* page_object,
       }
     }
   }
-  // EmbedPDF: an image's /ColorSpace can name one of these resources (an
-  // inline image's may; some writers do it for image XObjects too).
+  // EmbedPDF(faithful-content-rewrite): an image's /ColorSpace can name one
+  // of these resources (an inline image's may; some writers do it for image
+  // XObjects too).
   if (const CPDF_ImageObject* image_object = page_object->AsImage()) {
     RetainPtr<CPDF_Image> image = image_object->GetImage();
     RetainPtr<const CPDF_Stream> stream = image ? image->GetStream() : nullptr;
@@ -341,10 +354,11 @@ void RestoreUsedResources(
     auto node = saved_resource_map.extract(key);
     CHECK(!node.empty());
     RetainPtr<CPDF_Object> value = std::move(node.mapped());
-    // EmbedPDF: a value saved during a layer transaction that was aborted
-    // since may name an object the abort dropped (numbers aren't reused, so
-    // it resolves to nothing), and belongs to that transaction's dropped
-    // copy: skip the first, and attach a fresh copy of the second.
+    // EmbedPDF(layer-transaction): a value saved during a layer transaction
+    // that was aborted since may name an object the abort dropped (numbers
+    // aren't reused, so it resolves to nothing), and belongs to that
+    // transaction's dropped copy: skip the first, and attach a fresh copy of
+    // the second.
     if (const CPDF_Reference* ref = value->AsReference();
         ref && !ref->GetDirect()) {
       continue;
@@ -360,6 +374,8 @@ void RemoveOrRestoreUnusedResources(
     RetainPtr<CPDF_Dictionary> resources_dict,
     const ResourcesMap& resources_in_use,
     CPDF_PageObjectHolder::AllRemovedResourcesMap& all_removed_resources_map) {
+  // EmbedPDF(faithful-content-rewrite): the resource types the rewrite
+  // tracks, colour spaces, patterns and shadings included.
   for (const char* resource_key : CPDF_ResourceUse::kTypes) {
     auto resources_in_use_it = resources_in_use.find(resource_key);
     const std::set<ByteString>* resource_in_use_of_current_type =
@@ -373,8 +389,9 @@ void RemoveOrRestoreUnusedResources(
       continue;
     }
 
-    // EmbedPDF: a name can be in use with no dictionary of its type here (a
-    // default colour space, a name borrowing content mentions).
+    // EmbedPDF(faithful-content-rewrite): a name can be in use with no
+    // dictionary of its type here (a default colour space, a name borrowing
+    // content mentions).
     const std::vector<ByteString> keys =
         current_resource_dict ? current_resource_dict->GetKeys()
                               : std::vector<ByteString>();
@@ -478,6 +495,8 @@ void CloneResourcesDictEntries(CPDF_Document* doc,
       const RetainPtr<CPDF_Object>& object = it.second;
       // Clone resource dictionaries that may get modified. While out for
       // self-referencing loops.
+      // EmbedPDF(faithful-content-rewrite): the resource types the rewrite
+      // tracks, colour spaces, patterns and shadings included.
       if (object != resources_dict &&
           object->GetType() == CPDF_Object::kReference &&
           pdfium::Contains(CPDF_ResourceUse::kTypes, key)) {
@@ -524,10 +543,12 @@ CPDF_PageContentGenerator::CPDF_PageContentGenerator(
 CPDF_PageContentGenerator::~CPDF_PageContentGenerator() = default;
 
 void CPDF_PageContentGenerator::GenerateContent() {
-  // Resource/reference traversal must see this layer's promoted page-tree
-  // objects, including ancestors changed by redaction resource cleanup.
+  // EmbedPDF(view-scope): resource/reference traversal must see this layer's
+  // promoted page-tree objects, including ancestors changed by redaction
+  // resource cleanup.
   CPDF_DocumentViewScope document_view(document_);
-  // EmbedPDF: a page that matches the document now matches what this writes.
+  // EmbedPDF(page-residency): a page that matches the document now matches
+  // what this writes.
   CPDF_Page* page = obj_holder_->IsPage()
                         ? static_cast<CPDF_Page*>(obj_holder_.get())
                         : nullptr;
@@ -539,10 +560,11 @@ void CPDF_PageContentGenerator::GenerateContent() {
     return;
   }
 
-  // EmbedPDF: did this pass rewrite EVERY existing content stream? Computed
-  // before the move — an append-only pass (a lone kNoContentStream bucket)
-  // leaves the existing streams' ops out of `page_objects_`' bookkeeping, so
-  // resource pruning must not run (see UpdateResourcesDict).
+  // EmbedPDF(faithful-content-rewrite): did this pass rewrite EVERY existing
+  // content stream? Computed before the move — an append-only pass (a lone
+  // kNoContentStream bucket) leaves the existing streams' ops out of
+  // `page_objects_`' bookkeeping, so resource pruning must not run (see
+  // UpdateResourcesDict).
   const int32_t existing_streams = CountExistingContentStreams();
   bool regenerated_all_streams = true;
   for (int32_t i = 0; i < existing_streams; ++i) {
@@ -554,11 +576,15 @@ void CPDF_PageContentGenerator::GenerateContent() {
 
   UpdateContentStreams(std::move(new_stream_data));
   UpdateResourcesDict(regenerated_all_streams);
+  // EmbedPDF(page-residency): the page's recorded content versions follow
+  // what was written.
   if (page) {
     page->ContentGenerated(page_was_current);
   }
 }
 
+// EmbedPDF(faithful-content-rewrite): the holder's content streams, to tell
+// whether a pass rewrote all of them.
 int32_t CPDF_PageContentGenerator::CountExistingContentStreams() {
   if (obj_holder_->GetMutableFormStream()) {
     return 1;
@@ -596,10 +622,10 @@ CPDF_PageContentGenerator::GenerateModifiedStreams() {
   all_dirty_streams.insert(marked_dirty_streams.begin(),
                            marked_dirty_streams.end());
 
-  // --- embedpdf: if an existing stream (or an object living in one) changed,
-  // regenerate *all* page content streams. Rationale: CTM / graphics-state
-  // handoff between streams means rewriting only a subset can leave the
-  // concatenated effect inconsistent.
+  // EmbedPDF(faithful-content-rewrite): if an existing stream (or an object
+  // living in one) changed, regenerate *all* page content streams. Rationale:
+  // CTM / graphics-state handoff between streams means rewriting only a
+  // subset can leave the concatenated effect inconsistent.
   //
   // A pure append is exempt: every dirty entry is the streamless bucket and
   // no stream was marked dirty. Regeneration serializes page objects only, so
@@ -646,8 +672,9 @@ CPDF_PageContentGenerator::GenerateModifiedStreams() {
 
     // Set the default graphic state values. Update CTM to be the identity
     // matrix for the duration of this stream, if it is not already.
-    // EmbedPDF: a form drawn as page content begins at its /Matrix, which
-    // its objects' matrices already include: the inverse undoes it.
+    // EmbedPDF(faithful-content-rewrite): a form drawn as page content begins
+    // at its /Matrix, which its objects' matrices already include: the
+    // inverse undoes it.
     buf << "q\n";
     const CFX_Matrix ctm = obj_holder_->GetCTMAtBeginningOfStream(dirty_stream);
     if (!ctm.IsIdentity()) {
@@ -655,9 +682,9 @@ CPDF_PageContentGenerator::GenerateModifiedStreams() {
     }
 
     ProcessDefaultGraphics(&buf);
-    // EmbedPDF: text is written with its spacing only when not 0. A form
-    // starts with the spacing of the content drawing it
-    // (WriteInheritedTextState()), so it starts again from 0.
+    // EmbedPDF(faithful-content-rewrite): text is written with its spacing
+    // only when not 0. A form starts with the spacing of the content drawing
+    // it (WriteInheritedTextState()), so it starts again from 0.
     if (!obj_holder_->IsPage()) {
       buf << "0 Tc 0 Tw ";
     }
@@ -691,8 +718,9 @@ CPDF_PageContentGenerator::GenerateModifiedStreams() {
     CFX_Matrix ctm;
     bool affects_ctm;
     if (dirty_stream >= 0) {
-      // EmbedPDF: the first stream begins at the CTM the content begins with
-      // (a form's /Matrix), not always the identity.
+      // EmbedPDF(faithful-content-rewrite): the first stream begins at the
+      // CTM the content begins with (a form's /Matrix), not always the
+      // identity.
       prev_ctm = obj_holder_->GetCTMAtBeginningOfStream(dirty_stream);
       ctm = obj_holder_->GetCTMAtEndOfStream(dirty_stream);
       affects_ctm = prev_ctm != ctm;
@@ -758,6 +786,8 @@ void CPDF_PageContentGenerator::UpdateContentStreams(
   }
 }
 
+// EmbedPDF(faithful-content-rewrite): prunes only after a pass that rewrote
+// every content stream (see the guard below).
 void CPDF_PageContentGenerator::UpdateResourcesDict(bool regenerated_all_streams) {
   RetainPtr<CPDF_Dictionary> resources = obj_holder_->GetMutableResources();
   if (!resources) {
@@ -778,18 +808,19 @@ void CPDF_PageContentGenerator::UpdateResourcesDict(bool regenerated_all_streams
   // shared. Checked for that and clone those as well.
   CloneResourcesDictEntries(document_, resources);
 
-  // EmbedPDF: objects the content is to draw instead of others - a soft mask
-  // or a tiling pattern whose own content changed - under the same names.
-  // After the copies above: they name what the content does.
+  // EmbedPDF(redaction): objects the content is to draw instead of others - a
+  // soft mask or a tiling pattern whose own content changed - under the same
+  // names. After the copies above: they name what the content does.
   ApplyResourceReplacements(resources.Get());
 
-  // EmbedPDF: pruning is only sound when THIS pass rewrote every content
-  // stream. `page_objects_` / `seen_resources` describe the SERIALIZED
-  // output; an untouched stream's raw ops can reference resources no page
-  // object records — e.g. a page-level `/C1 cs` prolog whose colorspace is
-  // inherited by a bare-`scn` Form XObject. Pruning after an append-only
-  // pass orphans those references (the classic symptom: the whole page
-  // collapses to grayscale after applying a redaction that touched nothing).
+  // EmbedPDF(faithful-content-rewrite): pruning is only sound when THIS pass
+  // rewrote every content stream. `page_objects_` / `seen_resources` describe
+  // the SERIALIZED output; an untouched stream's raw ops can reference
+  // resources no page object records — e.g. a page-level `/C1 cs` prolog
+  // whose colorspace is inherited by a bare-`scn` Form XObject. Pruning after
+  // an append-only pass orphans those references (the classic symptom: the
+  // whole page collapses to grayscale after applying a redaction that touched
+  // nothing).
   if (!regenerated_all_streams) {
     return;
   }
@@ -804,12 +835,13 @@ void CPDF_PageContentGenerator::UpdateResourcesDict(bool regenerated_all_streams
   if (!default_graphics_name_.IsEmpty()) {
     seen_resources["ExtGState"].insert(default_graphics_name_);
   }
-  // EmbedPDF: the fonts forms inherit, which no page object names.
+  // EmbedPDF(faithful-content-rewrite): the fonts forms inherit, which no
+  // page object names.
   seen_resources["Font"].insert(inherited_font_names_.begin(),
                                 inherited_font_names_.end());
-  // EmbedPDF: the default colour spaces apply to device colours without being
-  // named, and content reading these resources without its own names what it
-  // uses only in its own stream.
+  // EmbedPDF(faithful-content-rewrite): the default colour spaces apply to
+  // device colours without being named, and content reading these resources
+  // without its own names what it uses only in its own stream.
   for (const char* name : {"DefaultGray", "DefaultRGB", "DefaultCMYK"}) {
     seen_resources["ColorSpace"].insert(name);
   }
@@ -819,6 +851,8 @@ void CPDF_PageContentGenerator::UpdateResourcesDict(bool regenerated_all_streams
                                  obj_holder_->all_removed_resources_map());
 }
 
+// EmbedPDF(redaction): the copies the Type3 redactor made (a soft mask, a
+// tiling pattern) replace the originals under the same names.
 void CPDF_PageContentGenerator::ApplyResourceReplacements(
     CPDF_Dictionary* resources) {
   for (const auto& [entry, objnum] : obj_holder_->TakeResourceReplacements()) {
@@ -831,6 +865,8 @@ void CPDF_PageContentGenerator::ApplyResourceReplacements(
   }
 }
 
+// EmbedPDF(faithful-content-rewrite): pruning keeps the names content uses
+// without naming them in its own resources.
 void CPDF_PageContentGenerator::AddNamesBorrowed(
     ResourcesMap& seen_resources) const {
   // Content can look names up in these resources without naming them in
@@ -910,6 +946,8 @@ void CPDF_PageContentGenerator::AddNamesBorrowed(
   }
 }
 
+// EmbedPDF(faithful-content-rewrite): a colour space is written by the name the
+// resources already give the array it was read from.
 ByteString CPDF_PageContentGenerator::RealizeColorSpaceObject(
     const CPDF_ColorSpace* cs) {
   if (auto it = color_space_names_.find(cs); it != color_space_names_.end()) {
@@ -944,6 +982,9 @@ ByteString CPDF_PageContentGenerator::RealizeColorSpaceObject(
   return name;
 }
 
+// EmbedPDF(faithful-content-rewrite): a colour as it was read: device
+// colours by their operators, any other space by its name, patterns with
+// their pattern colour space.
 bool CPDF_PageContentGenerator::EmitColor(fxcrt::ostringstream& buf,
                                           const CPDF_Color* color,
                                           bool is_stroke,
@@ -1069,10 +1110,11 @@ ByteString CPDF_PageContentGenerator::RealizeResource(
     ByteStringView type) const {
   DCHECK(pResource);
   if (!obj_holder_->GetResources()) {
-    // EmbedPDF: name the new dictionary in /Resources before the holder holds
-    // it, and never read it back through GetResources(). On a layer document
-    // creating the dictionary is a write, and a page re-reads /Resources from
-    // its dictionary after every write: read back first, it finds none.
+    // EmbedPDF(holder-readback): name the new dictionary in /Resources before
+    // the holder holds it, and never read it back through GetResources(). On
+    // a layer document creating the dictionary is a write, and a page re-reads
+    // /Resources from its dictionary after every write: read back first, it
+    // finds none.
     RetainPtr<CPDF_Dictionary> resources =
         document_->NewIndirect<CPDF_Dictionary>();
     obj_holder_->GetMutableDict()->SetNewFor<CPDF_Reference>(
@@ -1207,6 +1249,7 @@ void CPDF_PageContentGenerator::FinishMarks(
 
 void CPDF_PageContentGenerator::ProcessPageObject(fxcrt::ostringstream* buf,
                                                   CPDF_PageObject* pPageObj) {
+  // EmbedPDF(faithful-content-rewrite): shading objects are written too.
   if (CPDF_ImageObject* pImageObject = pPageObj->AsImage()) {
     ProcessImage(buf, pImageObject);
   } else if (CPDF_FormObject* pFormObj = pPageObj->AsForm()) {
@@ -1229,8 +1272,9 @@ void CPDF_PageContentGenerator::ProcessImage(fxcrt::ostringstream* buf,
   }
 
   RetainPtr<CPDF_Image> pImage = pImageObj->GetImage();
-  // Note: Inline images (BI...ID...EI) are converted to XObject images below.
-  // Do NOT return early here - the conversion happens at ConvertStreamToIndirectObject().
+  // EmbedPDF(faithful-content-rewrite): inline images (BI...ID...EI) are
+  // converted to XObject images below; upstream dropped them. Do NOT return
+  // early here - the conversion happens at ConvertStreamToIndirectObject().
 
   RetainPtr<const CPDF_Stream> pStream = pImage->GetStream();
   if (!pStream) {
@@ -1266,9 +1310,9 @@ void CPDF_PageContentGenerator::ProcessForm(fxcrt::ostringstream* buf,
   if (form_xobject->HasDirtyStreams()) {
     // The Form XObject itself has modified content (e.g., an object was
     // removed). We need to regenerate its content stream before using it.
-    // EmbedPDF: a form placed in more than one place (a drawing several
-    // stamps share) is copied first, so the other placements keep what they
-    // draw; this placement then draws the copy.
+    // EmbedPDF(faithful-content-rewrite): a form placed in more than one
+    // place (a drawing several stamps share) is copied first, so the other
+    // placements keep what they draw; this placement then draws the copy.
     RetainPtr<const CPDF_Stream> stream = form_xobject->GetStream();
     CPDF_Document* document = form_xobject->GetDocument();
     if (stream && stream->GetObjNum() && document &&
@@ -1291,6 +1335,7 @@ void CPDF_PageContentGenerator::ProcessForm(fxcrt::ostringstream* buf,
   pFormObj->SetResourceName(name);
 
   ProcessGraphics(buf, pFormObj);
+  // EmbedPDF(faithful-content-rewrite): the text state the form inherits.
   WriteInheritedTextState(*buf, pFormObj);
 
   if (!matrix.IsIdentity()) {
@@ -1301,6 +1346,8 @@ void CPDF_PageContentGenerator::ProcessForm(fxcrt::ostringstream* buf,
   EndProcessGraphics(*buf);
 }
 
+// EmbedPDF(faithful-content-rewrite): shading objects (sh) are written back;
+// upstream dropped them.
 void CPDF_PageContentGenerator::ProcessShading(fxcrt::ostringstream* buf,
                                                CPDF_ShadingObject* pShadingObj) {
   const CPDF_ShadingPattern* pattern = pShadingObj->pattern();
@@ -1415,16 +1462,18 @@ void CPDF_PageContentGenerator::ProcessPath(fxcrt::ostringstream* buf,
 void CPDF_PageContentGenerator::ProcessGraphics(fxcrt::ostringstream* buf,
                                                 CPDF_PageObject* pPageObj) {
   *buf << "q ";
+  // EmbedPDF(faithful-content-rewrite): colours in their own colour space, by
+  // its name (EmitColor()). Upstream wrote RGB and gray only, as RGB.
   if (const CPDF_Color* fill = pPageObj->color_state().GetFillColor()) {
     EmitColor(*buf, fill, /*is_stroke=*/false, pPageObj);
   }
   if (const CPDF_Color* stroke = pPageObj->color_state().GetStrokeColor()) {
     EmitColor(*buf, stroke, /*is_stroke=*/true, pPageObj);
   }
-  // EmbedPDF: names the resources no longer define are forgotten, and the
-  // state is made again (ProcessGraphicsState): an aborted layer transaction
-  // drops the graphics state this generator made for the object, while the
-  // object keeps its name.
+  // EmbedPDF(layer-transaction): names the resources no longer define are
+  // forgotten, and the state is made again (ProcessGraphicsState): an aborted
+  // layer transaction drops the graphics state this generator made for the
+  // object, while the object keeps its name.
   if (!std::ranges::all_of(pPageObj->GetGraphicsResourceNames(),
                            [this](const ByteString& name) {
                              return obj_holder_->ResourcesDefine("ExtGState",
@@ -1432,9 +1481,10 @@ void CPDF_PageContentGenerator::ProcessGraphics(fxcrt::ostringstream* buf,
                            })) {
     pPageObj->mutable_general_state().SetGraphicsResourceNames({});
   }
-  // EmbedPDF: an ExtGState can set the line width, cap, join, miter limit and
-  // dash too. The object's values are the ones the content set last, so
-  // after an ExtGState that sets any of them, all of them are written.
+  // EmbedPDF(faithful-content-rewrite): an ExtGState can set the line width,
+  // cap, join, miter limit and dash too. The object's values are the ones the
+  // content set last, so after an ExtGState that sets any of them, all of
+  // them are written.
   const CFX_GraphState& graph_state = pPageObj->graph_state();
   const bool graphics_state_sets_lines =
       SetsLineState(obj_holder_->GetResources().Get(),
@@ -1449,6 +1499,8 @@ void CPDF_PageContentGenerator::ProcessGraphics(fxcrt::ostringstream* buf,
   }
 }
 
+// EmbedPDF(faithful-content-rewrite): clip paths as upstream wrote them, then
+// the text that clips, which upstream dropped.
 void CPDF_PageContentGenerator::ProcessClip(fxcrt::ostringstream* buf,
                                             CPDF_PageObject* pPageObj) {
   const CPDF_ClipPath& clip_path = pPageObj->clip_path();
@@ -1504,6 +1556,9 @@ void CPDF_PageContentGenerator::ProcessClip(fxcrt::ostringstream* buf,
   }
 }
 
+// EmbedPDF(faithful-content-rewrite): the ExtGStates the content set, by their
+// names, so soft masks, overprint and the rest survive. Upstream only made one
+// from the alpha and blend mode.
 void CPDF_PageContentGenerator::ProcessGraphicsState(
     fxcrt::ostringstream* buf,
     CPDF_PageObject* pPageObj) {
@@ -1512,9 +1567,9 @@ void CPDF_PageContentGenerator::ProcessGraphicsState(
   pdfium::span<const ByteString> existing_gs_names =
       pPageObj->GetGraphicsResourceNames();
   if (!existing_gs_names.empty()) {
-    // EmbedPDF: a soft mask is placed by the CTM in effect when the gs that
-    // set it ran, which the objects' matrices no longer carry: set that CTM
-    // around the gs operators.
+    // EmbedPDF(faithful-content-rewrite): a soft mask is placed by the CTM in
+    // effect when the gs that set it ran, which the objects' matrices no
+    // longer carry: set that CTM around the gs operators.
     const CPDF_GeneralState& general_state = pPageObj->general_state();
     const CFX_Matrix* mask_ctm = general_state.GetSoftMask()
                                      ? general_state.GetSMaskMatrix()
@@ -1572,6 +1627,9 @@ void CPDF_PageContentGenerator::ProcessGraphicsState(
 
 void CPDF_PageContentGenerator::ProcessDefaultGraphics(
     fxcrt::ostringstream* buf) {
+  // EmbedPDF(faithful-content-rewrite): no default black (upstream wrote
+  // `0 0 0 RG 0 0 0 rg`): objects write their own colours, and content that
+  // sets none keeps the colour it inherits.
   *buf << "1 w "
        << static_cast<int>(CFX_GraphStateData::LineCap::kButt) << " J "
        << static_cast<int>(CFX_GraphStateData::LineJoin::kMiter) << " j\n";
@@ -1610,7 +1668,9 @@ void CPDF_PageContentGenerator::ProcessText(fxcrt::ostringstream* buf,
                                             CPDF_TextObject* pTextObj) {
   ProcessGraphics(buf, pTextObj);
 
-  // Separate translation (cm) from pure text matrix (Tm)
+  // EmbedPDF(faithful-content-rewrite): the text's own font, spacing and TJ
+  // adjustments are written (RealizeFont(), WriteTextShowing()). Separate
+  // translation (cm) from pure text matrix (Tm).
   const CFX_Matrix& M = pTextObj->GetTextMatrix();
   if (M.e != 0 || M.f != 0) {
     WriteMatrix(*buf, CFX_Matrix(1, 0, 0, 1, M.e, M.f)) << " cm ";
@@ -1638,6 +1698,9 @@ void CPDF_PageContentGenerator::ProcessText(fxcrt::ostringstream* buf,
   EndProcessGraphics(*buf);
 }
 
+// EmbedPDF(faithful-content-rewrite): a font is named after its own object,
+// so fonts sharing a type and base name keep their own dictionaries.
+// Upstream named fonts by type and base name only (now the last resort).
 ByteString CPDF_PageContentGenerator::RealizeFont(CPDF_TextObject* text,
                                                   RetainPtr<CPDF_Font>* font) {
   *font = text->GetFont();
@@ -1712,6 +1775,8 @@ ByteString CPDF_PageContentGenerator::RealizeFont(RetainPtr<CPDF_Font>* font) {
   return dict_name;
 }
 
+// EmbedPDF(faithful-content-rewrite): a form inheriting text state gets
+// Tf, Tr, Tc and Tw written in its q..Q.
 void CPDF_PageContentGenerator::WriteInheritedTextState(
     fxcrt::ostringstream& buf,
     CPDF_FormObject* form_object) {
@@ -1732,6 +1797,8 @@ void CPDF_PageContentGenerator::WriteInheritedTextState(
   WriteFloat(buf, state.GetWordSpace()) << " Tw ";
 }
 
+// EmbedPDF(faithful-content-rewrite): spacing, and a TJ array where the text
+// was shown with adjustments; upstream wrote one Tj without either.
 void CPDF_PageContentGenerator::WriteTextShowing(
     fxcrt::ostringstream& buf,
     CPDF_TextObject* text,

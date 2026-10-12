@@ -37,6 +37,8 @@ class CPDF_DocPageData final : public CPDF_Document::PageDataIface,
   static CPDF_DocPageData* FromDocument(const CPDF_Document* doc);
 
   CPDF_DocPageData();
+  // EmbedPDF(layer-seam): a layer's page data falls back to its base's for
+  // objects the layer hasn't promoted.
   explicit CPDF_DocPageData(CPDF_DocPageData* fallback);
   ~CPDF_DocPageData() override;
 
@@ -61,13 +63,15 @@ class CPDF_DocPageData final : public CPDF_Document::PageDataIface,
   RetainPtr<CPDF_Font> AddFont(std::unique_ptr<CFX_Font> font,
                                FX_Charset charset);
   RetainPtr<CPDF_Font> GetFont(RetainPtr<CPDF_Dictionary> font_dict);
-  // EmbedPDF: discard a render-only font before its scratch resource holder
-  // dies. Call only after every form using this private dictionary is gone.
+  // EmbedPDF(measurement): discard a render-only font before its scratch
+  // resource holder dies. Call only after every form using this private
+  // dictionary is gone.
   void ForgetEphemeralFont(const CPDF_Dictionary* font_dict);
-  // EmbedPDF: drops every entry derived from |root| or a direct object inside
-  // it. A layer transaction calls it for each version nobody can reach any
-  // more (a dropped copy, or a version a commit replaced), so the cache
-  // doesn't keep it alive. Objects still in use keep their own references.
+  // EmbedPDF(layer-transaction): drops every entry derived from |root| or a
+  // direct object inside it. A layer transaction calls it for each version
+  // nobody can reach any more (a dropped copy, or a version a commit
+  // replaced), so the cache doesn't keep it alive. Objects still in use keep
+  // their own references.
   void ForgetObjectTree(const CPDF_Object* root);
   RetainPtr<CPDF_Font> AddStandardFont(const ByteString& fontName,
                                        const CPDF_FontEncoding* pEncoding);
@@ -121,6 +125,7 @@ class CPDF_DocPageData final : public CPDF_Document::PageDataIface,
       const CPDF_Dictionary* pResources,
       std::set<const CPDF_Object*>* pVisited,
       std::set<const CPDF_Object*>* pVisitedInternal);
+  // EmbedPDF(layer-seam): whether `object` may use the base's entry.
   bool CanUseFallbackForObject(const CPDF_Object* object) const;
 
   size_t CalculateEncodingDict(FX_Charset charset, CPDF_Dictionary* pBaseDict);
@@ -131,6 +136,7 @@ class CPDF_DocPageData final : public CPDF_Document::PageDataIface,
       std::function<void(wchar_t, wchar_t, CPDF_Array*)> Insert);
 
   bool force_clear_ = false;
+  // EmbedPDF(layer-seam): the base's page data, on a layer's.
   UnownedPtr<CPDF_DocPageData> fallback_;
 
   // Specific destruction order may be required between maps.

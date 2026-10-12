@@ -12,6 +12,8 @@
 // NOLINTNEXTLINE(build/include)
 #include "fpdf_formfill.h"
 
+// EmbedPDF(epdf-api): EPDF_FONT_ID and the redaction types the EPDFAnnot_*
+// functions use.
 // NOLINTNEXTLINE(build/include)
 #include "epdf_font.h"
 
@@ -97,6 +99,8 @@ extern "C" {
 #define FPDF_ANNOT_AACTION_VALIDATE 14
 #define FPDF_ANNOT_AACTION_CALCULATE 15
 
+// EmbedPDF(epdf-api): OverlayColor, TextColor and the enums below are for
+// the EPDFAnnot_* functions.
 typedef enum FPDFANNOT_COLORTYPE {
   FPDFANNOT_COLORTYPE_Color = 0,
   FPDFANNOT_COLORTYPE_InteriorColor,
@@ -701,6 +705,8 @@ FPDFAnnot_GetNumberValue(FPDF_ANNOTATION annot,
                          FPDF_BYTESTRING key,
                          float* value);
 
+// EmbedPDF(epdf-api): EPDFAnnot_SetNumberValue and the embed metadata
+// functions (EPDFAnnot_*EmbedMetadata*, EPDFDocument_ClearEmbedMetadata).
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetNumberValue(FPDF_ANNOTATION annot,
                          FPDF_BYTESTRING key,
@@ -879,7 +885,8 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDFAnnot_SetFlags(FPDF_ANNOTATION annot,
 //
 // Returns the annotation flags specific to interactive forms.
 FPDF_EXPORT int FPDF_CALLCONV
-FPDFAnnot_GetFormFieldFlags(FPDF_FORMHANDLE handle, FPDF_ANNOTATION annot);
+FPDFAnnot_GetFormFieldFlags(FPDF_FORMHANDLE handle,
+                            FPDF_ANNOTATION annot);
 
 // Experimental API.
 // Sets the form field flags for an interactive form annotation.
@@ -1226,6 +1233,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDFAnnot_SetURI(FPDF_ANNOTATION annot,
 FPDF_EXPORT FPDF_ATTACHMENT FPDF_CALLCONV
 FPDFAnnot_GetFileAttachment(FPDF_ANNOTATION annot);
 
+// EmbedPDF(epdf-api): EPDFAnnot_GetFileAttachmentForWrite.
 // Experimental EmbedPDF Extension API.
 // FPDFAnnot_GetFileAttachment() for writing: the attachment as the document
 // opens it for writing, so a layer transaction copies it up first. Use this
@@ -1250,6 +1258,8 @@ EPDFAnnot_GetFileAttachmentForWrite(FPDF_ANNOTATION annot);
 FPDF_EXPORT FPDF_ATTACHMENT FPDF_CALLCONV
 FPDFAnnot_AddFileAttachment(FPDF_ANNOTATION annot, FPDF_WIDESTRING name);
 
+// EmbedPDF(epdf-api): the EPDFAnnot_*, EPDFPage_* and EPDFDoc_* functions and
+// their types, from here to the end of the file.
 // Experimental EmbedPDF Extension API.
 // Get the color of an annotation. If no color is specified, default to yellow
 // for highlight annotation, black for all else.

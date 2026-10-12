@@ -282,6 +282,10 @@ float GetFontSize(const CPDF_TextObject* text_object) {
   return has_font ? text_object->GetFontSize() : kDefaultFontSize;
 }
 
+// EmbedPDF(text-geometry): a character's loose and tight boxes in its text
+// object's space. The tight box is upstream's char box, moved here from
+// ProcessTextObjectItems() so the text page and EPDFText_GetCharGeometry
+// measure it the same way.
 std::optional<CPDF_TextPage::CharLocalGeometry> GetCharLocalBoxes(
     const CPDF_TextObject* text_object,
     uint32_t char_code,
@@ -400,6 +404,8 @@ CPDF_TextPage::TransformedTextObject::~TransformedTextObject() = default;
 
 CPDF_TextPage::CharInfo::CharInfo() = default;
 
+// EmbedPDF(text-geometry): the origin and box are named for their space, and a
+// real glyph also keeps its origin in text object space, to measure later.
 CPDF_TextPage::CharInfo::CharInfo(CharType char_type,
                                   uint32_t char_code,
                                   wchar_t unicode,
@@ -419,6 +425,8 @@ CPDF_TextPage::CharInfo::CharInfo(CharType char_type,
   loose_char_box_ = GetLooseBounds(*this);
 }
 
+// EmbedPDF(text-geometry): a real glyph keeps its origin in text object space;
+// generated and ActualText characters have none.
 // static
 CPDF_TextPage::CharInfo CPDF_TextPage::CharInfo::RealGlyph(
     CharType char_type,
@@ -667,6 +675,8 @@ CFX_FloatRect CPDF_TextPage::GetCharLooseBounds(size_t index) const {
   return char_list_[index].loose_char_box();
 }
 
+// EmbedPDF(text-geometry): a character's boxes in its text object's space, for
+// EPDFText_GetCharGeometry.
 std::optional<CPDF_TextPage::CharLocalGeometry>
 CPDF_TextPage::GetCharLocalGeometry(size_t index) const {
   CHECK_LT(index, char_list_.size());
@@ -1137,8 +1147,8 @@ void CPDF_TextPage::ProcessMarkedContent(const TransformedTextObject& obj) {
   }
 
   RetainPtr<CPDF_Font> const font = pTextObj->GetFont();
-  // EmbedPDF: an ActualText string is the logical text. The line is closed
-  // as if its characters were in visual order (CloseTempLine reverses
+  // EmbedPDF(bug-fix): an ActualText string is the logical text. The line is
+  // closed as if its characters were in visual order (CloseTempLine reverses
   // right-to-left segments), so a right-to-left string is appended in
   // visual order here; otherwise every RTL ActualText (Acrobat writes one
   // around each shaped Hebrew or Arabic run) extracted backwards.
@@ -1156,6 +1166,7 @@ void CPDF_TextPage::ProcessMarkedContent(const TransformedTextObject& obj) {
     CFX_FloatRect char_box(rect);
     char_box.Translate(k * step, 0);
     temp_text_buf_.AppendChar(wChar);
+    // EmbedPDF(text-geometry): not a real glyph, so no local origin.
     temp_char_list_.push_back(CharInfo::Synthetic(CharType::kPiece, wChar,
                                                   pTextObj->GetPos(), char_box,
                                                   matrix, pTextObj));
@@ -1510,6 +1521,7 @@ void CPDF_TextPage::ProcessTextObjectItems(CPDF_TextObject* text_object,
       if (threshold && spacing && spacing >= threshold) {
         temp_text_buf_.AppendChar(L' ');
         CFX_PointF origin = matrix.Transform(item.origin_);
+        // EmbedPDF(text-geometry): not a real glyph, so no local origin.
         temp_char_list_.push_back(CharInfo::Synthetic(
             CharType::kGenerated, L' ', origin,
             CFX_FloatRect(origin.x, origin.y, origin.x, origin.y), form_matrix,
@@ -1528,6 +1540,9 @@ void CPDF_TextPage::ProcessTextObjectItems(CPDF_TextObject* text_object,
       char_type = CharType::kNotUnicode;
     }
 
+    // EmbedPDF(text-geometry): the box is measured by GetCharLocalBoxes(), as
+    // EPDFText_GetCharGeometry measures it; a real glyph keeps its origin in
+    // text object space.
     std::optional<CharLocalGeometry> boxes =
         GetCharLocalBoxes(text_object, item.char_code_, item.origin_);
     CHECK(boxes.has_value());
@@ -1679,6 +1694,7 @@ std::optional<CPDF_TextPage::CharInfo> CPDF_TextPage::GenerateCharInfo(
 
   CFX_PointF origin(pPrevCharInfo->origin().x + pre_width * (fFontSize) / 1000,
                     pPrevCharInfo->origin().y);
+  // EmbedPDF(text-geometry): not a real glyph, so no local origin.
   return CharInfo::Synthetic(
       CharType::kGenerated, unicode, origin,
       CFX_FloatRect(origin.x, origin.y, origin.x, origin.y), form_matrix,

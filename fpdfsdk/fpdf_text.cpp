@@ -34,6 +34,7 @@
 
 namespace {
 
+// EmbedPDF(epdf-api): layout checks and tolerances for the EPDFText_* types.
 static_assert(sizeof(EPDF_CHAR_GEOMETRY) == 124);
 static_assert(offsetof(EPDF_CHAR_GEOMETRY, loose_box) == 0);
 static_assert(offsetof(EPDF_CHAR_GEOMETRY, tight_box) == 16);
@@ -58,6 +59,7 @@ CPDF_TextPage* GetTextPageForValidIndex(FPDF_TEXTPAGE text_page, int index) {
   return static_cast<size_t>(index) < textpage->size() ? textpage : nullptr;
 }
 
+// EmbedPDF(epdf-api): helpers for EPDFText_GetCharGeometry.
 bool HasUsableBasis(const CFX_Matrix& matrix) {
   if (!std::isfinite(matrix.a) || !std::isfinite(matrix.b) ||
       !std::isfinite(matrix.c) || !std::isfinite(matrix.d)) {
@@ -112,6 +114,7 @@ FS_QUADPOINTSF QuadFromPoints(const std::array<CFX_PointF, 4>& points) {
 }  // namespace
 
 FPDF_EXPORT FPDF_TEXTPAGE FPDF_CALLCONV FPDFText_LoadPage(FPDF_PAGE page) {
+  // EmbedPDF(view-scope): read through the document's view scope.
   ScopedFPDFPageView page_view(page);
   if (!page_view) {
     return nullptr;
@@ -360,6 +363,8 @@ FPDFText_GetLooseCharBox(FPDF_TEXTPAGE text_page, int index, FS_RECTF* rect) {
   return true;
 }
 
+// EmbedPDF(epdf-api): EPDFText_GetCharGeometry, EPDFText_GetTextFull and
+// EPDFText_GetCharToTextMap.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFText_GetCharGeometry(FPDF_TEXTPAGE text_page,
                          int index,

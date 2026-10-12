@@ -94,8 +94,8 @@ class CPDF_ColorSpace : public Retainable, public Observable {
 
   uint32_t ComponentCount() const;
   Family GetFamily() const { return family_; }
-  // EmbedPDF: the array this colour space was loaded from; null for the stock
-  // device and pattern spaces.
+  // EmbedPDF(faithful-content-rewrite): the array this colour space was
+  // loaded from; null for the stock device and pattern spaces.
   RetainPtr<const CPDF_Array> GetArray() const { return array_; }
   bool IsSpecial() const {
     return GetFamily() == Family::kSeparation ||

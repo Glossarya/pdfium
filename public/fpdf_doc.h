@@ -45,6 +45,8 @@ typedef enum {
   FILEIDTYPE_CHANGING = 1
 } FPDF_FILEIDTYPE;
 
+// EmbedPDF(epdf-api): FPDF_TRAPPED_STATUS, for EPDF_GetMetaTrapped and
+// EPDF_SetMetaTrapped.
 // The trapped status of the document. See section 14.10.2.4 "Trapped" of the
 // ISO 32000-1:2008 spec.
 typedef enum FPDF_TRAPPED_STATUS {
@@ -227,6 +229,7 @@ FPDFAction_GetURIPath(FPDF_DOCUMENT document,
 FPDF_EXPORT int FPDF_CALLCONV FPDFDest_GetDestPageIndex(FPDF_DOCUMENT document,
                                                         FPDF_DEST dest);
 
+// EmbedPDF(epdf-api): EPDFDest_GetPageObjectNumber.
 // Experimental EmbedPDF Extension API.
 // Get the PDF indirect object number of the page targeted by |dest|.
 //
@@ -455,6 +458,8 @@ FPDF_GetPageLabel(FPDF_DOCUMENT document,
                   void* buffer,
                   unsigned long buflen);
 
+// EmbedPDF(epdf-api): the EPDF_*Meta*, EPDFDest_*, EPDFNamedDest_*,
+// EPDFAction_Create* and EPDFBookmark_* functions.
 // Experimental EmbedPDF Extension API.
 // Set meta-data |tag| content in |document|.
 //

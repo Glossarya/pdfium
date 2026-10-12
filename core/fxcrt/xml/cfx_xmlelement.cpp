@@ -109,8 +109,8 @@ void CFX_XMLElement::Save(
   pXMLStream->WriteString(">\n");
 }
 
-// EmbedPDF: identical to Save() minus the injected newlines, so text
-// content round-trips byte-exact under xml:space="preserve" (XFDF form
+// EmbedPDF(forms-model): identical to Save() minus the injected newlines, so
+// text content round-trips byte-exact under xml:space="preserve" (XFDF form
 // data values). See CFX_XMLNode::SaveCompact().
 void CFX_XMLElement::SaveCompact(
     const RetainPtr<IFX_RetainableWriteStream>& pXMLStream) {

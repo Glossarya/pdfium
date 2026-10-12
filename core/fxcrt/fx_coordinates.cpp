@@ -395,6 +395,8 @@ CFX_Matrix CFX_Matrix::GetInverse() const {
   return inverse;
 }
 
+// EmbedPDF(faithful-content-rewrite): the content writer undoes a soft mask's
+// matrix only when it can be inverted.
 bool CFX_Matrix::IsInvertible() const {
   const float determinant = a * d - b * c;
   return std::isfinite(determinant) && determinant != 0;

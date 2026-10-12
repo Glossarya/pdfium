@@ -197,6 +197,7 @@ bool CPDF_Parser::IsObjectFree(uint32_t objnum) const {
 }
 
 bool CPDF_Parser::InitSyntaxParser(RetainPtr<CPDF_ReadValidator> validator) {
+  // EmbedPDF(save-traversal): new bytes start a new reference index.
   save_reference_index_.Clear();
   const std::optional<FX_FILESIZE> header_offset = GetHeaderOffset(validator);
   if (!header_offset.has_value()) {
@@ -437,9 +438,9 @@ bool CPDF_Parser::LoadAllCrossRefTablesAndStreams(FX_FILESIZE xref_offset) {
     return false;
   }
 
-  // EmbedPDF: remember the chain, oldest first. Consecutive entries are
-  // linked by /Prev because FindAllCrossReferenceTablesAndStream() prepends
-  // each older section as it follows the chain.
+  // EmbedPDF(signatures): remember the chain, oldest first. Consecutive
+  // entries are linked by /Prev because FindAllCrossReferenceTablesAndStream()
+  // prepends each older section as it follows the chain.
   cross_ref_sections_.clear();
   for (size_t i = 0; i < xref_list.size(); ++i) {
     CrossRefSection section;
@@ -610,6 +611,9 @@ bool CPDF_Parser::ParseAndAppendCrossRefSubsectionData(
 
       pdfium::span<const char> pEntry =
           pdfium::span(buf).subspan(i * kEntrySize);
+      // EmbedPDF(save-generations): a free entry keeps the generation the
+      // table records, as a normal entry does. Upstream reads it only for
+      // normal entries.
       // TODO(art-snake): The info.gennum is uint16_t, but version may be
       // greater than max<uint16_t>. Need to solve this issue.
       const int32_t version =
@@ -634,6 +638,8 @@ bool CPDF_Parser::ParseAndAppendCrossRefSubsectionData(
 
         info.pos = offset.ValueOrDie();
 
+        // EmbedPDF(save-generations): the generation is read above, for free
+        // entries too.
         info.type = ObjectType::kNormal;
       }
     }
@@ -772,8 +778,9 @@ bool CPDF_Parser::FindAllCrossReferenceTablesAndStream(
 }
 
 bool CPDF_Parser::RebuildCrossRef() {
+  // EmbedPDF(save-traversal): a rebuilt table starts a new reference index.
   save_reference_index_.Clear();
-  // EmbedPDF: a scanned table has no chain.
+  // EmbedPDF(signatures): a scanned table has no chain.
   cross_ref_sections_.clear();
   auto cross_ref_table = std::make_unique<CPDF_CrossRefTable>();
 
@@ -1087,6 +1094,8 @@ uint32_t CPDF_Parser::GetRootObjNum() const {
   return pRef ? pRef->GetRefObjNum() : CPDF_Object::kInvalidObjNum;
 }
 
+// EmbedPDF(save-traversal): a save parses from the loaded bytes without
+// filling the document's caches.
 RetainPtr<CPDF_Object> CPDF_Parser::ParseIndirectObject(uint32_t objnum) {
   return ParseIndirectObjectInternal(objnum, objects_holder_, nullptr);
 }
@@ -1127,6 +1136,8 @@ RetainPtr<CPDF_Object> CPDF_Parser::ParseIndirectObjectInternal(
       if (info->pos <= 0) {
         return nullptr;
       }
+      // EmbedPDF(save-traversal): parse into the caller's holder; a save
+      // reads object streams through its own cache.
       return ParseIndirectObjectAtWithHolder(info->pos, objnum, holder);
     }
     case ObjectType::kCompressed: {
@@ -1141,11 +1152,14 @@ RetainPtr<CPDF_Object> CPDF_Parser::ParseIndirectObjectInternal(
       if (!obj_stream) {
         return nullptr;
       }
+      // EmbedPDF(save-traversal): parse into the caller's holder.
       return obj_stream->ParseObject(holder, objnum, info->archive.obj_index);
     }
   }
 }
 
+// EmbedPDF(save-traversal): a save keeps its object streams in its own
+// byte-budgeted cache, never in the parser's.
 std::shared_ptr<const CPDF_ObjectStream> CPDF_Parser::GetObjectStreamForSave(
     uint32_t object_number,
     CPDF_IndirectObjectHolder* holder,
@@ -1211,6 +1225,8 @@ const CPDF_ObjectStream* CPDF_Parser::GetObjectStream(uint32_t object_number) {
   return result;
 }
 
+// EmbedPDF(save-traversal): a save parses into its own holder, so the
+// document's caches stay untouched.
 RetainPtr<CPDF_Object> CPDF_Parser::ParseIndirectObjectAt(FX_FILESIZE pos,
                                                           uint32_t objnum) {
   return ParseIndirectObjectAtWithHolder(pos, objnum, objects_holder_);
@@ -1244,6 +1260,7 @@ FX_FILESIZE CPDF_Parser::GetDocumentSize() const {
   return syntax_->GetDocumentSize();
 }
 
+// EmbedPDF(signatures): revision ends and file offsets for signature checks.
 const std::vector<unsigned int>& CPDF_Parser::GetCachedTrailerEnds() {
   if (!cached_trailer_ends_.has_value()) {
     cached_trailer_ends_ = GetTrailerEnds();
@@ -1261,6 +1278,7 @@ FX_FILESIZE CPDF_Parser::GetFileHeaderOffset() const {
   return file_size > document_size ? file_size - document_size : 0;
 }
 
+// EmbedPDF(layer-open): a layer reads the base file's bytes before its delta.
 RetainPtr<IFX_SeekableReadStream> CPDF_Parser::GetFileAccess() const {
   return syntax_ ? syntax_->GetFileAccess() : nullptr;
 }

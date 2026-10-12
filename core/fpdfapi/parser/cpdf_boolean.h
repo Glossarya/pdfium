@@ -22,6 +22,7 @@ class CPDF_Boolean final : public CPDF_Object {
   int GetInteger() const override;
   void SetString(const ByteString& str) override;
   CPDF_Boolean* AsMutableBoolean() override;
+  // EmbedPDF(save-generations): writers carry the write context.
   using CPDF_Object::WriteTo;
   bool WriteTo(IFX_ArchiveStream* archive,
                const CPDF_Encryptor* encryptor,

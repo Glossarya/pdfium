@@ -22,6 +22,7 @@ CPDF_Null* CPDF_Null::AsMutableNull() {
   return this;
 }
 
+// EmbedPDF(save-generations): writers carry the write context.
 bool CPDF_Null::WriteTo(IFX_ArchiveStream* archive,
                         const CPDF_Encryptor* encryptor,
                         const CPDF_WriteContext* context) const {

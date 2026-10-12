@@ -136,9 +136,10 @@ RetainPtr<CPDF_Dictionary> GetOrCreateMarkParamsDict(FPDF_DOCUMENT document,
     pParams = doc->New<CPDF_Dictionary>();
     pMarkItem->SetDirectDict(pParams);
   }
-  // EmbedPDF: a mark that names a property list points into the resources;
-  // inside a layer transaction that may be a committed version, which must
-  // not be written in place. Inline marks (parsed, detached) always can be.
+  // EmbedPDF(layer-transaction): a mark that names a property list points
+  // into the resources; inside a layer transaction that may be a committed
+  // version, which must not be written in place. Inline marks (parsed,
+  // detached) always can be.
   return pParams->IsWritable() ? pParams : nullptr;
 }
 
@@ -226,6 +227,7 @@ FPDF_EXPORT void FPDF_CALLCONV FPDFPage_Delete(FPDF_DOCUMENT document,
   if (!doc) {
     return;
   }
+  // EmbedPDF(view-scope): delete from the page tree this layer sees.
   CPDF_DocumentViewScope document_view(doc);
 
   CPDF_Document::Extension* pExtension = doc->GetExtension();
@@ -243,8 +245,9 @@ FPDF_MovePages(FPDF_DOCUMENT document,
   if (!doc) {
     return false;
   }
-  // Resolve through the effective view: on a layer whose catalog is the
-  // frozen base's, the page tree must still be read through the overlay.
+  // EmbedPDF(view-scope): resolve through the effective view: on a layer whose
+  // catalog is the frozen base's, the page tree must still be read through
+  // the overlay.
   CPDF_DocumentViewScope document_view(doc);
 
   // SAFETY: caller ensures `page_indices` points to at least
@@ -289,6 +292,8 @@ FPDF_EXPORT FPDF_PAGE FPDF_CALLCONV FPDFPage_New(FPDF_DOCUMENT document,
   return FPDFPageFromIPDFPage(pPage.Leak());  // Caller takes ownership.
 }
 
+// EmbedPDF(epdf-api): EPDFPage_InsertBlankRaw, a blank page at a chosen
+// object number.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFPage_InsertBlankRaw(FPDF_DOCUMENT document,
                         int page_index,
@@ -717,6 +722,7 @@ FPDFPageObjMark_RemoveParam(FPDF_PAGEOBJECT page_object,
   }
 
   RetainPtr<CPDF_Dictionary> pParams = GetMarkParamDict(mark);
+  // EmbedPDF(layer-transaction): a committed version is not written in place.
   if (!pParams || !pParams->IsWritable()) {  // see GetOrCreateMarkParamsDict
     return false;
   }
@@ -846,6 +852,7 @@ FPDFPageObj_SetMatrix(FPDF_PAGEOBJECT page_object, const FS_MATRIX* matrix) {
       return true;
     case CPDF_PageObject::Type::kImage:
       pPageObj->AsImage()->SetImageMatrix(cmatrix);
+      // EmbedPDF(lean-page-objects): the original matrix lives on the image.
       pPageObj->SetMatrixDirty(pPageObj->AsImage()->original_matrix() !=
                                cmatrix);
       return true;
@@ -990,6 +997,8 @@ FPDFPageObj_GetRotatedBounds(FPDF_PAGEOBJECT page_object,
   }
 
   CFX_Matrix matrix;
+  // EmbedPDF(lean-page-objects): only text and image objects keep their
+  // original rect.
   CFX_FloatRect bbox;
   switch (cpage_object->GetType()) {
     case CPDF_PageObject::Type::kText:
@@ -1005,6 +1014,7 @@ FPDFPageObj_GetRotatedBounds(FPDF_PAGEOBJECT page_object,
       return false;
   }
 
+  // EmbedPDF(lean-page-objects): `bbox` is read per type in the switch above.
   const CFX_PointF bottom_left = matrix.Transform({bbox.left, bbox.bottom});
   const CFX_PointF bottom_right = matrix.Transform({bbox.right, bbox.bottom});
   const CFX_PointF top_right = matrix.Transform({bbox.right, bbox.top});

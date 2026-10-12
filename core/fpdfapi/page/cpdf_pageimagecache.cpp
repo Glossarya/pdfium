@@ -224,6 +224,8 @@ bool CPDF_PageImageCache::Continue(PauseIndicatorIface* pPause) {
 
 void CPDF_PageImageCache::ResetBitmapForImage(RetainPtr<CPDF_Image> pImage) {
   RetainPtr<const CPDF_Stream> pStream = pImage->GetStream();
+  // EmbedPDF(decoded-image-store): resetting an image's bitmap drops its
+  // stored decodes too.
   if (CPDF_DecodedImageStore* store = CPDF_DecodedImageStore::Get()) {
     store->DropStream(pStream.Get());
   }
@@ -282,6 +284,8 @@ CPDF_DIB::LoadState CPDF_PageImageCache::Entry::StartGetCachedBitmap(
     return CPDF_DIB::LoadState::kSuccess;
   }
 
+  // EmbedPDF(decoded-image-store): consulted only where the cache would
+  // decode; a stored decode leaves the entry as a new decode would.
   store_key_ = CPDF_DecodedImageStore::KeyFor(*image_, pPageResources, bStdCS,
                                               eFamily, bLoadMask);
   if (store_key_) {
@@ -344,6 +348,9 @@ bool CPDF_PageImageCache::Entry::Continue(
   return false;
 }
 
+// EmbedPDF(decoded-image-store): decide whether the store keeps this decode:
+// it must fit, and a JPX decode must skip the levels its key asked for. A huge
+// image the store keeps is decoded in full; the bitmap holds the same rows.
 void CPDF_PageImageCache::Entry::ContinueGetCachedBitmap(
     CPDF_PageImageCache* pPageImageCache) {
   const CPDF_DIB* dib = cur_bitmap_.AsRaw<CPDF_DIB>();
@@ -392,6 +399,8 @@ void CPDF_PageImageCache::Entry::ContinueGetCachedBitmap(
   cur_mask_ = cached_mask_;
   CalcSize();
 
+  // EmbedPDF(decoded-image-store): keep the finished decode, with its mask,
+  // for later page loads.
   if (store_key && cached_bitmap_ && (cached_mask_ || !has_mask)) {
     CPDF_DecodedImageStore::Decoded kept;
     kept.bitmap = cached_bitmap_;

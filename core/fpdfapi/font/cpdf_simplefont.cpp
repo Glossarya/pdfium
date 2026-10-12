@@ -106,10 +106,11 @@ void CPDF_SimpleFont::LoadCharMetrics(int charcode) {
     }
   }
 
-  // EmbedPDF: a built-in generic font standing in for one the document doesn't
-  // embed draws each glyph with its design set to the glyph's width here and
-  // the substitute's weight (CFX_Face::RenderGlyph), so the glyph's bounds
-  // are those of the glyph drawn, not of the face's default design.
+  // EmbedPDF(substitute-font-bounds): a built-in generic font standing in for
+  // one the document doesn't embed draws each glyph with its design set to
+  // the glyph's width here and the substitute's weight (CFX_Face::RenderGlyph),
+  // so the glyph's bounds are those of the glyph drawn, not of the face's
+  // default design.
   const CFX_SubstFont* subst_font = font_.GetSubstFont();
   if (subst_font && subst_font->IsBuiltInGenericFont()) {
     const int dest_width =

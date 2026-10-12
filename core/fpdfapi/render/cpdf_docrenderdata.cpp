@@ -41,6 +41,7 @@ CPDF_DocRenderData* CPDF_DocRenderData::FromDocument(const CPDF_Document* doc) {
 
 CPDF_DocRenderData::CPDF_DocRenderData() = default;
 
+// EmbedPDF(layer-seam): a layer's render data falls back to its base's.
 CPDF_DocRenderData::CPDF_DocRenderData(CPDF_DocRenderData* fallback)
     : fallback_(fallback) {}
 
@@ -54,6 +55,7 @@ RetainPtr<CPDF_Type3Cache> CPDF_DocRenderData::GetCachedType3(
     return pdfium::WrapRetain(it->second.Get());
   }
 
+  // EmbedPDF(layer-seam): an unpromoted base font uses the base's cache.
   if (fallback_ && font->GetFontDictObjNum() != 0 &&
       !GetDocument()->IsObjectPromoted(font->GetFontDictObjNum())) {
     return fallback_->GetCachedType3(font);
@@ -64,6 +66,8 @@ RetainPtr<CPDF_Type3Cache> CPDF_DocRenderData::GetCachedType3(
   return cache;
 }
 
+// EmbedPDF(layer-transaction): forget transfer functions derived from object
+// versions a commit or abort left unreachable.
 void CPDF_DocRenderData::ForgetObjectTree(const CPDF_Object* root) {
   CPDF_ObjectWalker walker(pdfium::WrapRetain(root));
   while (RetainPtr<const CPDF_Object> object = walker.GetNext()) {
@@ -82,6 +86,7 @@ RetainPtr<CPDF_TransferFunc> CPDF_DocRenderData::GetTransferFunc(
     return pdfium::WrapRetain(it->second.Get());
   }
 
+  // EmbedPDF(layer-seam): an unpromoted base object uses the base's cache.
   if (fallback_ && CanUseFallbackForObject(obj.Get())) {
     return fallback_->GetTransferFunc(obj);
   }
@@ -91,6 +96,8 @@ RetainPtr<CPDF_TransferFunc> CPDF_DocRenderData::GetTransferFunc(
   return func;
 }
 
+// EmbedPDF(layer-seam): an indirect object the layer hasn't promoted reads the
+// same in the base, so the base's render data serves it.
 bool CPDF_DocRenderData::CanUseFallbackForObject(
     const CPDF_Object* object) const {
   if (!object) {

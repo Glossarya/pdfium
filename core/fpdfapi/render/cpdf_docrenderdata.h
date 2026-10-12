@@ -35,6 +35,7 @@ class CPDF_DocRenderData : public CPDF_Document::RenderDataIface {
   static CPDF_DocRenderData* FromDocument(const CPDF_Document* doc);
 
   CPDF_DocRenderData();
+  // EmbedPDF(layer-seam): a layer's render data falls back to its base's.
   explicit CPDF_DocRenderData(CPDF_DocRenderData* fallback);
   ~CPDF_DocRenderData() override;
 
@@ -45,7 +46,8 @@ class CPDF_DocRenderData : public CPDF_Document::RenderDataIface {
   RetainPtr<CPDF_Type3Cache> GetCachedType3(CPDF_Type3Font* font);
   RetainPtr<CPDF_TransferFunc> GetTransferFunc(
       RetainPtr<const CPDF_Object> obj);
-  // EmbedPDF: CPDF_DocPageData::ForgetObjectTree() for this cache.
+  // EmbedPDF(layer-transaction): CPDF_DocPageData::ForgetObjectTree() for
+  // this cache.
   void ForgetObjectTree(const CPDF_Object* root);
 
 #if BUILDFLAG(IS_WIN)
@@ -57,6 +59,8 @@ class CPDF_DocRenderData : public CPDF_Document::RenderDataIface {
   RetainPtr<CPDF_TransferFunc> CreateTransferFunc(
       RetainPtr<const CPDF_Object> pObj) const;
 
+  // EmbedPDF(layer-seam): objects a layer hasn't promoted use its base's
+  // render data.
   bool CanUseFallbackForObject(const CPDF_Object* object) const;
 
  private:

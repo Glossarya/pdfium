@@ -55,11 +55,14 @@ class CPDF_TextObject final : public CPDF_PageObject {
 
   CFX_PointF GetPos() const { return pos_; }
   CFX_Matrix GetTextMatrix() const;
-  // The glyphs' box in text space, as the last position calculation found it.
+  // EmbedPDF(lean-page-objects): the glyphs' box in text space, as the last
+  // position calculation found it.
   const CFX_FloatRect& GetOriginalRect() const { return original_rect_; }
 
   RetainPtr<CPDF_Font> GetFont() const;
   float GetFontSize() const;
+  // EmbedPDF(redaction): redaction measures text with the spacing it was
+  // shown with.
   float GetCharSpace() const;
   float GetWordSpace() const;
 
@@ -78,6 +81,9 @@ class CPDF_TextObject final : public CPDF_PageObject {
   void SetSegments(pdfium::span<const ByteString> strings,
                    pdfium::span<const float> kernings);
 
+  // EmbedPDF(faithful-content-rewrite, redaction): the kerning a TJ array put
+  // at `index`, a separator item, so a rewrite writes it back and redaction
+  // keeps the spacing.
   bool GetSeparatorAdjustment(size_t index, float* out_thousandths) const;
 
   CFX_PointF CalcPositionData(float horz_scale);
@@ -86,6 +92,7 @@ class CPDF_TextObject final : public CPDF_PageObject {
   float CalcPositionDataInternal(const RetainPtr<CPDF_Font>& font);
 
   CFX_PointF pos_;
+  // EmbedPDF(lean-page-objects): moved here from CPDF_PageObject.
   CFX_FloatRect original_rect_;
   std::vector<uint32_t> char_codes_;
   std::vector<float> char_pos_;

@@ -38,6 +38,7 @@ int ToFPDFStatus(CPDF_ProgressiveRenderer::Status status) {
   return static_cast<int>(status);
 }
 
+// EmbedPDF(epdf-api): a helper for the EPDF_RenderPage* sliced render.
 // The status of a render after one of its slices. A render that ended hands
 // the bitmap back in the alpha form it came in.
 int SliceStatus(CPDF_PageRenderContext* context) {
@@ -69,6 +70,7 @@ FPDF_RenderPageBitmapWithColorScheme_Start(FPDF_BITMAP bitmap,
     return FPDF_RENDER_FAILED;
   }
 
+  // EmbedPDF(view-scope): read through the document's view scope.
   ScopedFPDFPageView page_view(page);
   if (!page_view) {
     return FPDF_RENDER_FAILED;
@@ -151,6 +153,7 @@ FPDF_EXPORT int FPDF_CALLCONV FPDF_RenderPage_Continue(FPDF_PAGE page,
     return FPDF_RENDER_FAILED;
   }
 
+  // EmbedPDF(view-scope): read through the document's view scope.
   ScopedFPDFPageView page_view(page);
   if (!page_view) {
     return FPDF_RENDER_FAILED;
@@ -187,6 +190,8 @@ FPDF_EXPORT void FPDF_CALLCONV FPDF_RenderPage_Close(FPDF_PAGE page) {
   }
 }
 
+// EmbedPDF(epdf-api): EPDF_RenderPageBitmapWithMatrix_Start and
+// EPDF_RenderPage_Continue, a render in slices on a time budget.
 FPDF_EXPORT int FPDF_CALLCONV
 EPDF_RenderPageBitmapWithMatrix_Start(FPDF_BITMAP bitmap,
                                       FPDF_PAGE page,

@@ -25,6 +25,7 @@
 #include "core/fxcrt/notreached.h"
 #include "core/fxcrt/stl_util.h"
 
+// EmbedPDF(render-speedup): object groups, see GetObjectGroups().
 namespace {
 
 // Holders with fewer objects walk them faster than they build runs.
@@ -61,6 +62,8 @@ CPDF_PageObjectHolder::CPDF_PageObjectHolder(
       dict_(std::move(dict)),
       document_(doc) {
   DCHECK(dict_);
+  // EmbedPDF(overlay-epoch): what the holder was given counts as read at the
+  // current epoch.
   const uint64_t overlay_epoch = document_ ? document_->GetOverlayEpoch() : 0;
   page_resources_epoch_ = overlay_epoch;
   resources_epoch_ = overlay_epoch;
@@ -69,6 +72,8 @@ CPDF_PageObjectHolder::CPDF_PageObjectHolder(
 
 CPDF_PageObjectHolder::~CPDF_PageObjectHolder() = default;
 
+// EmbedPDF(overlay-epoch): the new resources count as read at the current
+// epoch.
 void CPDF_PageObjectHolder::SetResources(RetainPtr<CPDF_Dictionary> dict) {
   resources_ = std::move(dict);
   resources_epoch_ = document_ ? document_->GetOverlayEpoch() : 0;
@@ -78,10 +83,14 @@ bool CPDF_PageObjectHolder::IsPage() const {
   return false;
 }
 
+// EmbedPDF(faithful-content-rewrite): a page's content is in /Contents, not in
+// a stream of its own.
 RetainPtr<CPDF_Stream> CPDF_PageObjectHolder::GetMutableFormStream() {
   return nullptr;
 }
 
+// EmbedPDF(overlay-epoch): re-read the dictionary by object number when the
+// overlay epoch moved.
 RetainPtr<const CPDF_Dictionary> CPDF_PageObjectHolder::GetDict() const {
   if (!document_) {
     return dict_;
@@ -106,6 +115,9 @@ RetainPtr<const CPDF_Dictionary> CPDF_PageObjectHolder::GetDict() const {
   return dict_;
 }
 
+// EmbedPDF(layer-door): a write goes to a writable version, taken when the
+// getter is used: through the door for an indirect dictionary, through its
+// owner for a direct one.
 RetainPtr<CPDF_Dictionary> CPDF_PageObjectHolder::GetMutableDict() {
   if (!document_) {
     return dict_;
@@ -132,6 +144,7 @@ RetainPtr<CPDF_Dictionary> CPDF_PageObjectHolder::GetMutableDict() {
   return dict_;
 }
 
+// EmbedPDF(overlay-epoch): as GetDict().
 RetainPtr<const CPDF_Dictionary> CPDF_PageObjectHolder::GetResources() const {
   if (!document_ || !resources_) {
     return resources_;
@@ -156,6 +169,7 @@ RetainPtr<const CPDF_Dictionary> CPDF_PageObjectHolder::GetResources() const {
   return resources_;
 }
 
+// EmbedPDF(layer-door): as GetMutableDict().
 RetainPtr<CPDF_Dictionary> CPDF_PageObjectHolder::GetMutableResources() {
   if (!document_ || !resources_) {
     return resources_;
@@ -179,6 +193,7 @@ RetainPtr<CPDF_Dictionary> CPDF_PageObjectHolder::GetMutableResources() {
   return resources_;
 }
 
+// EmbedPDF(overlay-epoch): as GetDict().
 RetainPtr<const CPDF_Dictionary> CPDF_PageObjectHolder::GetPageResources()
     const {
   if (!document_ || !page_resources_) {
@@ -204,6 +219,7 @@ RetainPtr<const CPDF_Dictionary> CPDF_PageObjectHolder::GetPageResources()
   return page_resources_;
 }
 
+// EmbedPDF(layer-door): as GetMutableDict().
 RetainPtr<CPDF_Dictionary> CPDF_PageObjectHolder::GetMutablePageResources() {
   if (!document_ || !page_resources_) {
     return page_resources_;
@@ -227,6 +243,8 @@ RetainPtr<CPDF_Dictionary> CPDF_PageObjectHolder::GetMutablePageResources() {
   return page_resources_;
 }
 
+// EmbedPDF(layer-door): a holder whose dictionary can be direct (a form's)
+// overrides this. The resources default to the writable dictionary's.
 void CPDF_PageObjectHolder::EnsureMutableBackingObjectForDict() {
   NOTREACHED();
   CHECK(false);
@@ -262,11 +280,15 @@ void CPDF_PageObjectHolder::ContinueParse(PauseIndicatorIface* pPause) {
   parse_state_ = ParseState::kParsed;
   document_->IncrementParsedPageCount();
   all_ctms_ = parser_->TakeAllCTMs();
+  // EmbedPDF(faithful-content-rewrite): where the content began, for
+  // GetCTMAtBeginningOfStream().
   ctm_at_beginning_of_content_ = parser_->GetCTMAtBeginningOfContent();
 
   parser_.reset();
 }
 
+// EmbedPDF(overlay-epoch): drop the parsed objects and what was derived from
+// them, for a form whose stream has a newer version.
 void CPDF_PageObjectHolder::ResetParsedContent() {
   parser_.reset();
   parse_state_ = ParseState::kNotParsed;
@@ -294,6 +316,8 @@ std::set<int32_t> CPDF_PageObjectHolder::TakeDirtyStreams() {
   return dirty_streams;
 }
 
+// EmbedPDF(layer-transaction): whether the resources still define a cached
+// name; an aborted transaction drops the names it added.
 bool CPDF_PageObjectHolder::ResourcesDefine(ByteStringView category,
                                             const ByteString& name) const {
   RetainPtr<const CPDF_Dictionary> resources = GetResources();
@@ -308,6 +332,8 @@ std::optional<ByteString> CPDF_PageObjectHolder::GraphicsMapSearch(
   if (it == graphics_map_.end()) {
     return std::nullopt;
   }
+  // EmbedPDF(layer-transaction): a name an aborted transaction dropped is no
+  // longer cached.
   if (!ResourcesDefine("ExtGState", it->second)) {
     graphics_map_.erase(it);
     return std::nullopt;
@@ -326,6 +352,8 @@ std::optional<ByteString> CPDF_PageObjectHolder::FontsMapSearch(
   if (it == fonts_map_.end()) {
     return std::nullopt;
   }
+  // EmbedPDF(layer-transaction): a name an aborted transaction dropped is no
+  // longer cached.
   if (!ResourcesDefine("Font", it->second)) {
     fonts_map_.erase(it);
     return std::nullopt;
@@ -338,6 +366,9 @@ void CPDF_PageObjectHolder::FontsMapInsert(const FontData& fd,
   fonts_map_[fd] = str;
 }
 
+// EmbedPDF(faithful-content-rewrite): fonts named by their object and colour
+// spaces by the array they were read from. Like the caches above, a name
+// counts only while the resources define it.
 std::optional<ByteString> CPDF_PageObjectHolder::FontsByObjnumSearch(uint32_t objnum) {
   if (!objnum)
     return std::nullopt;
@@ -380,6 +411,8 @@ CFX_Matrix CPDF_PageObjectHolder::GetCTMAtBeginningOfStream(int32_t stream) {
   CHECK(stream >= 0 || stream == CPDF_PageObject::kNoContentStream);
 
   if (stream == 0 || all_ctms_.empty()) {
+    // EmbedPDF(faithful-content-rewrite): content begins at the CTM its
+    // parse began at (a form's /Matrix), not always at the identity.
     return ctm_at_beginning_of_content_;
   }
 
@@ -399,6 +432,8 @@ CFX_Matrix CPDF_PageObjectHolder::GetCTMAtEndOfStream(int32_t stream) {
   CHECK_GE(stream, 0);
 
   if (all_ctms_.empty()) {
+    // EmbedPDF(faithful-content-rewrite): content begins at the CTM its
+    // parse began at (a form's /Matrix), not always at the identity.
     return ctm_at_beginning_of_content_;
   }
 
@@ -439,6 +474,8 @@ CPDF_PageObject* CPDF_PageObjectHolder::GetPageObjectByIndex(
              : nullptr;
 }
 
+// EmbedPDF(render-speedup): runs of objects a render can pass over when they
+// miss its clip, built on demand.
 const CPDF_PageObjectGroups* CPDF_PageObjectHolder::GetObjectGroups(
     const CFX_FloatRect& clip) const {
   if (!g_object_groups_enabled || parse_state_ != ParseState::kParsed ||
@@ -471,8 +508,11 @@ void CPDF_PageObjectHolder::SetObjectGroupsEnabledForTesting(bool enabled) {
 void CPDF_PageObjectHolder::AppendPageObject(
     std::unique_ptr<CPDF_PageObject> pPageObj) {
   CHECK(pPageObj);
+  // EmbedPDF(render-speedup): the holder lists the object.
   pPageObj->held_ = true;
   page_object_list_.push_back(std::move(pPageObj));
+  // EmbedPDF(render-speedup, page-residency): the list changed: drop the
+  // object groups, and count an edit once parsed.
   object_groups_.reset();
   if (parse_state_ == ParseState::kParsed) {
     NoteObjectsEdited();
@@ -487,11 +527,14 @@ bool CPDF_PageObjectHolder::InsertPageObjectAtIndex(
     return false;
   }
 
+  // EmbedPDF(render-speedup): the holder lists the object.
   page_obj->held_ = true;
   // Unsafe, but the compiler will not complain, because
   // std::deque::iterator::operator++() has not been marked as unsafe yet.
   page_object_list_.insert(UNSAFE_TODO(page_object_list_.begin() + index),
                            std::move(page_obj));
+  // EmbedPDF(render-speedup, page-residency): the list changed: drop the
+  // object groups and count an edit.
   object_groups_.reset();
   NoteObjectsEdited();
   return true;
@@ -507,6 +550,8 @@ std::unique_ptr<CPDF_PageObject> CPDF_PageObjectHolder::RemovePageObject(
 
   std::unique_ptr<CPDF_PageObject> result = std::move(*it);
   page_object_list_.erase(it);
+  // EmbedPDF(render-speedup, page-residency): the holder no longer lists the
+  // object; the list changed: drop the object groups and count an edit.
   result->held_ = false;
   object_groups_.reset();
   NoteObjectsEdited();
@@ -527,6 +572,8 @@ bool CPDF_PageObjectHolder::ErasePageObjectAtIndex(size_t index) {
   // Unsafe, but the compiler will not complain, because
   // std::deque::iterator::operator++() has not been marked as unsafe yet.
   page_object_list_.erase(UNSAFE_TODO(page_object_list_.begin() + index));
+  // EmbedPDF(render-speedup, page-residency): the list changed: drop the
+  // object groups and count an edit.
   object_groups_.reset();
   NoteObjectsEdited();
   return true;

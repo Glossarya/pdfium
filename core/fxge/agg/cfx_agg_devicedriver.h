@@ -99,11 +99,13 @@ class CFX_AggDeviceDriver final : public RenderDeviceDriverIface {
 
   void Clear(uint32_t color);
 
+  // EmbedPDF(render-speedup): the off switch the off/on comparisons use.
   // Turns off the reuse of a repeated path's rasterizer output, so a test can
   // render without it and compare.
   static void SetPathMemoEnabledForTesting(bool enabled);
 
  private:
+  // EmbedPDF(render-speedup): reused path storage and the path memo.
   // The path storage, rasterizer, scanline and stroker every path of this
   // device is drawn with. Building them per path costs more than rasterizing
   // the small paths that vector-heavy pages consist of.
@@ -129,6 +131,7 @@ class CFX_AggDeviceDriver final : public RenderDeviceDriverIface {
                       const CFX_FillRenderOptions& fill_options,
                       PathMemo* record);
 
+  // EmbedPDF(render-speedup): `record` and ReplayPass() serve the path memo.
   // Composites `rasterizer`'s output; `record`, when given, keeps a copy.
   void RenderRasterizer(pdfium::agg::rasterizer_scanline_aa& rasterizer,
                         uint32_t color,
@@ -153,6 +156,7 @@ class CFX_AggDeviceDriver final : public RenderDeviceDriverIface {
   const bool rgb_byte_order_;
   const bool group_knockout_;
   RetainPtr<CFX_DIBitmap> backdrop_bitmap_;
+  // EmbedPDF(render-speedup): reused path storage and the path memo.
   std::unique_ptr<Workspace> workspace_;
   std::unique_ptr<PathMemo> path_memo_;
 };

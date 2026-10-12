@@ -13,6 +13,8 @@ class CFX_Matrix;
 class CPDFSDK_PauseAdapter;
 class CPDF_Page;
 class CPDF_PageRenderContext;
+// EmbedPDF(sliced-render): CPDFSDK_StartRenderPage(), a render that pauses
+// between slices.
 class PauseIndicatorIface;
 struct FX_RECT;
 

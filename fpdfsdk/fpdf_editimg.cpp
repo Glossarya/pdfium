@@ -628,6 +628,7 @@ FPDFImageObj_GetIccProfileDataDecoded(FPDF_PAGEOBJECT image_object,
   return true;
 }
 
+// EmbedPDF(epdf-api): EPDFImageObj_SetPng and EPDFImageObj_SetJpeg.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFImageObj_SetPng(FPDF_PAGE* pages,
                     int count,

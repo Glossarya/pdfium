@@ -27,6 +27,8 @@ class CPDF_NameTree {
 
   static std::unique_ptr<CPDF_NameTree> Create(CPDF_Document* doc,
                                                ByteStringView category);
+  // EmbedPDF(reads-dont-write): a tree for reading: found through const
+  // getters, and it refuses writes.
   static std::unique_ptr<CPDF_NameTree> CreateForReading(
       CPDF_Document* doc,
       ByteStringView category);
@@ -55,11 +57,13 @@ class CPDF_NameTree {
   CPDF_Dictionary* GetRootForTesting() const { return root_.Get(); }
 
  private:
+  // EmbedPDF(reads-dont-write): a tree knows whether it may be written.
   CPDF_NameTree(RetainPtr<CPDF_Dictionary> pRoot, bool read_only);
 
   RetainPtr<const CPDF_Array> LookupNewStyleNamedDest(const ByteString& name);
 
   RetainPtr<CPDF_Dictionary> const root_;
+  // EmbedPDF(reads-dont-write): a tree knows whether it may be written.
   const bool read_only_;
 };
 

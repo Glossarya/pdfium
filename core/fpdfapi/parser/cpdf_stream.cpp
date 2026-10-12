@@ -62,6 +62,8 @@ CPDF_Stream::CPDF_Stream(RetainPtr<IFX_SeekableReadStream> file,
       std::get<RetainPtr<IFX_SeekableReadStream>>(data_)->GetSize()));
 }
 
+// EmbedPDF(layer-door): in-memory bytes live in a shared, immutable buffer
+// (CFX_SharedBytes), so a copy-up shares them instead of copying.
 CPDF_Stream::CPDF_Stream(DataVector<uint8_t> data,
                          RetainPtr<CPDF_Dictionary> dict)
     : CPDF_Stream(pdfium::MakeRetain<CFX_SharedBytes>(std::move(data)),
@@ -95,6 +97,8 @@ CPDF_Stream* CPDF_Stream::AsMutableStream() {
 }
 
 void CPDF_Stream::InitStreamFromFile(RetainPtr<IFX_SeekableReadStream> file) {
+  // EmbedPDF(write-generation, reads-dont-write): a write past the layer's
+  // door, or one during a read-only walk, is a bug.
   DCHECK_PDF_GRAPH_MUTABLE_FOR(this);
   DCHECK_PDF_WRITABLE(this);
   const int size = pdfium::checked_cast<int>(file->GetSize());
@@ -107,6 +111,7 @@ RetainPtr<CPDF_Object> CPDF_Stream::Clone() const {
   return CloneObjectNonCyclic(false);
 }
 
+// EmbedPDF(layer-door): the copy a layer makes when it promotes a base object.
 RetainPtr<CPDF_Object> CPDF_Stream::CloneForHolder(
     CPDF_IndirectObjectHolder* holder) const {
   std::set<const CPDF_Object*> visited;
@@ -141,9 +146,9 @@ RetainPtr<CPDF_Object> CPDF_Stream::CloneForHolderNonCyclic(
     pNewDict = ToDictionary(static_cast<const CPDF_Object*>(dict.Get())
                                 ->CloneForHolderNonCyclic(holder, pVisited));
   }
-  // EmbedPDF: a clone FOR A HOLDER shares its source's read-only view
-  // instead of loading the bytes when that view outlives the clone: either
-  // the view is self-contained (the parser copies every stream's bytes
+  // EmbedPDF(layer-door): a clone FOR A HOLDER shares its source's read-only
+  // view instead of loading the bytes when that view outlives the clone:
+  // either the view is self-contained (the parser copies every stream's bytes
   // into an owned container at parse, so this is the common case), or its
   // bytes belong to storage the holder retains for its whole life (a
   // layer's base or loaded delta). The view is immutable; SetData() gives
@@ -169,6 +174,8 @@ RetainPtr<CPDF_Object> CPDF_Stream::CloneForHolderNonCyclic(
                                          std::move(pNewDict));
 }
 
+// EmbedPDF(layer-door, layer-save): reach a stream's bytes without loading
+// them, to share them in a copy-up and to compare them in a save.
 RetainPtr<IFX_SeekableReadStream> CPDF_Stream::BackingView() const {
   return IsFileBased() ? std::get<RetainPtr<IFX_SeekableReadStream>>(data_)
                        : nullptr;
@@ -193,6 +200,8 @@ bool CPDF_Stream::ReadRawBlock(pdfium::span<uint8_t> buffer,
   return true;
 }
 
+// EmbedPDF(write-generation): freezing or stamping a stream reaches its
+// dictionary.
 void CPDF_Stream::FreezeChildren(std::set<const CPDF_Object*>* visited) {
   dict_->FreezeForHolder(visited);
 }
@@ -202,6 +211,8 @@ void CPDF_Stream::StampWriteGenerationOfChildren(uint32_t generation) {
 }
 
 void CPDF_Stream::SetDataAndRemoveFilter(pdfium::span<const uint8_t> pData) {
+  // EmbedPDF(write-generation, reads-dont-write): a write past the layer's
+  // door, or one during a read-only walk, is a bug.
   DCHECK_PDF_GRAPH_MUTABLE_FOR(this);
   DCHECK_PDF_WRITABLE(this);
   SetData(pData);
@@ -220,6 +231,8 @@ void CPDF_Stream::SetDataFromStringstreamAndRemoveFilter(
 }
 
 void CPDF_Stream::SetData(pdfium::span<const uint8_t> pData) {
+  // EmbedPDF(write-generation, reads-dont-write): a write past the layer's
+  // door, or one during a read-only walk, is a bug.
   DCHECK_PDF_GRAPH_MUTABLE_FOR(this);
   DCHECK_PDF_WRITABLE(this);
   DataVector<uint8_t> data_copy(pData.begin(), pData.end());
@@ -227,14 +240,19 @@ void CPDF_Stream::SetData(pdfium::span<const uint8_t> pData) {
 }
 
 void CPDF_Stream::TakeData(DataVector<uint8_t> data) {
+  // EmbedPDF(write-generation, reads-dont-write): a write past the layer's
+  // door, or one during a read-only walk, is a bug.
   DCHECK_PDF_GRAPH_MUTABLE_FOR(this);
   DCHECK_PDF_WRITABLE(this);
   const int size = pdfium::checked_cast<int>(data.size());
+  // EmbedPDF(layer-door): a new buffer; the old one may be shared.
   data_ = pdfium::MakeRetain<CFX_SharedBytes>(std::move(data));
   SetLengthInDict(size);
 }
 
 void CPDF_Stream::SetDataFromStringstream(fxcrt::ostringstream* stream) {
+  // EmbedPDF(write-generation, reads-dont-write): a write past the layer's
+  // door, or one during a read-only walk, is a bug.
   DCHECK_PDF_GRAPH_MUTABLE_FOR(this);
   DCHECK_PDF_WRITABLE(this);
   if (stream->tellp() <= 0) {
@@ -269,6 +287,7 @@ WideString CPDF_Stream::GetUnicodeText() const {
   return PDF_DecodeText(pAcc->GetSpan());
 }
 
+// EmbedPDF(save-generations): writers carry the write context.
 bool CPDF_Stream::WriteTo(IFX_ArchiveStream* archive,
                           const CPDF_Encryptor* encryptor,
                           const CPDF_WriteContext* context) const {
@@ -303,6 +322,7 @@ size_t CPDF_Stream::GetRawSize() const {
     return pdfium::checked_cast<size_t>(
         std::get<RetainPtr<IFX_SeekableReadStream>>(data_)->GetSize());
   }
+  // EmbedPDF(layer-door): in-memory bytes are a shared buffer.
   return std::get<RetainPtr<const CFX_SharedBytes>>(data_)->size();
 }
 
@@ -312,6 +332,8 @@ pdfium::span<const uint8_t> CPDF_Stream::GetInMemoryRawData() const {
 }
 
 void CPDF_Stream::SetLengthInDict(int length) {
+  // EmbedPDF(write-generation, reads-dont-write): a write past the layer's
+  // door, or one during a read-only walk, is a bug.
   DCHECK_PDF_GRAPH_MUTABLE_FOR(this);
   DCHECK_PDF_WRITABLE(this);
   dict_->SetNewFor<CPDF_Number>("Length", length);

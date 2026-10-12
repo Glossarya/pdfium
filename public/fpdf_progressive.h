@@ -148,6 +148,8 @@ FPDF_EXPORT int FPDF_CALLCONV FPDF_RenderPage_Continue(FPDF_PAGE page,
 //          None.
 FPDF_EXPORT void FPDF_CALLCONV FPDF_RenderPage_Close(FPDF_PAGE page);
 
+// EmbedPDF(epdf-api): EPDF_RenderPageBitmapWithMatrix_Start and
+// EPDF_RenderPage_Continue.
 // Experimental EmbedPDF Extension API.
 // Starts rendering `page` into `bitmap` as FPDF_RenderPageBitmapWithMatrix()
 // does, and pauses once `budget_ms` milliseconds have passed, so a caller can

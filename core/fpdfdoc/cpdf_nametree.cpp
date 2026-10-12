@@ -353,8 +353,8 @@ std::optional<IndexSearchResult> SearchNameNodeByIndexInternal(
     }
 
     size_t index = 2 * (nTargetPairIndex - *nCurPairIndex);
-    // EmbedPDF: a pair whose value does not resolve (a reference to a
-    // missing object) is still the pair at this index. Bailing here used to
+    // EmbedPDF(bug-fix): a pair whose value does not resolve (a reference to
+    // a missing object) is still the pair at this index. Bailing here used to
     // desynchronize `nCurPairIndex` from GetCount() and hide the key, so a
     // dangling entry could be neither reported nor deleted. Callers already
     // handle a null value.
@@ -457,6 +457,7 @@ RetainPtr<const CPDF_Array> LookupOldStyleNamedDest(CPDF_Document* doc,
 
 }  // namespace
 
+// EmbedPDF(reads-dont-write): a tree knows whether it may be written.
 CPDF_NameTree::CPDF_NameTree(RetainPtr<CPDF_Dictionary> pRoot, bool read_only)
     : root_(std::move(pRoot)), read_only_(read_only) {
   DCHECK(root_);
@@ -482,10 +483,13 @@ std::unique_ptr<CPDF_NameTree> CPDF_NameTree::Create(CPDF_Document* doc,
     return nullptr;
   }
 
+  // EmbedPDF(reads-dont-write): this tree may be written.
   return pdfium::WrapUnique(
       new CPDF_NameTree(std::move(pCategory), /*read_only=*/false));
 }
 
+// EmbedPDF(reads-dont-write): a tree for reading: found through const getters,
+// and it refuses writes.
 // static
 std::unique_ptr<CPDF_NameTree> CPDF_NameTree::CreateForReading(
     CPDF_Document* doc,
@@ -538,12 +542,14 @@ std::unique_ptr<CPDF_NameTree> CPDF_NameTree::CreateWithRootNameArray(
                                       pCategory->GetObjNum());
   }
 
+  // EmbedPDF(reads-dont-write): this tree may be written.
   return pdfium::WrapUnique(new CPDF_NameTree(pCategory, /*read_only=*/false));
 }
 
 // static
 std::unique_ptr<CPDF_NameTree> CPDF_NameTree::CreateForTesting(
     CPDF_Dictionary* pRoot) {
+  // EmbedPDF(reads-dont-write): this tree may be written.
   return pdfium::WrapUnique(
       new CPDF_NameTree(pdfium::WrapRetain(pRoot), /*read_only=*/false));
 }
@@ -553,6 +559,8 @@ RetainPtr<const CPDF_Array> CPDF_NameTree::LookupNamedDest(
     CPDF_Document* doc,
     const ByteString& name) {
   RetainPtr<const CPDF_Array> dest_array;
+  // EmbedPDF(reads-dont-write): a lookup opens the tree for reading; Create()
+  // takes it through the mutable getters.
   std::unique_ptr<CPDF_NameTree> name_tree = CreateForReading(doc, "Dests");
   if (name_tree) {
     dest_array = name_tree->LookupNewStyleNamedDest(name);
@@ -570,6 +578,7 @@ size_t CPDF_NameTree::GetCount() const {
 
 bool CPDF_NameTree::AddValueAndName(RetainPtr<CPDF_Object> pObj,
                                     const WideString& name) {
+  // EmbedPDF(reads-dont-write): a tree opened for reading is never written.
   CHECK(!read_only_);
   NodeToInsert node_to_insert;
   // Handle the corner case where the root node is empty. i.e. No kids and no
@@ -631,6 +640,7 @@ bool CPDF_NameTree::AddValueAndName(RetainPtr<CPDF_Object> pObj,
 }
 
 bool CPDF_NameTree::DeleteValueAndName(size_t nIndex) {
+  // EmbedPDF(reads-dont-write): a tree opened for reading is never written.
   CHECK(!read_only_);
   std::optional<IndexSearchResult> result =
       SearchNameNodeByIndex(root_.Get(), nIndex);

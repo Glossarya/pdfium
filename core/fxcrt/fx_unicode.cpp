@@ -48,8 +48,9 @@ uint16_t GetUnicodeProperties(wchar_t wch) {
   return 0;
 }
 
-// EmbedPDF: the extended table is compiled unconditionally (rich text line
-// breaking in core/fpdfdoc reads the break property); it used to be XFA-only.
+// EmbedPDF(rich-text): the extended table is compiled unconditionally (rich
+// text line breaking in core/fpdfdoc reads the break property); it used to be
+// XFA-only.
 // Format of uint16_t values in kExtendedTextLayoutCodeProperties[].
 constexpr uint16_t kBreakTypeBitPos = 0;
 constexpr uint16_t kBreakTypeBitCount = 6;
@@ -82,6 +83,7 @@ uint16_t GetExtendedUnicodeProperties(wchar_t wch) {
   }
   return 0;
 }
+// EmbedPDF(rich-text): the PDF_ENABLE_XFA guard ended here; see above.
 
 constexpr uint16_t kFXTextLayoutBidiMirror[] = {
     0x0029, 0x0028, 0x003E, 0x003C, 0x005D, 0x005B, 0x007D, 0x007B, 0x00BB,
@@ -159,6 +161,8 @@ FX_BIDICLASS GetBidiClass(wchar_t wch) {
   return static_cast<FX_BIDICLASS>(result);
 }
 
+// EmbedPDF(rich-text): no PDF_ENABLE_XFA guard around these two: the rich text
+// line breaker uses them too.
 FX_CHARTYPE GetCharType(wchar_t wch) {
   uint16_t prop = GetExtendedUnicodeProperties(wch);
   uint16_t result = (prop & kCharTypeBitMask) >> kCharTypeBitPos;

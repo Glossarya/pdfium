@@ -18,10 +18,12 @@ void InitializePageModule() {
   CPDF_FontGlobals::Create();
   CPDF_FontGlobals::GetInstance()->LoadEmbeddedMaps();
   CPDF_StreamContentParser::InitializeGlobals();
+  // EmbedPDF(decoded-image-store): one store per PDFium instance.
   CPDF_DecodedImageStore::Create();
 }
 
 void DestroyPageModule() {
+  // EmbedPDF(decoded-image-store): one store per PDFium instance.
   CPDF_DecodedImageStore::Destroy();
   CPDF_StreamContentParser::DestroyGlobals();
   CPDF_FontGlobals::Destroy();

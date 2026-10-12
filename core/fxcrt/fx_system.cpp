@@ -18,7 +18,7 @@
 namespace {
 
 #if !BUILDFLAG(IS_WIN)
-// EmbedPDF: thread-confined runtime - per-thread last-error, written during
+// EmbedPDF(thread-confined-globals): per-thread last-error, written during
 // parse/render and read back by FPDF_GetLastError on the same thread.
 EPDF_TLS uint32_t g_last_error = 0;
 #endif

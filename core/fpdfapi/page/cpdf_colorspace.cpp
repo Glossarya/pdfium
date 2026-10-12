@@ -451,7 +451,7 @@ class StockColorSpaces {
   RetainPtr<CPDF_PatternCS> pattern_;
 };
 
-// EmbedPDF: thread-confined runtime - per-thread stock device colorspaces
+// EmbedPDF(thread-confined-globals): per-thread stock device colorspaces
 // (gray/rgb/cmyk/pattern), created/destroyed on the owning thread.
 EPDF_TLS StockColorSpaces* g_stock_colorspaces = nullptr;
 

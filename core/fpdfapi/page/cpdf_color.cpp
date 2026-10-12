@@ -101,6 +101,8 @@ bool CPDF_Color::IsColorSpaceGray() const {
          CPDF_ColorSpace::GetStockCS(CPDF_ColorSpace::Family::kDeviceGray);
 }
 
+// EmbedPDF(faithful-content-rewrite): the content generator writes a colour
+// in the space it was read in, with the components it was read with.
 bool CPDF_Color::IsColorSpaceCMYK() const {
   if (!cs_)
     return false;
@@ -157,6 +159,8 @@ RetainPtr<CPDF_Pattern> CPDF_Color::GetPattern() const {
   return pattern_value->GetPattern();
 }
 
+// EmbedPDF(faithful-content-rewrite): an uncoloured pattern's colour, so the
+// content generator writes `[/Pattern base]` and the colour.
 pdfium::span<const float> CPDF_Color::GetPatternComps() const {
   DCHECK(IsPattern());
   const auto& value = std::get<std::unique_ptr<PatternValue>>(color_data_);

@@ -72,6 +72,7 @@ FPDFCatalog_SetLanguage(FPDF_DOCUMENT document, FPDF_WIDESTRING language) {
   return true;
 }
 
+// EmbedPDF(epdf-api): EPDFCatalog_GetLanguage, the catalog's /Lang.
 FPDF_EXPORT unsigned long FPDF_CALLCONV
 EPDFCatalog_GetLanguage(FPDF_DOCUMENT document, void* buffer, unsigned long length) {
   CPDF_Document* doc = CPDFDocumentFromFPDFDocument(document);

@@ -28,6 +28,7 @@
 #include "core/fxcrt/unowned_ptr.h"
 
 class CPDF_ReadValidator;
+// EmbedPDF(view-scope): see GetBaseDocumentForViewScope().
 class CPDF_BaseDocument;
 class CPDF_StreamAcc;
 class IFX_SeekableReadStream;
@@ -36,7 +37,8 @@ class JBig2_DocumentContext;
 class CPDF_Document : public Observable,
                       public CPDF_Parser::ParsedObjectsHolder {
  public:
-  // EmbedPDF: owned SDK measurement state; never part of the PDF graph.
+  // EmbedPDF(measurement): owned SDK measurement state; never part of the PDF
+  // graph.
   CPDF_MeasureStorage* GetMeasureStorage() const {
     return measure_storage_.get();
   }
@@ -97,6 +99,8 @@ class CPDF_Document : public Observable,
     UnownedPtr<CPDF_Document> doc_;
   };
 
+  // EmbedPDF(save-security): encryption a save will apply or remove, kept on
+  // the document instead of a global.
   enum class PendingSecurityMode { kNone, kEncrypt, kRemove };
 
   struct PendingSecurity {
@@ -118,9 +122,10 @@ class CPDF_Document : public Observable,
     extension_ = std::move(pExt);
   }
 
-  // EmbedPDF: an opaque cache an SDK layer attaches to this document for its
-  // lifetime. The bytes a document was loaded from never change, so nothing
-  // invalidates it; it is destroyed before the parser it may refer to.
+  // EmbedPDF(signatures): an opaque cache an SDK layer (the revision view)
+  // attaches to this document for its lifetime. The bytes a document was
+  // loaded from never change, so nothing invalidates it; it is destroyed
+  // before the parser it may refer to.
   class Attachment {
    public:
     virtual ~Attachment() = default;
@@ -130,9 +135,9 @@ class CPDF_Document : public Observable,
     epdf_attachment_ = std::move(attachment);
   }
 
-  // EmbedPDF: session-scoped provenance for a resource name this document
-  // instance handed out for a registered runtime font (a /DA font alias
-  // reserved before its /DR entry exists). Never written to the file; a
+  // EmbedPDF(fonts): session-scoped provenance for a resource name this
+  // document instance handed out for a registered runtime font (a /DA font
+  // alias reserved before its /DR entry exists). Never written to the file; a
   // reopened document starts empty, so an alias that merely looks reserved
   // resolves to nothing.
   void ReserveSessionFontAlias(const ByteString& alias, uint32_t font_id) {
@@ -147,12 +152,12 @@ class CPDF_Document : public Observable,
     return it->second;
   }
 
-  // EmbedPDF: how much of a registered font's program the resources built
-  // for this document instance carry (§2 of the rich text Phase C note).
-  // kDefault subsets annotation text and embeds form field text whole;
-  // kSubset and kFull apply to both. Session state, never written to the
-  // file; applies to resources built after the call. A font whose fsType
-  // forbids subsetting is embedded whole under every policy.
+  // EmbedPDF(fonts): how much of a registered font's program the resources
+  // built for this document instance carry. kDefault subsets annotation text
+  // and embeds form field text whole; kSubset and kFull apply to both.
+  // Session state, never written to the file; applies to resources built
+  // after the call. A font whose fsType forbids subsetting is embedded whole
+  // under every policy.
   enum class FontEmbeddingPolicy : uint8_t { kDefault, kSubset, kFull };
   FontEmbeddingPolicy GetFontEmbeddingPolicy() const {
     return font_embedding_policy_;
@@ -161,31 +166,37 @@ class CPDF_Document : public Observable,
     font_embedding_policy_ = policy;
   }
 
-  // EmbedPDF (rich text, Phase D): session switches for appearances laid
-  // out by CPDF_RichTextLayout. Latin typographic features (kern, liga…)
-  // are off for Acrobat parity unless turned on here. Plain FreeText (no
-  // /RC) keeps the CPVT layout unless the rich engine is selected; an
-  // annotation with /RC always uses the rich engine.
+  // EmbedPDF(rich-text): session switches for appearances laid out by
+  // CPDF_RichTextLayout. Latin typographic features (kern, liga…) are off
+  // for Acrobat parity unless turned on here. Plain FreeText (no /RC) keeps
+  // the CPVT layout unless the rich engine is selected; an annotation with
+  // /RC always uses the rich engine.
   bool GetTypographicFeaturesEnabled() const { return typographic_features_; }
   void SetTypographicFeaturesEnabled(bool enabled) {
     typographic_features_ = enabled;
   }
 
+  // EmbedPDF(layer-seam): virtual; a layer answers with its base's parser and
+  // its own /Root and /Info.
   virtual CPDF_Parser* GetParser() const;
   virtual const CPDF_Dictionary* GetRoot() const;
   virtual RetainPtr<CPDF_Dictionary> GetMutableRoot();
   virtual RetainPtr<CPDF_Dictionary> GetInfo();
+  // EmbedPDF(save-traversal): the save trailer names /Info through this.
   // The effective trailer's /Info identity, without loading or promoting it.
   uint32_t GetInfoObjectNumber() const;
+  // EmbedPDF(layer-seam, layer-door): a layer promotes its base /Info before
+  // a write; metadata writes reach /Info only through GetMutableInfo().
   virtual RetainPtr<CPDF_Dictionary> GetMutableInfo();
   RetainPtr<CPDF_Dictionary> GetOrCreateInfo();
   RetainPtr<const CPDF_Array> GetFileIdentifier() const;
-  // EmbedPDF: the file identifier a save writes for a created document (one
-  // without a parser) instead of generating one: for output that must be the
-  // same bytes every time it is made. Null until set.
+  // EmbedPDF(annot-appearance): the file identifier a save writes for a
+  // created document (one without a parser) instead of generating one: for
+  // output that must be the same bytes every time it is made. Null until set.
   void SetPresetFileIdentifier(RetainPtr<const CPDF_Array> identifier);
-  // EmbedPDF: removes a created document's /Info, so a save writes no
-  // creation date. Call it before anything else is created in the document.
+  // EmbedPDF(annot-appearance): removes a created document's /Info, so a save
+  // writes no creation date. Call it before anything else is created in the
+  // document.
   void DropCreatedDocumentInfo();
 
   // Returns the object number for the deleted page, or 0 on failure.
@@ -198,11 +209,13 @@ class CPDF_Document : public Observable,
 
   int GetPageCount() const;
   bool IsPageLoaded(int iPage) const;
+  // EmbedPDF(layer-seam): virtual, so a layer answers from its own page tree.
   virtual RetainPtr<const CPDF_Dictionary> GetPageDictionary(int iPage);
   virtual RetainPtr<CPDF_Dictionary> GetMutablePageDictionary(int iPage);
   int GetPageIndex(uint32_t objnum);
   // When `get_owner_perms` is true, returns full permissions if unlocked by
   // owner.
+  // EmbedPDF(layer-seam): virtual; a layer answers with its base's.
   virtual uint32_t GetUserPermissions(bool get_owner_perms) const;
 
   // PageDataIface wrappers, try to avoid explicit getter calls.
@@ -231,39 +244,48 @@ class CPDF_Document : public Observable,
   // Returns whether CreateModifiedAPStream() created `stream`.
   bool IsModifiedAPStream(const CPDF_Stream* stream) const;
 
+  // EmbedPDF(save-security): pending encryption settings belong to the
+  // document, not to a global.
   void SetPendingSecurity(PendingSecurity pending);
   const PendingSecurity* GetPendingSecurity() const;
   void ClearPendingSecurity();
 
+  // EmbedPDF(layer-seam): only a layer promotes objects.
   // Returns whether `objnum` has been promoted from its base storage into a
   // document overlay. Always false for ordinary documents.
   virtual RetainPtr<CPDF_Object> FindPromotedObject(uint32_t objnum) const;
   bool IsObjectPromoted(uint32_t objnum) const;
-  // EmbedPDF: the object as the document was LOADED with it. For a layer,
-  // the ingested delta's version when the delta carried it, else the frozen
-  // base object; for an ordinary document, a fresh parse of the object from
-  // the loaded bytes. Null for an object the loaded bytes do not carry. A
-  // twin is read-only, never mutated, never in an overlay.
+  // EmbedPDF(layer-save): the object as the document was LOADED with it. For
+  // a layer, the ingested delta's version when the delta carried it, else the
+  // frozen base object; for an ordinary document, a fresh parse of the object
+  // from the loaded bytes. Null for an object the loaded bytes do not carry.
+  // A twin is read-only, never mutated, never in an overlay.
   virtual RetainPtr<const CPDF_Object> GetLoadedTwin(uint32_t objnum) const;
-  // EmbedPDF: the twin a SAVE compares against when it decides what to
-  // write - the frozen base object for a layer, the loaded twin for an
-  // ordinary document (its base IS its loaded bytes). Null when the base
+  // EmbedPDF(layer-save): the twin a SAVE compares against when it decides
+  // what to write - the frozen base object for a layer, the loaded twin for
+  // an ordinary document (its base IS its loaded bytes). Null when the base
   // does not carry the object. A removal that empties a container restores
   // the shape THIS twin has, so the object can be elided again.
   virtual RetainPtr<const CPDF_Object> GetBaseTwin(uint32_t objnum) const;
-  // EmbedPDF: whether |stream|'s file-backed bytes are owned by something
-  // this document retains for its whole life (its own parser's file, a
-  // layer's base or loaded delta). Only then may a clone made for this
-  // holder share the view instead of copying the bytes.
+  // EmbedPDF(layer-door): whether |stream|'s file-backed bytes are owned by
+  // something this document retains for its whole life (its own parser's
+  // file, a layer's base or loaded delta). Only then may a clone made for
+  // this holder share the view instead of copying the bytes.
   bool SharesBackingStorageWith(const CPDF_Stream* stream) const override;
+  // EmbedPDF(overlay-epoch): holders of cached object pointers re-read them
+  // when it moves.
   // Changes whenever the effective identity of an indirect object can change.
   // Ordinary documents have no overlay and always return 0.
   virtual uint64_t GetOverlayEpoch() const;
+  // EmbedPDF(layer-seam): only a layer document says yes.
   virtual bool IsLayerDocument() const;
+  // EmbedPDF(view-scope): how a view scope finds the base document.
   // Returns non-null only for the immutable base document itself. This avoids
   // RTTI in the ambient-view boundary while preserving exact frozen-view
   // identity for the debug detector.
   virtual const CPDF_BaseDocument* GetBaseDocumentForViewScope() const;
+  // EmbedPDF(layer-save, layer-open): where a layer's delta starts, after the
+  // base bytes.
   virtual FX_FILESIZE GetLayerAppendBaseOffset() const;
 
   // CPDF_Parser::ParsedObjectsHolder:
@@ -281,9 +303,10 @@ class CPDF_Document : public Observable,
   void LoadPages();
   void CreateNewDoc();
   RetainPtr<CPDF_Dictionary> CreateNewPage(int iPage);
-  // EmbedPDF: CreateNewPage() with the page dictionary at |objnum| (see
-  // CPDF_IndirectObjectHolder::AddIndirectObjectAt()). Null when the number
-  // can't take it or the page can't be inserted; nothing changes then.
+  // EmbedPDF(chosen-object-numbers): CreateNewPage() with the page dictionary
+  // at |objnum| (see CPDF_IndirectObjectHolder::AddIndirectObjectAt()). Null
+  // when the number can't take it or the page can't be inserted; nothing
+  // changes then.
   RetainPtr<CPDF_Dictionary> CreateNewPageAt(int iPage, uint32_t objnum);
 
   void IncrementParsedPageCount() { ++parsed_page_count_; }
@@ -296,30 +319,35 @@ class CPDF_Document : public Observable,
 
   void ResizePageListForTesting(size_t size);
 
+  // EmbedPDF(layer-seam): the page list's storage; a layer keeps its own.
   virtual uint32_t GetPageObjNumAt(size_t index) const;
   virtual void SetPageObjNumAt(size_t index, uint32_t objnum);
   virtual void InsertPageObjNum(size_t index, uint32_t objnum);
   virtual void ErasePageObjNum(size_t index);
   virtual void ResizePageList(size_t size);
   virtual size_t GetPageListSize() const;
+  // EmbedPDF(layer-open): after a delta, the page list from the page tree.
   bool RebuildPageListFromCurrentPageTree();
 
+  // EmbedPDF(layer-seam): the cached /Root and /Info change only here; a
+  // layer resets them when it swaps versions.
   void SetCachedRootDict(RetainPtr<CPDF_Dictionary> root);
   void InvalidateCachedRootDict();
   void SetCachedInfoDict(RetainPtr<CPDF_Dictionary> info);
   void InvalidateCachedInfoDict();
-  // EmbedPDF: the cached pointers as they are, without resolving anything, so
-  // a layer transaction can put them back on abort.
+  // EmbedPDF(layer-transaction): the cached pointers as they are, without
+  // resolving anything, so a layer transaction can put them back on abort.
   RetainPtr<CPDF_Dictionary> GetCachedRootDict() const { return root_dict_; }
   RetainPtr<CPDF_Dictionary> GetCachedInfoDict() const { return info_dict_; }
 
-  // EmbedPDF layer documents represent deletion by removing references from the
-  // promoted owning container, e.g. /Pages /Kids or /Annots. Base objects
-  // remain resolvable through the base xref and are not null-replaced in
-  // append-only layer deltas.
+  // EmbedPDF(layer-save): layer documents represent deletion by removing
+  // references from the promoted owning container, e.g. /Pages /Kids or
+  // /Annots. Base objects remain resolvable through the base xref and are not
+  // null-replaced in append-only layer deltas.
   virtual bool ShouldReplaceDeletedPageWithNull(uint32_t page_obj_num) const;
 
  private:
+  // EmbedPDF(measurement): see GetMeasureStorage().
   std::unique_ptr<CPDF_MeasureStorage> measure_storage_;
   class StockFontClearer {
    public:
@@ -356,6 +384,7 @@ class CPDF_Document : public Observable,
   std::unique_ptr<CPDF_Parser> parser_;
   RetainPtr<CPDF_Dictionary> root_dict_;
   RetainPtr<CPDF_Dictionary> info_dict_;
+  // EmbedPDF(annot-appearance): see SetPresetFileIdentifier().
   RetainPtr<const CPDF_Array> preset_file_identifier_;
 
   // Vector of pairs to know current position in the page tree. The index in the
@@ -379,15 +408,17 @@ class CPDF_Document : public Observable,
   std::unique_ptr<JBig2_DocumentContext> codec_context_;
   std::unique_ptr<LinkListIface> links_context_;
   std::set<uint32_t> modified_apstream_ids_;
+  // EmbedPDF(save-security): see SetPendingSecurity().
   std::optional<PendingSecurity> pending_security_;
   std::vector<uint32_t> page_list_;  // Page number to page's dict objnum.
-  std::map<ByteString, uint32_t> session_font_aliases_;  // EmbedPDF, see above.
+  // EmbedPDF(fonts): session font state, see the accessors above.
+  std::map<ByteString, uint32_t> session_font_aliases_;
   FontEmbeddingPolicy font_embedding_policy_ =
-      FontEmbeddingPolicy::kDefault;  // EmbedPDF, see above.
-  bool typographic_features_ = false;  // EmbedPDF, see above.
+      FontEmbeddingPolicy::kDefault;  // EmbedPDF(fonts): see above.
+  bool typographic_features_ = false;  // EmbedPDF(rich-text): see above.
 
-  // EmbedPDF: destroyed before everything declared above it (the parser
-  // included), after the extension and the stock font clearer.
+  // EmbedPDF(signatures): destroyed before everything declared above it (the
+  // parser included), after the extension and the stock font clearer.
   std::unique_ptr<Attachment> epdf_attachment_;
 
   // Must be second to last.

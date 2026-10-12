@@ -46,6 +46,8 @@ class CPDF_TextPage {
   class CharInfo {
    public:
     CharInfo();
+    // EmbedPDF(text-geometry): upstream's public constructor, split: a real
+    // glyph keeps its origin in text object space, a synthetic one has none.
     static CharInfo RealGlyph(CharType char_type,
                               uint32_t char_code,
                               wchar_t unicode,
@@ -71,6 +73,8 @@ class CPDF_TextPage {
     void set_unicode(wchar_t unicode) { unicode_ = unicode; }
 
     const CFX_PointF& origin() const { return origin_; }
+    // EmbedPDF(text-geometry): the origin in text object space; real glyphs
+    // only.
     const std::optional<CFX_PointF>& local_origin() const {
       return local_origin_;
     }
@@ -84,6 +88,7 @@ class CPDF_TextPage {
     CPDF_TextObject* text_object() { return text_object_; }
 
    private:
+    // EmbedPDF(text-geometry): built through RealGlyph() and Synthetic().
     CharInfo(CharType char_type,
              uint32_t char_code,
              wchar_t unicode,
@@ -97,6 +102,7 @@ class CPDF_TextPage {
     wchar_t unicode_ = 0;  // Above `char_code_` to potentially pack tighter.
     uint32_t char_code_ = 0;
     CFX_PointF origin_;
+    // EmbedPDF(text-geometry): set for real glyphs only.
     std::optional<CFX_PointF> local_origin_;
     CFX_FloatRect char_box_;
     CFX_FloatRect loose_char_box_;
@@ -107,6 +113,7 @@ class CPDF_TextPage {
   CPDF_TextPage(const CPDF_Page* pPage, bool rtl);
   ~CPDF_TextPage();
 
+  // EmbedPDF(text-geometry): a character's boxes in its text object's space.
   struct CharLocalGeometry {
     CFX_FloatRect loose_box;
     std::optional<CFX_FloatRect> tight_box;
@@ -122,6 +129,8 @@ class CPDF_TextPage {
   CharInfo& GetCharInfo(size_t index);
   float GetCharFontSize(size_t index) const;
   CFX_FloatRect GetCharLooseBounds(size_t index) const;
+  // EmbedPDF(text-geometry): for EPDFText_GetCharGeometry; nullopt for
+  // characters that are not real glyphs.
   std::optional<CharLocalGeometry> GetCharLocalGeometry(size_t index) const;
 
   std::vector<CFX_FloatRect> GetRectArray(int start, int count) const;

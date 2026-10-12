@@ -230,6 +230,7 @@ uint32_t CPDF_SecurityHandler::GetPermissions(bool get_owner_perms) const {
   return dwPermission;
 }
 
+// EmbedPDF(save-security): password probes and owner unlock.
 uint32_t CPDF_SecurityHandler::GetPermissionsForPasswordProbe(
     bool owner) const {
   uint32_t dwPermission = owner ? 0xFFFFFFFF : permissions_;
@@ -681,6 +682,7 @@ void CPDF_SecurityHandler::OnCreate(CPDF_Dictionary* pEncryptDict,
   InitCryptoHandler();
 }
 
+// EmbedPDF(save-security): AES-256 with both passwords.
 bool CPDF_SecurityHandler::OnCreateWithPasswords(
     CPDF_Dictionary* pEncryptDict,
     const ByteString& user_password,
@@ -795,6 +797,7 @@ void CPDF_SecurityHandler::AES256_SetPerms(CPDF_Dictionary* pEncryptDict) {
       "Perms", ByteString(ByteStringView(pdfium::span(dest))));
 }
 
+// EmbedPDF(save-security): AES-256 with both passwords.
 void CPDF_SecurityHandler::AES256_SetPasswords(
     CPDF_Dictionary* pEncryptDict,
     const ByteString& user_password,

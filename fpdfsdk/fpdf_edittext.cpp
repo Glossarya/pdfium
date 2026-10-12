@@ -1103,6 +1103,7 @@ FPDFGlyphPath_GetGlyphPathSegment(FPDF_GLYPHPATH glyphpath, int index) {
   return FPDFPathSegmentFromFXPathPoint(&points[index]);
 }
 
+// EmbedPDF(epdf-api): EPDFText_RedactInRect and EPDFText_RedactInQuads.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFText_RedactInRect(FPDF_PAGE page, const FS_RECTF* rect, FPDF_BOOL recurse, FPDF_BOOL draw_black_boxes) {
   if (!page || !rect)

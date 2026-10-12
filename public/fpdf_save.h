@@ -86,6 +86,8 @@ FPDF_SaveWithVersion(FPDF_DOCUMENT document,
                      FPDF_DWORD flags,
                      int file_version);
 
+// EmbedPDF(epdf-api): EPDF_FreeBuffer, the EPDF_*ToOwnedBuffer* and
+// EPDF_SaveAsCopyEx saves, and the EPDFLayer_Save* functions.
 // Function: EPDF_FreeBuffer
 //          Releases a buffer returned by an EPDF_*ToOwnedBuffer() API.
 // Parameters:
@@ -116,9 +118,10 @@ EPDF_SaveDocumentToOwnedBufferWithVersion(FPDF_DOCUMENT document,
                                           unsigned long* out_size,
                                           int file_version);
 
-// EmbedPDF: what a save found. kUnchangedSinceLoad means nothing was written
-// because no reachable object differs from the document the session was
-// opened with: the loaded bytes ARE the document (EPDFDoc_ReadLoadedBytes).
+// EmbedPDF(layer-save): what a save found. kUnchangedSinceLoad means nothing
+// was written because no reachable object differs from the document the
+// session was opened with: the loaded bytes ARE the document
+// (EPDFDoc_ReadLoadedBytes).
 typedef enum {
   EPDFSaveStatus_kFailed = 0,
   EPDFSaveStatus_kWritten = 1,

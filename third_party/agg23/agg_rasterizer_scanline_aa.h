@@ -113,6 +113,7 @@ public:
     {
         return m_sorted;
     }
+    // EmbedPDF(render-speedup): one rasterizer draws many paths.
     // Like reset(), and also restores the pen position a new outline has.
     // The allocated cell blocks are kept for reuse.
     void reset_to_initial()
@@ -233,6 +234,7 @@ public:
         m_outline.reset();
         m_status = status_initial;
     }
+    // EmbedPDF(render-speedup): one rasterizer draws many paths.
     // Restores every setting a newly constructed rasterizer has (reset() keeps
     // the filling rule and the clip box), keeping the outline's cell blocks.
     void reset_to_initial()

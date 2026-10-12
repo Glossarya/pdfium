@@ -40,6 +40,8 @@
 #include "core/fxge/dib/cfx_dibitmap.h"
 #include "core/fxge/dib/fx_dib.h"
 
+// EmbedPDF(redaction): rewriting an image's stream in place, for
+// OverwriteStreamInPlace().
 namespace {
 
 // Internal helper that overwrites an existing stream's dict + bytes
@@ -127,11 +129,13 @@ bool CPDF_Image::IsValidJpegBitsPerComponent(int32_t bpc) {
   return bpc == 1 || bpc == 2 || bpc == 4 || bpc == 8 || bpc == 16;
 }
 
+// EmbedPDF(overlay-epoch): record the epoch the stream was read at.
 CPDF_Image::CPDF_Image(CPDF_Document* doc)
     : document_(doc), stream_epoch_(doc->GetOverlayEpoch()) {
   DCHECK(document_);
 }
 
+// EmbedPDF(overlay-epoch): record the epoch the stream was read at.
 CPDF_Image::CPDF_Image(CPDF_Document* doc, RetainPtr<CPDF_Stream> pStream)
     : is_inline_(true),
       document_(doc),
@@ -141,6 +145,8 @@ CPDF_Image::CPDF_Image(CPDF_Document* doc, RetainPtr<CPDF_Stream> pStream)
   FinishInitialization();
 }
 
+// EmbedPDF(reads-dont-write, overlay-epoch): read the stream without the
+// mutable getter, and record the epoch it was read at.
 CPDF_Image::CPDF_Image(CPDF_Document* doc, uint32_t dwStreamObjNum)
     : document_(doc),
       stream_(ToStream(doc->GetIndirectObject(dwStreamObjNum))),
@@ -151,6 +157,8 @@ CPDF_Image::CPDF_Image(CPDF_Document* doc, uint32_t dwStreamObjNum)
 
 CPDF_Image::~CPDF_Image() = default;
 
+// EmbedPDF(overlay-epoch): look the stream up again by object number when the
+// overlay epoch moved, and re-read what the image derives from it.
 void CPDF_Image::RefreshStreamIfNeeded() const {
   if (!stream_ || stream_->GetObjNum() == 0) {
     return;
@@ -180,6 +188,8 @@ void CPDF_Image::FinishInitialization() const {
 
 void CPDF_Image::ConvertStreamToIndirectObject() {
   CHECK(stream_->IsInline());
+  // EmbedPDF(reads-dont-write): the image holds its stream const, and only
+  // edit paths take it mutable (AcquireMutableStreamForEdit()).
   document_->AddIndirectObject(AcquireMutableStreamForEdit());
 }
 
@@ -188,20 +198,25 @@ RetainPtr<CPDF_Stream> CPDF_Image::AcquireMutableStreamForEdit() {
 }
 
 RetainPtr<const CPDF_Dictionary> CPDF_Image::GetDict() const {
+  // EmbedPDF(overlay-epoch): the stream may have a newer version.
   RefreshStreamIfNeeded();
   return stream_ ? stream_->GetDict() : nullptr;
 }
 
 RetainPtr<const CPDF_Stream> CPDF_Image::GetStream() const {
+  // EmbedPDF(overlay-epoch): the stream may have a newer version.
   RefreshStreamIfNeeded();
   return stream_;
 }
 
 RetainPtr<const CPDF_Dictionary> CPDF_Image::GetOC() const {
+  // EmbedPDF(overlay-epoch): the stream may have a newer version.
   RefreshStreamIfNeeded();
   return oc_;
 }
 
+// EmbedPDF(overlay-epoch): a cached image re-reads its stream once the layer
+// has promoted it.
 bool CPDF_Image::RebindStreamIfPromoted() {
   if (!stream_ || stream_->GetObjNum() == 0) {
     return false;
@@ -443,6 +458,8 @@ void CPDF_Image::SetImage(const RetainPtr<CFX_DIBitmap>& pBitmap) {
   height_ = BitmapHeight;
 }
 
+// EmbedPDF(codecs): an image from PNG bytes, stored as Flate with the PNG
+// predictor; alpha becomes an /SMask.
 void CPDF_Image::SetPng(const uint8_t* png_data, size_t png_size) {
   auto decoded =
       PngModule::Decode(pdfium::span<const uint8_t>(png_data, png_size));

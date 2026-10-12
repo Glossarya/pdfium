@@ -397,10 +397,11 @@ const char* CPDF_Font::GetAdobeCharName(
 }
 
 uint32_t CPDF_Font::FallbackFontFromCharcode(uint32_t charcode) {
-  // EmbedPDF: prefer fonts registered through EPDFFont_* before falling back to
-  // PDFium's hard-coded Arial substitute. This lets broken PDFs with missing
-  // glyph coverage render through the same runtime fallback registry used by
-  // annotation authoring, without repairing or mutating the source PDF.
+  // EmbedPDF(fonts): prefer fonts registered through EPDFFont_* before falling
+  // back to PDFium's hard-coded Arial substitute. This lets broken PDFs with
+  // missing glyph coverage render through the same runtime fallback registry
+  // used by annotation authoring, without repairing or mutating the source
+  // PDF.
   WideString str = UnicodeFromCharCode(charcode);
   uint32_t unicode = !str.IsEmpty() ? str[0] : charcode;
   for (size_t i = 0; i < font_fallbacks_.size(); ++i) {

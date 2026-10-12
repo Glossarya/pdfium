@@ -715,10 +715,10 @@ RetainPtr<CFX_Face> CFX_FontMapper::FindSubstFont(const ByteString& name,
   }
 
   const FX_Charset Charset = GetCharset(code_page, base_font, flags);
-  // EmbedPDF: a standard font draws with PDFium's built-in face on every
-  // platform, as it does where there are no system fonts (WebAssembly), so a
-  // document draws the same in every engine. A CJK code page still asks the
-  // system: the built-in faces have none of its glyphs.
+  // EmbedPDF(fonts): a standard font draws with PDFium's built-in face on
+  // every platform, as it does where there are no system fonts (WebAssembly),
+  // so a document draws the same in every engine. A CJK code page still asks
+  // the system: the built-in faces have none of its glyphs.
   if (base_font < kNumStandardFonts && Charset == FX_Charset::kANSI) {
     return UseInternalSubst(base_font, old_weight, italic_angle, pitch_family,
                             subst_font);

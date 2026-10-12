@@ -11,6 +11,7 @@
 
 class CPDF_Document;
 
+// EmbedPDF(layer-save): collect objects through a layer's view.
 enum class ObjectTreeReferenceResolveMode {
   // Resolve references through the holder stored on each CPDF_Reference. This
   // preserves the historical traversal behavior for ordinary documents.
@@ -59,6 +60,7 @@ std::set<uint32_t> GetObjectsWithReferences(
 // GetObjectsWithMultipleReferences() returns {}, even though both (A) and (C)
 // references (B). Since (B) -> (C) -> (B) creates a cycle, the (C) -> (B)
 // reference does not count.
+// EmbedPDF(layer-save): collect objects through a layer's view.
 std::set<uint32_t> GetObjectsWithMultipleReferences(
     const CPDF_Document* document,
     ObjectTreeReferenceResolveMode resolve_mode =

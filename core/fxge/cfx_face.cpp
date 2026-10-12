@@ -336,11 +336,11 @@ class ScopedFaceTransform {
   UnownedPtr<FXFT_FaceRec> const rec_;
 };
 
-// EmbedPDF: keeps the design of a variation face (a multiple master or
-// variable font) and gives it back when it goes out of scope. A face is shared
-// by every font and document that uses it, so a design chosen to draw one
-// glyph must not outlive the call that draws it: glyph metrics read later
-// would depend on whatever was drawn last.
+// EmbedPDF(substitute-font-bounds): keeps the design of a variation face (a
+// multiple master or variable font) and gives it back when it goes out of
+// scope. A face is shared by every font and document that uses it, so a design
+// chosen to draw one glyph must not outlive the call that draws it: glyph
+// metrics read later would depend on whatever was drawn last.
 class ScopedFaceVariation {
  public:
   FX_STACK_ALLOCATED();
@@ -559,6 +559,8 @@ std::unique_ptr<CFX_GlyphBitmap> CFX_Face::RenderGlyph(
     }
   }
 
+  // EmbedPDF(substitute-font-bounds): the design set for this glyph is undone
+  // when the call returns.
   const bool adjust_variation =
       pSubstFont && pSubstFont->IsBuiltInGenericFont();
   ScopedFaceVariation scoped_variation(font->GetFace()->GetRec(),
@@ -678,6 +680,8 @@ std::unique_ptr<CFX_Path> CFX_Face::LoadGlyphPath(
       }
     }
   }
+  // EmbedPDF(substitute-font-bounds): the design set for this glyph is undone
+  // when the call returns.
   const bool adjust_variation =
       subst_font && subst_font->IsBuiltInGenericFont();
   ScopedFaceVariation scoped_variation(rec, adjust_variation);
@@ -738,6 +742,8 @@ int CFX_Face::GetGlyphWidth(uint32_t glyph_index,
                             int dest_width,
                             int weight,
                             const CFX_SubstFont* subst_font) {
+  // EmbedPDF(substitute-font-bounds): the design set for this glyph is undone
+  // when the call returns.
   FXFT_FaceRec* rec = GetRec();
   const bool adjust_variation =
       subst_font && subst_font->IsBuiltInGenericFont();
@@ -761,6 +767,8 @@ int CFX_Face::GetGlyphWidth(uint32_t glyph_index,
   return static_cast<int>(EM_ADJUST(GetUnitsPerEm(), horizontal_advance));
 }
 
+// EmbedPDF(substitute-font-bounds): a glyph's bounds in the design it is
+// drawn with.
 std::optional<FX_RECT> CFX_Face::GetDrawnGlyphBBox(
     uint32_t glyph_index,
     int dest_width,
@@ -997,10 +1005,13 @@ int CFX_Face::GetNumFaces() const {
 }
 #endif
 
+// EmbedPDF(fonts): the fsType bits decide a registered font's embedding policy.
 uint16_t CFX_Face::GetFsTypeFlags() const {
   return FT_Get_FSType_Flags(const_cast<FXFT_FaceRec*>(GetRec()));
 }
 
+// EmbedPDF(fonts): CID-keyed CFF glyph identities, to write and read such
+// fonts.
 bool CFX_Face::IsCidKeyed() const {
   FT_Bool is_cid = 0;
   if (FT_Get_CID_Is_Internally_CID_Keyed(const_cast<FXFT_FaceRec*>(GetRec()),

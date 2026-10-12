@@ -212,6 +212,8 @@ static_assert(static_cast<int>(CPDF_AAction::kCalculate) ==
                   FPDF_ANNOT_AACTION_CALCULATE,
               "CPDF_AAction::kCalculate value mismatch");
 
+// EmbedPDF(epdf-api): checks of our public annotation enums, and helpers for
+// the EPDFAnnot_* functions.
 // These checks ensure the consistency of annotation border style values
 // across core/ and public.
 static_assert(static_cast<int>(CPDF_Annot::BorderStyle::kSolid) ==
@@ -417,6 +419,7 @@ bool IsNameSubtype(FPDF_ANNOTATION_SUBTYPE subtype) {
          subtype == FPDF_ANNOT_SOUND || subtype == FPDF_ANNOT_STAMP;
 }
 
+// EmbedPDF(reads-dont-write): reads take a const dictionary.
 bool HasAPStream(const CPDF_Dictionary* pAnnotDict) {
   return !!GetAnnotAP(pAnnotDict, CPDF_Annot::AppearanceMode::kNormal);
 }
@@ -425,11 +428,11 @@ void UpdateContentStream(CPDF_Form* pForm, CPDF_Stream* pStream) {
   DCHECK(pForm);
   DCHECK(pStream);
 
-  // EmbedPDF: bind the form to the writable version of its stream first,
-  // keeping the objects it parsed - the ones being written. A layer
-  // transaction may have copied the stream up since the form was parsed;
-  // left to notice that mid-generation, the form would rebind by dropping
-  // those objects while the generator walks them.
+  // EmbedPDF(overlay-epoch, layer-door): bind the form to the writable
+  // version of its stream first, keeping the objects it parsed - the ones
+  // being written. A layer transaction may have copied the stream up since
+  // the form was parsed; left to notice that mid-generation, the form would
+  // rebind by dropping those objects while the generator walks them.
   RetainPtr<CPDF_Stream> writable = pForm->GetMutableFormStream();
   DCHECK_EQ(writable.Get(), pStream);
   CPDF_PageContentGenerator generator(pForm);
@@ -474,6 +477,7 @@ void UpdateBBox(CPDF_Dictionary* annot_dict) {
   DCHECK(annot_dict);
   // Update BBox entry in appearance stream based on the bounding rectangle
   // of the annotation's quadpoints.
+  // EmbedPDF(layer-door): the appearance is written: open it through the door.
   RetainPtr<CPDF_Stream> pStream =
       GetMutableAnnotAP(annot_dict, CPDF_Annot::AppearanceMode::kNormal);
   if (pStream) {
@@ -485,6 +489,7 @@ void UpdateBBox(CPDF_Dictionary* annot_dict) {
   }
 }
 
+// EmbedPDF(epdf-api): the blend mode EPDFAnnot_GetBlendMode() reports.
 BlendMode GetEffectiveAnnotBlendMode(CPDF_AnnotContext* ctx) {
   if (!ctx) {
     return BlendMode::kNormal;
@@ -545,6 +550,7 @@ RetainPtr<CPDF_Dictionary> GetMutableAnnotDictFromFPDFAnnotation(
   return context ? context->GetMutableAnnotDict() : nullptr;
 }
 
+// EmbedPDF(epdf-api): for EPDFPage_PromoteInlineAnnotsRaw().
 // Promotes page |page_index| of |pdf| (see EPDFPage_PromoteInlineAnnotsRaw()):
 // every inline annotation becomes an object in place. A layer also records
 // the page's births. Returns how many moved, or -1.
@@ -682,6 +688,8 @@ std::optional<CFX_Color::TypeAndARGB> GetFreetextFontColor(
   RetainPtr<const CPDF_Dictionary> acroform_dict =
       root_dict ? root_dict->GetDictFor("AcroForm") : nullptr;
   CPDF_DefaultAppearance default_appearance(annot_dict, acroform_dict);
+  // EmbedPDF(annot-appearance): a /DA without a colour reads as black, the
+  // colour the appearance draws.
   std::optional<CFX_Color::TypeAndARGB> color =
       default_appearance.GetColorARGB();
   if (color.has_value()) {
@@ -697,6 +705,8 @@ std::optional<FX_COLORREF> GetWidgetFontColor(FPDF_FORMHANDLE handle,
   return widget ? widget->GetTextColor() : std::nullopt;
 }
 
+// EmbedPDF(epdf-api): helpers for the EPDFAnnot_* stamp, appearance and
+// widget functions.
 enum class EPDFStampFitCpp { kContain = 0, kCover = 1, kStretch = 2 };
 
 inline EPDFStampFitCpp ToCpp(EPDF_STAMP_FIT v) {
@@ -1005,6 +1015,7 @@ FPDFAnnot_IsSupportedSubtype(FPDF_ANNOTATION_SUBTYPE subtype) {
     case FPDF_ANNOT_INK:
     case FPDF_ANNOT_LINK:
     case FPDF_ANNOT_POPUP:
+    // EmbedPDF(redaction): redact annotations can be created.
     case FPDF_ANNOT_REDACT:
     case FPDF_ANNOT_SQUARE:
     case FPDF_ANNOT_SQUIGGLY:
@@ -1012,13 +1023,14 @@ FPDFAnnot_IsSupportedSubtype(FPDF_ANNOTATION_SUBTYPE subtype) {
     case FPDF_ANNOT_STRIKEOUT:
     case FPDF_ANNOT_TEXT:
     case FPDF_ANNOT_UNDERLINE:
+    // EmbedPDF(annot-appearance): subtypes our appearance generator draws.
     case FPDF_ANNOT_POLYGON:
     case FPDF_ANNOT_POLYLINE:
     case FPDF_ANNOT_LINE:
     case FPDF_ANNOT_CARET:
-    // EmbedPDF: widgets are born through the annotation API and adopted by a
-    // form field via EPDFForm_AttachWidget (public/epdf_form.h). An
-    // unattached widget is an ordinary, inert annotation.
+    // EmbedPDF(forms-model): widgets are born through the annotation API and
+    // adopted by a form field via EPDFForm_AttachWidget (public/epdf_form.h).
+    // An unattached widget is an ordinary, inert annotation.
     case FPDF_ANNOT_WIDGET:
       return true;
     default:
@@ -1049,7 +1061,8 @@ FPDFPage_CreateAnnot(FPDF_PAGE page, FPDF_ANNOTATION_SUBTYPE subtype) {
 }
 
 FPDF_EXPORT int FPDF_CALLCONV FPDFPage_GetAnnotCount(FPDF_PAGE page) {
-  // A layer's page may be the base's while its /Annots array is the layer's.
+  // EmbedPDF(view-scope): a layer's page may be the base's while its /Annots
+  // array is the layer's.
   ScopedFPDFPageView page_view(page);
   const CPDF_Page* pPage = page_view.Get();
   if (!pPage) {
@@ -1062,6 +1075,8 @@ FPDF_EXPORT int FPDF_CALLCONV FPDFPage_GetAnnotCount(FPDF_PAGE page) {
 
 FPDF_EXPORT FPDF_ANNOTATION FPDF_CALLCONV FPDFPage_GetAnnot(FPDF_PAGE page,
                                                             int index) {
+  // EmbedPDF(view-scope, reads-dont-write): read through the document's view
+  // scope, and /Annots without the mutable getter.
   ScopedFPDFPageView page_view(page);
   if (!page_view || index < 0) {
     return nullptr;
@@ -1073,6 +1088,8 @@ FPDF_EXPORT FPDF_ANNOTATION FPDF_CALLCONV FPDFPage_GetAnnot(FPDF_PAGE page,
     return nullptr;
   }
 
+  // EmbedPDF(reads-dont-write): read without the mutable getter; the handle
+  // copies the dictionary up on its first write.
   RetainPtr<const CPDF_Dictionary> const_dict =
       ToDictionary(pAnnots->GetDirectObjectAt(index));
   RetainPtr<CPDF_Dictionary> dict =
@@ -1081,6 +1098,8 @@ FPDF_EXPORT FPDF_ANNOTATION FPDF_CALLCONV FPDFPage_GetAnnot(FPDF_PAGE page,
     return nullptr;
   }
 
+  // EmbedPDF(annot-identity): the index locates an inline annotation in its
+  // page's /Annots.
   auto pNewAnnot = std::make_unique<CPDF_AnnotContext>(
       std::move(dict), IPDFPageFromFPDFPage(page), index);
 
@@ -1090,6 +1109,7 @@ FPDF_EXPORT FPDF_ANNOTATION FPDF_CALLCONV FPDFPage_GetAnnot(FPDF_PAGE page,
 
 FPDF_EXPORT int FPDF_CALLCONV FPDFPage_GetAnnotIndex(FPDF_PAGE page,
                                                      FPDF_ANNOTATION annot) {
+  // EmbedPDF(view-scope): read through the document's view scope.
   ScopedFPDFPageView page_view(page);
   if (!page_view) {
     return -1;
@@ -1121,7 +1141,8 @@ FPDF_EXPORT int FPDF_CALLCONV FPDFPage_GetAnnotIndex(FPDF_PAGE page,
 }
 
 FPDF_EXPORT void FPDF_CALLCONV FPDFPage_CloseAnnot(FPDF_ANNOTATION annot) {
-  // Directly: an invalid handle must still be closable.
+  // EmbedPDF(annot-identity): cast directly: an invalid handle must still be
+  // closable.
   delete reinterpret_cast<CPDF_AnnotContext*>(annot);
 }
 
@@ -1174,6 +1195,7 @@ FPDFAnnot_UpdateObject(FPDF_ANNOTATION annot, FPDF_PAGEOBJECT obj) {
   // Check that the annotation already has an appearance stream, since an
   // existing object is to be updated.
   RetainPtr<CPDF_Dictionary> pAnnotDict = pAnnot->GetMutableAnnotDict();
+  // EmbedPDF(layer-door): the appearance is written: open it through the door.
   RetainPtr<CPDF_Stream> pStream =
       GetMutableAnnotAP(pAnnotDict.Get(), CPDF_Annot::AppearanceMode::kNormal);
   if (!pStream) {
@@ -1247,6 +1269,7 @@ FPDFAnnot_AppendObject(FPDF_ANNOTATION annot, FPDF_PAGEOBJECT obj) {
 
   // If the annotation does not have an AP stream yet, generate and set it.
   RetainPtr<CPDF_Dictionary> pAnnotDict = pAnnot->GetMutableAnnotDict();
+  // EmbedPDF(layer-door): the appearance is written: open it through the door.
   RetainPtr<CPDF_Stream> pStream =
       GetMutableAnnotAP(pAnnotDict.Get(), CPDF_Annot::AppearanceMode::kNormal);
   if (!pStream) {
@@ -1289,6 +1312,8 @@ FPDF_EXPORT int FPDF_CALLCONV FPDFAnnot_GetObjectCount(FPDF_ANNOTATION annot) {
     return 0;
   }
 
+  // EmbedPDF(view-scope, reads-dont-write): parse the appearance through the
+  // document's view, reading the annotation without the mutable getter.
   CPDF_DocumentViewScope document_view(pAnnot->GetPage()->GetDocument());
   if (!pAnnot->HasForm()) {
     const CPDF_Dictionary* dict = pAnnot->GetAnnotDict();
@@ -1310,6 +1335,8 @@ FPDFAnnot_GetObject(FPDF_ANNOTATION annot, int index) {
     return nullptr;
   }
 
+  // EmbedPDF(view-scope, reads-dont-write): parse the appearance through the
+  // document's view, reading the annotation without the mutable getter.
   CPDF_DocumentViewScope document_view(pAnnot->GetPage()->GetDocument());
   if (!pAnnot->HasForm()) {
     const CPDF_Dictionary* pAnnotDict = pAnnot->GetAnnotDict();
@@ -1341,6 +1368,7 @@ FPDFAnnot_RemoveObject(FPDF_ANNOTATION annot, int index) {
   // Check that the annotation already has an appearance stream, since an
   // existing object is to be deleted.
   RetainPtr<CPDF_Dictionary> pAnnotDict = pAnnot->GetMutableAnnotDict();
+  // EmbedPDF(layer-door): the appearance is written: open it through the door.
   RetainPtr<CPDF_Stream> pStream =
       GetMutableAnnotAP(pAnnotDict.Get(), CPDF_Annot::AppearanceMode::kNormal);
   if (!pStream) {
@@ -1400,6 +1428,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDFAnnot_GetColor(FPDF_ANNOTATION annot,
                                                        unsigned int* G,
                                                        unsigned int* B,
                                                        unsigned int* A) {
+  // EmbedPDF(reads-dont-write): read without the mutable getter.
   const CPDF_Dictionary* pAnnotDict = GetAnnotDictFromFPDFAnnotation(annot);
 
   if (!pAnnotDict || !R || !G || !B || !A) {
@@ -1465,6 +1494,7 @@ FPDFAnnot_HasAttachmentPoints(FPDF_ANNOTATION annot) {
   }
 
   FPDF_ANNOTATION_SUBTYPE subtype = FPDFAnnot_GetSubtype(annot);
+  // EmbedPDF(redaction): redact annotations carry quad points.
   return subtype == FPDF_ANNOT_LINK || subtype == FPDF_ANNOT_HIGHLIGHT ||
          subtype == FPDF_ANNOT_UNDERLINE || subtype == FPDF_ANNOT_SQUIGGLY ||
          subtype == FPDF_ANNOT_STRIKEOUT || subtype == FPDF_ANNOT_REDACT;
@@ -1564,6 +1594,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDFAnnot_SetRect(FPDF_ANNOTATION annot,
     return true;
   }
 
+  // EmbedPDF(layer-door): the appearance is written: open it through the door.
   RetainPtr<CPDF_Stream> pStream =
       GetMutableAnnotAP(pAnnotDict.Get(), CPDF_Annot::AppearanceMode::kNormal);
   if (pStream && newRect.Contains(pStream->GetDict()->GetRectFor("BBox"))) {
@@ -1800,6 +1831,8 @@ FPDFAnnot_GetNumberValue(FPDF_ANNOTATION annot,
   return true;
 }
 
+// EmbedPDF(epdf-api): EPDFAnnot_SetNumberValue and the embed metadata
+// functions (EPDFAnnot_*EmbedMetadata*, EPDFDocument_ClearEmbedMetadata).
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetNumberValue(FPDF_ANNOTATION annot,
                          FPDF_BYTESTRING key,
@@ -2142,6 +2175,7 @@ FPDFAnnot_GetAP(FPDF_ANNOTATION annot,
                 FPDF_ANNOT_APPEARANCEMODE appearanceMode,
                 FPDF_WCHAR* buffer,
                 unsigned long buflen) {
+  // EmbedPDF(reads-dont-write): read without the mutable getter.
   const CPDF_Dictionary* pAnnotDict = GetAnnotDictFromFPDFAnnotation(annot);
   if (!pAnnotDict) {
     return 0;
@@ -2168,6 +2202,9 @@ FPDFAnnot_GetLinkedAnnot(FPDF_ANNOTATION annot, FPDF_BYTESTRING key) {
     return nullptr;
   }
 
+  // EmbedPDF(view-scope, reads-dont-write): read through the document's view,
+  // without the mutable getters; the handle copies the dictionary up on its
+  // first write.
   CPDF_DocumentViewScope document_view(pAnnot->GetPage()->GetDocument());
   const CPDF_Dictionary* annot_dict = pAnnot->GetAnnotDict();
   RetainPtr<const CPDF_Dictionary> const_linked_dict =
@@ -2421,6 +2458,8 @@ FPDFAnnot_SetFontColor(FPDF_FORMHANDLE handle,
     return false;
   }
 
+  // EmbedPDF(annot-appearance): draw the appearance again in the new colour.
+  // Upstream removed /AP until its generator could update it.
   CPDF_Document* doc = form->GetInteractiveForm()->document();
   bool updated = CPDF_GenerateAP::GenerateDefaultAppearanceWithColor(
       doc, annot_dict, CFX_Color(R, G, B));
@@ -2553,6 +2592,9 @@ FPDF_EXPORT FPDF_LINK FPDF_CALLCONV FPDFAnnot_GetLink(FPDF_ANNOTATION annot) {
     return nullptr;
   }
 
+  // EmbedPDF(annot-identity, reads-dont-write): a gone annotation has no
+  // link; the link is read without the mutable getter, and the cast only fits
+  // the handle's mutable type.
   CPDF_AnnotContext* context = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!context) {
     return nullptr;
@@ -2618,6 +2660,8 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDFAnnot_SetURI(FPDF_ANNOTATION annot,
   return true;
 }
 
+// EmbedPDF(epdf-api): EPDFAnnot_SetAction and the EPDFAnnot_Remove* link
+// functions.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFAnnot_SetAction(FPDF_ANNOTATION annot,
                                                         FPDF_ACTION action) {
   if (!action || FPDFAnnot_GetSubtype(annot) != FPDF_ANNOT_LINK) {
@@ -2702,6 +2746,9 @@ FPDFAnnot_GetFileAttachment(FPDF_ANNOTATION annot) {
     return nullptr;
   }
 
+  // EmbedPDF(view-scope, reads-dont-write): read through the document's view,
+  // without the mutable getters; a writer takes
+  // EPDFAnnot_GetFileAttachmentForWrite().
   CPDF_AnnotContext* context = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!context) {
     return nullptr;
@@ -2717,6 +2764,7 @@ FPDFAnnot_GetFileAttachment(FPDF_ANNOTATION annot) {
       const_cast<CPDF_Object*>(file_spec.Get()));
 }
 
+// EmbedPDF(epdf-api): EPDFAnnot_GetFileAttachmentForWrite.
 FPDF_EXPORT FPDF_ATTACHMENT FPDF_CALLCONV
 EPDFAnnot_GetFileAttachmentForWrite(FPDF_ANNOTATION annot) {
   if (FPDFAnnot_GetSubtype(annot) != FPDF_ANNOT_FILEATTACHMENT) {
@@ -2767,6 +2815,8 @@ FPDFAnnot_AddFileAttachment(FPDF_ANNOTATION annot, FPDF_WIDESTRING name) {
   return FPDFAttachmentFromCPDFObject(fs_obj);
 }
 
+// EmbedPDF(epdf-api): the EPDFAnnot_*, EPDFPage_* and EPDFDoc_* functions,
+// with their helpers, from here to the end of the file.
 static ByteString GetColorKeyForType(FPDFANNOT_COLORTYPE type) {
   switch (type) {
     case FPDFANNOT_COLORTYPE_InteriorColor:
@@ -3755,9 +3805,10 @@ EPDFAnnot_SetDefaultAppearanceRegisteredFont(FPDF_ANNOTATION annot,
                                              unsigned int R,
                                              unsigned int G,
                                              unsigned int B) {
-  // EmbedPDF: annotation-specific bridge from public API to the registered font
-  // AP pipeline. Generic EPDFFont_* registration lives in epdf_font.cpp because
-  // the same registry is also used for page-rendering fallback.
+  // EmbedPDF(fonts): annotation-specific bridge from public API to the
+  // registered font AP pipeline. Generic EPDFFont_* registration lives in
+  // epdf_font.cpp because the same registry is also used for page-rendering
+  // fallback.
   CPDF_AnnotContext* context = CPDFAnnotContextFromFPDFAnnotation(annot);
   if (!context) {
     return false;
@@ -4024,11 +4075,12 @@ EPDFPage_GetAnnotByName(FPDF_PAGE page, FPDF_WIDESTRING nm) {
 
 namespace {
 
-// EmbedPDF: annotation removal reads before it writes. Scanning /Annots for a
-// match must not promote a single sibling into a layer's overlay (reads never
-// promote); only the match takes mutable handles, and only for what changes:
-// the page's /Annots. The removed object is deleted when it is local and left
-// alone when it belongs to the base - it is never edited, so never promoted.
+// EmbedPDF(reads-dont-write): annotation removal reads before it writes.
+// Scanning /Annots for a match must not promote a single sibling into a
+// layer's overlay (reads never promote); only the match takes mutable handles,
+// and only for what changes: the page's /Annots. The removed object is
+// deleted when it is local and left alone when it belongs to the base - it is
+// never edited, so never promoted.
 
 // The object number an /Annots entry names, without resolving it: a reference
 // carries its number; an inline dictionary has none (0). Pure.

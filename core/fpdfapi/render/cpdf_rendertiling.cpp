@@ -155,11 +155,11 @@ RetainPtr<CFX_DIBitmap> CPDF_RenderTiling::Draw(
     return nullptr;
   }
 
-  // Every cell is placed at its own position, rounded to the pixel. Stepping
-  // by the cell's width rounded up to whole pixels would move each cell a
-  // fraction of a pixel further from the pattern's origin, which can lie
-  // hundreds of cells off the page: the tiling would drift, by an amount
-  // that changes with every zoom.
+  // EmbedPDF(bug-fix): every cell is placed at its own position, rounded to
+  // the pixel. Upstream stepped aligned cells by the cell's width rounded up
+  // to whole pixels, which moves each cell a fraction of a pixel further from
+  // the pattern's origin, which can lie hundreds of cells off the page: the
+  // tiling drifted, by an amount that changed with every zoom.
   float left_offset = cell_bbox.left - mtPattern2Device.e;
   float top_offset = cell_bbox.bottom - mtPattern2Device.f;
   RetainPtr<CFX_DIBitmap> pPatternBitmap;
@@ -193,6 +193,8 @@ RetainPtr<CFX_DIBitmap> CPDF_RenderTiling::Draw(
   pdfium::span<const uint8_t> src_buf = pPatternBitmap->GetBuffer();
   for (int col = min_col; col <= max_col; col++) {
     for (int row = min_row; row <= max_row; row++) {
+      // EmbedPDF(bug-fix): every cell is placed at its own position; the
+      // aligned shortcut that stepped by rounded cell widths is gone.
       CFX_PointF original = mtPattern2Device.Transform(
           CFX_PointF(col * pPattern->x_step(), row * pPattern->y_step()));
 

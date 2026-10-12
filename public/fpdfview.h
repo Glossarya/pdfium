@@ -67,6 +67,7 @@ typedef struct fpdf_bitmap_t__* FPDF_BITMAP;
 typedef struct fpdf_bookmark_t__* FPDF_BOOKMARK;
 typedef struct fpdf_clippath_t__* FPDF_CLIPPATH;
 typedef struct fpdf_dest_t__* FPDF_DEST;
+// EmbedPDF(epdf-api): EPDF_BASE_DOCUMENT, a shareable base document.
 typedef struct fpdf_base_document_t__* EPDF_BASE_DOCUMENT;
 typedef struct fpdf_document_t__* FPDF_DOCUMENT;
 typedef struct fpdf_font_t__* FPDF_FONT;
@@ -204,6 +205,8 @@ typedef int FPDF_ANNOT_APPEARANCEMODE;
 // Dictionary value types.
 typedef int FPDF_OBJECT_TYPE;
 
+// EmbedPDF(runtime-exports): FPDF_EXPORT exports in every build, not only in
+// component builds, so the runtime's PDFium library exports its API.
 // FPDF_EXPORT should be consistent with |export| in the pdfium_fuzzer
 // template in testing/fuzzers/BUILD.gn.
 #if defined(WIN32)
@@ -219,6 +222,7 @@ typedef int FPDF_OBJECT_TYPE;
 #define FPDF_EXPORT
 #endif  // defined(FPDF_IMPLEMENTATION)
 #endif  // defined(WIN32)
+// EmbedPDF(runtime-exports): no empty FPDF_EXPORT outside component builds.
 
 #if defined(WIN32) && defined(FPDFSDK_EXPORTS)
 #define FPDF_CALLCONV __stdcall
@@ -320,6 +324,7 @@ FPDF_EXPORT void FPDF_CALLCONV FPDF_InitLibrary();
 //          closing the library with this function.
 FPDF_EXPORT void FPDF_CALLCONV FPDF_DestroyLibrary();
 
+// EmbedPDF(epdf-api): EPDF_InitThread and EPDF_ShutdownThread.
 // Experimental EmbedPDF Extension API.
 // Function: EPDF_InitThread / EPDF_ShutdownThread
 //          Thread-confined runtime lifecycle. Initialize / tear down PDFium for
@@ -581,6 +586,8 @@ typedef struct FPDF_FILEHANDLER_ {
 FPDF_EXPORT FPDF_DOCUMENT FPDF_CALLCONV
 FPDF_LoadCustomDocument(FPDF_FILEACCESS* pFileAccess, FPDF_BYTESTRING password);
 
+// EmbedPDF(epdf-api): base documents (EPDF_*BaseDocument*) and the
+// EPDFLayer_* functions for layers and their transactions.
 // Function: EPDF_LoadBaseDocument
 //          Load and freeze a shareable base PDF document from a custom access
 //          descriptor. The returned handle is distinct from FPDF_DOCUMENT and
@@ -934,6 +941,8 @@ FPDF_GetDocUserPermissions(FPDF_DOCUMENT document);
 FPDF_EXPORT int FPDF_CALLCONV
 FPDF_GetSecurityHandlerRevision(FPDF_DOCUMENT document);
 
+// EmbedPDF(epdf-api): the EPDF_PERM_* flags and the EPDF_* encryption,
+// password probe and owner unlock functions.
 // Permission flags for EPDF_SetEncryption allowed_flags parameter
 #define EPDF_PERM_PRINT              (1 << 2)   // Bit 3: Print document
 #define EPDF_PERM_MODIFY             (1 << 3)   // Bit 4: Modify contents
@@ -1175,6 +1184,8 @@ FPDF_GetPageSizeByIndexF(FPDF_DOCUMENT document,
                          int page_index,
                          FS_SIZEF* size);
 
+// EmbedPDF(epdf-api): EPDF_PAGE_BOX_TYPE, EPDF_GetPage*ByIndex and
+// EPDF_LoadPageNormalized.
 // Page box type used by EPDF_GetPageBoxByIndex().
 typedef enum EPDF_PAGE_BOX_TYPE {
   EPDF_PAGE_BOX_MEDIA = 0,
@@ -1337,6 +1348,7 @@ FPDF_EXPORT int FPDF_CALLCONV FPDF_GetPageSizeByIndex(FPDF_DOCUMENT document,
 // FPDF_COLORSCHEME is passed in, since with a single fill color for paths the
 // boundaries of adjacent fill paths are less visible.
 #define FPDF_CONVERT_FILL_TO_STROKE 0x20
+// EmbedPDF(epdf-api): EPDF_RENDER_WIDGETS.
 // Experimental EmbedPDF Extension API.
 // Draw form field widgets, from their appearances. It works with or without
 // FPDF_ANNOT, which draws the other annotations: with both, the widgets come
@@ -1947,6 +1959,8 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDF_GetXFAPacketContent(
     unsigned long buflen,
     unsigned long* out_buflen);
 
+// EmbedPDF(epdf-api): EPDF_RenderAnnotBitmap*, EPDFPage_ResetRenderCache and
+// the decoded-image budget.
 // Experimental EmbedPDF Extension API.
 // Renders the appearance stream of a single annotation to a bitmap.
 //
@@ -2079,6 +2093,8 @@ FPDF_EXPORT FPDF_RESULT FPDF_CALLCONV FPDF_BStr_Set(FPDF_BSTR* bstr,
 FPDF_EXPORT FPDF_RESULT FPDF_CALLCONV FPDF_BStr_Clear(FPDF_BSTR* bstr);
 #endif  // PDF_ENABLE_XFA
 
+// EmbedPDF(epdf-api): the EPDFDoc_* page functions by object number, the
+// sliced page load and the EPDFPage_* identity and residency functions.
 // Experimental EmbedPDF Extension API.
 // Load a page by its PDF indirect object number.
 // Similar to FPDF_LoadPage() but keyed by the page dictionary's object

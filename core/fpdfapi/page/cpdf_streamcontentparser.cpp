@@ -55,8 +55,9 @@
 
 namespace {
 
-// Bit-identical points: the same types, close flags and coordinate bits, so
-// 0 and -0 differ.
+// EmbedPDF(render-speedup): whether a path can share the last path's
+// geometry. Bit-identical points: the same types, close flags and coordinate
+// bits, so 0 and -0 differ.
 bool HaveSamePoints(pdfium::span<const CFX_Path::Point> a,
                     pdfium::span<const CFX_Path::Point> b) {
   if (a.size() != b.size()) {
@@ -91,7 +92,7 @@ const char kPathOperatorClosePath = 'h';
 const char kPathOperatorRectangle[] = "re";
 
 using OpCodes = std::map<uint32_t, void (CPDF_StreamContentParser::*)()>;
-// EmbedPDF: thread-confined runtime - per-thread content-operator dispatch
+// EmbedPDF(thread-confined-globals): per-thread content-operator dispatch
 // table, lazily built and torn down on the owning thread.
 EPDF_TLS OpCodes* g_opcodes = nullptr;
 
@@ -213,6 +214,8 @@ ByteStringView FindFullName(pdfium::span<const AbbrPair> table,
 void ReplaceAbbr(RetainPtr<CPDF_Object> pObj);
 
 void ReplaceAbbrInDictionary(CPDF_Dictionary* dict) {
+  // EmbedPDF(reads-dont-write): rewriting an inline image's own objects is
+  // not a document write; a read-only walk allows it.
   CPDF_ScopedInlineRewrite inline_rewrite;
   std::vector<AbbrReplacementOp> replacements;
   {
@@ -255,6 +258,8 @@ void ReplaceAbbrInDictionary(CPDF_Dictionary* dict) {
 }
 
 void ReplaceAbbrInArray(CPDF_Array* pArray) {
+  // EmbedPDF(reads-dont-write): rewriting an inline image's own objects is
+  // not a document write; a read-only walk allows it.
   CPDF_ScopedInlineRewrite inline_rewrite;
   for (size_t i = 0; i < pArray->size(); ++i) {
     RetainPtr<CPDF_Object> pElement = pArray->GetMutableObjectAt(i);
@@ -426,12 +431,15 @@ CPDF_StreamContentParser::CPDF_StreamContentParser(
     : document_(document),
       page_resources_(pPageResources),
       parent_resources_(pParentResources),
+      // EmbedPDF(reads-dont-write): ChooseResourcesDict() is a const read; the
+      // cast fits the member's type.
       resources_(pdfium::WrapRetain(const_cast<CPDF_Dictionary*>(
           CPDF_Form::ChooseResourcesDict(pResources.Get(),
                                          pParentResources.Get(),
                                          pPageResources.Get())))),
       object_holder_(pObjHolder),
       recursion_state_(recursion_state),
+      // EmbedPDF(page-residency): counts what this parse adds to a page.
       parsed_size_counter_(recursion_state->parsed_size),
       bbox_(rcBBox),
       cur_states_(std::make_unique<CPDF_AllStates>()) {
@@ -452,6 +460,8 @@ CPDF_StreamContentParser::CPDF_StreamContentParser(
 
   // Initialize `all_ctms_`, as there is a CTM, even if the stream contains no
   // cm operators.
+  // EmbedPDF(faithful-content-rewrite): in the space of page objects'
+  // matrices, and kept as the CTM the content starts at.
   all_ctms_[0] = cur_states_->current_transformation_matrix() *
                  mt_content_to_user_;
   ctm_at_beginning_of_content_ = all_ctms_[0];
@@ -656,6 +666,8 @@ void CPDF_StreamContentParser::Handle_BeginMarkedContent_Dictionary() {
 
   if (pProperty->IsName()) {
     ByteString property_name = pProperty->GetString();
+    // EmbedPDF(reads-dont-write): read without the mutable getter; the cast
+    // fits the callee's signature.
     RetainPtr<const CPDF_Dictionary> const_holder =
         FindResourceHolder("Properties");
     RetainPtr<CPDF_Dictionary> pHolder =
@@ -673,6 +685,9 @@ void CPDF_StreamContentParser::Handle_BeginMarkedContent_Dictionary() {
   content_marks_stack_.push(std::move(new_marks));
 }
 
+// EmbedPDF(faithful-content-rewrite): upstream's Handle_BeginImage() body,
+// made static so content name scans (GetNamesInContent()) step over inline
+// image data exactly as the parser does.
 // static
 RetainPtr<CPDF_Stream> CPDF_StreamContentParser::ReadInlineImage(
     CPDF_StreamParser* syntax,
@@ -682,6 +697,7 @@ RetainPtr<CPDF_Stream> CPDF_StreamContentParser::ReadInlineImage(
   FX_FILESIZE savePos = syntax->GetPos();
   auto dict = document->New<CPDF_Dictionary>();
   while (true) {
+    // EmbedPDF(faithful-content-rewrite): static now, see ReadInlineImage().
     CPDF_StreamParser::ElementType type = syntax->ParseNextElement();
     if (type == CPDF_StreamParser::ElementType::kKeyword) {
       if (syntax->GetWord() != "ID") {
@@ -709,6 +725,7 @@ RetainPtr<CPDF_Stream> CPDF_StreamContentParser::ReadInlineImage(
     if (pCSObj->IsName()) {
       ByteString name = pCSObj->GetString();
       if (name != "DeviceRGB" && name != "DeviceGray" && name != "DeviceCMYK") {
+        // EmbedPDF(faithful-content-rewrite): the caller resolves the name.
         pCSObj = find_color_space(name);
         if (pCSObj && pCSObj->IsInline()) {
           dict->SetFor("ColorSpace", pCSObj->Clone());
@@ -717,6 +734,7 @@ RetainPtr<CPDF_Stream> CPDF_StreamContentParser::ReadInlineImage(
     }
   }
   dict->SetNewFor<CPDF_Name>("Subtype", "Image");
+  // EmbedPDF(faithful-content-rewrite): static now, see ReadInlineImage().
   RetainPtr<CPDF_Stream> pStream =
       syntax->ReadInlineStream(document, std::move(dict), pCSObj.Get());
   while (true) {
@@ -733,6 +751,7 @@ RetainPtr<CPDF_Stream> CPDF_StreamContentParser::ReadInlineImage(
   return pStream;
 }
 
+// EmbedPDF(faithful-content-rewrite): the body moved to ReadInlineImage().
 void CPDF_StreamContentParser::Handle_BeginImage() {
   RetainPtr<CPDF_Stream> pStream = ReadInlineImage(
       syntax_.get(), document_,
@@ -768,6 +787,8 @@ void CPDF_StreamContentParser::Handle_CurveTo_123() {
 
 void CPDF_StreamContentParser::Handle_ConcatMatrix() {
   cur_states_->prepend_to_current_transformation_matrix(GetMatrix());
+  // EmbedPDF(faithful-content-rewrite): record the CTM in the space of page
+  // objects' matrices (RecordCTMOfCurrentStream()).
   RecordCTMOfCurrentStream();
   OnChangeTextMatrix();
 }
@@ -827,6 +848,8 @@ void CPDF_StreamContentParser::Handle_ExecuteXObject() {
     return;
   }
 
+  // EmbedPDF(reads-dont-write): read without the mutable getter; the cast
+  // fits the callee's signature.
   RetainPtr<const CPDF_Stream> const_xobject =
       ToStream(FindResourceObj("XObject", name));
   RetainPtr<CPDF_Stream> pXObject =
@@ -857,6 +880,8 @@ void CPDF_StreamContentParser::Handle_ExecuteXObject() {
   }
 }
 
+// EmbedPDF(page-residency): the form is placed now and parsed later
+// (ParseDeferredForms()), from a copy of the states it starts from.
 void CPDF_StreamContentParser::AddForm(RetainPtr<CPDF_Stream> pStream,
                                        const ByteString& name) {
   auto status = std::make_unique<CPDF_AllStates>();
@@ -866,6 +891,7 @@ void CPDF_StreamContentParser::AddForm(RetainPtr<CPDF_Stream> pStream,
   status->mutable_text_state() = cur_states_->text_state();
   auto form = std::make_unique<CPDF_Form>(document_, page_resources_,
                                           std::move(pStream), resources_.Get());
+  // EmbedPDF(page-residency): record the version of the form stream parsed.
   if (recursion_state_->content_versions) {
     recursion_state_->content_versions->AddFormStream(form->GetParsedStream());
   }
@@ -875,12 +901,17 @@ void CPDF_StreamContentParser::AddForm(RetainPtr<CPDF_Stream> pStream,
   auto pFormObj = std::make_unique<CPDF_FormObject>(GetCurrentStreamIndex(),
                                                     std::move(form), matrix);
   pFormObj->SetResourceName(name);
+  // EmbedPDF(page-residency): queued for ParseDeferredForms(), with the
+  // content around it as the recursion guard knows it now.
   deferred_forms_.emplace_back(pFormObj.get(), std::move(status),
                                recursion_state_->parsed_set);
   SetGraphicStates(pFormObj.get(), true, true, true);
+  // EmbedPDF(page-residency): AppendObject() counts the object's size.
   AppendObject(std::move(pFormObj));
 }
 
+// EmbedPDF(page-residency): the end of upstream's AddForm(), run once the
+// deferred form is parsed: its bounds and backdrop need its objects.
 void CPDF_StreamContentParser::FinishForm(CPDF_FormObject* form_object) {
   if (!object_holder_->BackgroundAlphaNeeded() &&
       form_object->form()->BackgroundAlphaNeeded()) {
@@ -889,6 +920,8 @@ void CPDF_StreamContentParser::FinishForm(CPDF_FormObject* form_object) {
   form_object->CalcBoundingBox();
 }
 
+// EmbedPDF(page-residency, sliced-load): parses the placed forms in order,
+// and can pause between them and inside one (see the header).
 bool CPDF_StreamContentParser::ParseDeferredForms(PauseIndicatorIface* pause) {
   while (!deferred_forms_.empty()) {
     DeferredForm& next = deferred_forms_.front();
@@ -914,12 +947,15 @@ bool CPDF_StreamContentParser::ParseDeferredForms(PauseIndicatorIface* pause) {
   return true;
 }
 
+// EmbedPDF(page-residency): every object the parser adds comes through here,
+// so the page's parsed size counts it.
 void CPDF_StreamContentParser::AppendObject(
     std::unique_ptr<CPDF_PageObject> object) {
   parsed_size_counter_.Add(*object);
   object_holder_->AppendPageObject(std::move(object));
 }
 
+// EmbedPDF(page-residency): a form placed and not yet parsed.
 CPDF_StreamContentParser::DeferredForm::DeferredForm(
     CPDF_FormObject* object,
     std::unique_ptr<CPDF_AllStates> states,
@@ -976,6 +1012,7 @@ CPDF_ImageObject* CPDF_StreamContentParser::AddImageObject(
       cur_states_->current_transformation_matrix() * mt_content_to_user_);
 
   CPDF_ImageObject* pRet = pImageObj.get();
+  // EmbedPDF(page-residency): AppendObject() counts the object's size.
   AppendObject(std::move(pImageObj));
   return pRet;
 }
@@ -1045,6 +1082,8 @@ void CPDF_StreamContentParser::Handle_SetGray_Stroke() {
 
 void CPDF_StreamContentParser::Handle_SetExtendGraphState() {
   ByteString name = GetString(0);
+  // EmbedPDF(reads-dont-write): read without the mutable getter; the cast
+  // fits the callee's signature.
   RetainPtr<const CPDF_Dictionary> const_gs =
       ToDictionary(FindResourceObj("ExtGState", name));
   RetainPtr<CPDF_Dictionary> pGS =
@@ -1145,6 +1184,8 @@ void CPDF_StreamContentParser::Handle_RestoreGraphState() {
 
   *cur_states_ = *state_stack_.back();
   state_stack_.pop_back();
+  // EmbedPDF(faithful-content-rewrite): record the CTM in the space of page
+  // objects' matrices (RecordCTMOfCurrentStream()).
   RecordCTMOfCurrentStream();
 }
 
@@ -1272,6 +1313,7 @@ void CPDF_StreamContentParser::Handle_ShadeFill() {
     bbox.Intersect(GetShadingBBox(pShading.Get(), pObj->matrix()));
   }
   pObj->SetRect(bbox);
+  // EmbedPDF(page-residency): AppendObject() counts the object's size.
   AppendObject(std::move(pObj));
 }
 
@@ -1293,17 +1335,22 @@ void CPDF_StreamContentParser::Handle_SetFont() {
   RetainPtr<CPDF_Font> font = FindFont(GetString(1));
   if (font) {
     cur_states_->mutable_text_state().SetFont(std::move(font));
-    // EmbedPDF: where it was selected (CPDF_TextState::GetFontResources()).
+    // EmbedPDF(redaction): where it was selected
+    // (CPDF_TextState::GetFontResources()); Type3 redaction reads it.
     cur_states_->mutable_text_state().SetFontResources(resources_);
   }
 }
 
+// EmbedPDF(reads-dont-write, faithful-content-rewrite): a const lookup. The
+// rule moved to CPDF_Form::ChooseResourcesOfType(), which content rewrites
+// share, so they keep the names the parser resolves.
 RetainPtr<const CPDF_Dictionary> CPDF_StreamContentParser::FindResourceHolder(
     ByteStringView type) {
   return CPDF_Form::ChooseResourcesOfType(resources_.Get(),
                                           page_resources_.Get(), type);
 }
 
+// EmbedPDF(reads-dont-write): read without the mutable getter.
 RetainPtr<const CPDF_Object> CPDF_StreamContentParser::FindResourceObj(
     ByteStringView type,
     const ByteString& name) {
@@ -1313,6 +1360,8 @@ RetainPtr<const CPDF_Object> CPDF_StreamContentParser::FindResourceObj(
 
 RetainPtr<CPDF_Font> CPDF_StreamContentParser::FindFont(
     const ByteString& name) {
+  // EmbedPDF(reads-dont-write): read without the mutable getter; the cast
+  // fits the callee's signature.
   RetainPtr<const CPDF_Dictionary> const_font_dict(
       ToDictionary(FindResourceObj("Font", name)));
   RetainPtr<CPDF_Dictionary> font_dict =
@@ -1334,6 +1383,8 @@ RetainPtr<CPDF_Font> CPDF_StreamContentParser::FindFont(
   return font;
 }
 
+// EmbedPDF(faithful-content-rewrite): the content starts at a form's
+// /Matrix; recorded so a regenerated form writes its inverse first.
 void CPDF_StreamContentParser::SetCTMAtBeginningOfContent(
     const CFX_Matrix& ctm) {
   cur_states_->set_current_transformation_matrix(ctm);
@@ -1342,6 +1393,8 @@ void CPDF_StreamContentParser::SetCTMAtBeginningOfContent(
   ctm_at_beginning_of_content_ = all_ctms_[0];
 }
 
+// EmbedPDF(faithful-content-rewrite): a stream's CTM is kept in the space of
+// page objects' matrices, as the content generator reads it.
 void CPDF_StreamContentParser::RecordCTMOfCurrentStream() {
   all_ctms_[GetCurrentStreamIndex()] =
       cur_states_->current_transformation_matrix() * mt_content_to_user_;
@@ -1388,6 +1441,8 @@ RetainPtr<CPDF_ColorSpace> CPDF_StreamContentParser::FindColorSpace(
 
 RetainPtr<CPDF_Pattern> CPDF_StreamContentParser::FindPattern(
     const ByteString& name) {
+  // EmbedPDF(reads-dont-write): read without the mutable getter; the cast
+  // fits the callee's signature.
   RetainPtr<const CPDF_Object> const_pattern = FindResourceObj("Pattern", name);
   RetainPtr<CPDF_Object> pPattern =
       pdfium::WrapRetain(const_cast<CPDF_Object*>(const_pattern.Get()));
@@ -1400,6 +1455,8 @@ RetainPtr<CPDF_Pattern> CPDF_StreamContentParser::FindPattern(
 
 RetainPtr<CPDF_ShadingPattern> CPDF_StreamContentParser::FindShading(
     const ByteString& name) {
+  // EmbedPDF(reads-dont-write): read without the mutable getter; the cast
+  // fits the callee's signature.
   RetainPtr<const CPDF_Object> const_pattern = FindResourceObj("Shading", name);
   RetainPtr<CPDF_Object> pPattern =
       pdfium::WrapRetain(const_cast<CPDF_Object*>(const_pattern.Get()));
@@ -1457,6 +1514,7 @@ void CPDF_StreamContentParser::AddTextObject(
     if (TextRenderingModeIsClipMode(text_mode)) {
       clip_text_list_.push_back(pText->Clone());
     }
+    // EmbedPDF(page-residency): AppendObject() counts the object's size.
     AppendObject(std::move(pText));
   }
   if (!kernings.empty() && kernings.back() != 0) {
@@ -1666,6 +1724,8 @@ void CPDF_StreamContentParser::AddPathPointAndClose(
   path_points_.emplace_back(point, type, /*close=*/true);
 }
 
+// EmbedPDF(render-speedup): `path_points_` is reused, and the path is built
+// in AddPathObjectFromPoints(), which holds upstream's body of this function.
 void CPDF_StreamContentParser::AddPathObject(
     CFX_FillRenderOptions::FillType fill_type,
     RenderType render_type) {
@@ -1716,6 +1776,8 @@ void CPDF_StreamContentParser::AddPathObjectFromPoints(
     path_points.pop_back();
   }
 
+  // EmbedPDF(render-speedup): a painted path shares the last one's geometry
+  // when the points are bit-identical; the renderer reuses its coverage.
   CFX_Matrix matrix =
       cur_states_->current_transformation_matrix() * mt_content_to_user_;
   bool bStroke = render_type == RenderType::kStroke;
@@ -1741,9 +1803,12 @@ void CPDF_StreamContentParser::AddPathObjectFromPoints(
     pPathObj->set_filltype(fill_type);
     pPathObj->path() = path;
     SetGraphicStates(pPathObj.get(), true, false, true);
+    // EmbedPDF(lean-page-objects): the path shares the last path's matrix
+    // storage when the bits match.
     last_path_matrix_ = CPDF_PathObject::ShareMatrix(
         matrix, std::move(last_path_matrix_));
     pPathObj->SetSharedPathMatrix(last_path_matrix_);
+    // EmbedPDF(page-residency): AppendObject() counts the object's size.
     AppendObject(std::move(pPathObj));
   }
   if (path_clip_type != CFX_FillRenderOptions::FillType::kNoFill) {

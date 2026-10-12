@@ -112,6 +112,7 @@ void CPDF_ClipPath::AppendTexts(
   pTexts->clear();
 }
 
+// EmbedPDF(redaction): clip-text copies are redacted with their text.
 void CPDF_ClipPath::EditTexts(
     const std::function<bool(CPDF_TextObject*)>& edit) {
   PathData* data = ref_.GetPrivateCopy();

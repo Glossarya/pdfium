@@ -105,6 +105,7 @@ class CPDF_FormField {
   bool IsNoExport() const { return no_export_; }
 
   WideString GetValue() const;
+  // EmbedPDF(forms-model): the stored value, without check box mapping.
   WideString GetRawValue() const;
   WideString GetDefaultValue() const;
   bool SetValue(const WideString& value, NotificationOption notify);
@@ -146,6 +147,7 @@ class CPDF_FormField {
 
  private:
   WideString GetValue(bool bDefault) const;
+  // EmbedPDF(forms-model): the stored value, without check box mapping.
   WideString GetRawValue(bool bDefault) const;
   bool SetValue(const WideString& value,
                 bool bDefault,

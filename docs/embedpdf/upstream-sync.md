@@ -34,7 +34,9 @@ All commands run from the fork's root.
    new globals, build changes and the API diff.
 3. **Branch and merge.** Never rebase.
    ```bash
-   git switch -c embedpdf/sync/<target> embedpdf/main
+   # --no-track: a branch made from origin/embedpdf/main would otherwise track
+   # it, and a plain push or an editor's "Sync" would go to embedpdf/main.
+   git switch --no-track -c embedpdf/sync/<target> origin/embedpdf/main
    git config rerere.enabled true
    git merge --no-ff <target>
    ```

@@ -9,6 +9,7 @@
 #include "core/fpdfapi/page/cpdf_page.h"
 #include "core/fpdfapi/page/cpdf_parsedsize.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
+#include "public/epdf_view.h"
 #include "public/fpdfview.h"
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
@@ -32,7 +33,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV EPDFPage_IsContentCurrent(FPDF_PAGE page) {
   return pdf_page && pdf_page->IsContentCurrent();
 }
 
-// The layout the engine reads on every platform (see public/fpdfview.h).
+// The layout the engine reads on every platform (see public/epdf_view.h).
 static_assert(sizeof(EPDF_PAGE_PARSED_SIZE) == 40);
 static_assert(offsetof(EPDF_PAGE_PARSED_SIZE, estimated_bytes) == 24);
 static_assert(offsetof(EPDF_PAGE_PARSED_SIZE, complete) == 32);

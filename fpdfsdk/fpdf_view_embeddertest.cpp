@@ -32,6 +32,8 @@
 #include "fpdfsdk/fpdf_view_c_api_test.h"
 #include "public/cpp/fpdf_scopers.h"
 #include "public/epdf_annot.h"
+#include "public/epdf_layer.h"
+#include "public/epdf_view.h"
 #include "public/fpdf_annot.h"
 #include "public/fpdf_attachment.h"
 #include "public/fpdf_doc.h"

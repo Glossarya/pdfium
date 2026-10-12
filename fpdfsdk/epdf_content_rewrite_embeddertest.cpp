@@ -24,6 +24,7 @@
 #include "core/fpdfapi/parser/cpdf_stream_acc.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "public/cpp/fpdf_scopers.h"
+#include "public/epdf_layer.h"
 #include "public/epdf_redact.h"
 #include "public/fpdf_annot.h"
 #include "public/fpdf_edit.h"

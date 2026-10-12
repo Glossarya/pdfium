@@ -12,6 +12,7 @@
 #include "core/fxcrt/fx_system.h"
 #include "core/fxge/cfx_defaultrenderdevice.h"
 #include "public/cpp/fpdf_scopers.h"
+#include "public/epdf_view.h"
 #include "public/fpdf_edit.h"
 #include "public/fpdf_save.h"
 #include "public/fpdfview.h"

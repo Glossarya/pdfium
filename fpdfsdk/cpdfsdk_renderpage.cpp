@@ -20,6 +20,7 @@
 #include "core/fxge/cfx_renderdevice.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "fpdfsdk/cpdfsdk_pauseadapter.h"
+#include "public/epdf_view.h"
 
 namespace {
 

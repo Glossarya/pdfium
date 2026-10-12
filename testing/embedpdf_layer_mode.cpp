@@ -9,6 +9,7 @@
 
 #include <string>
 
+#include "public/epdf_layer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace embedpdf_test {

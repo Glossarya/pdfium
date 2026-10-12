@@ -74,6 +74,7 @@
 #include "fpdfsdk/epdf_budget_pause.h"
 #include "fxjs/ijs_runtime.h"
 #include "public/epdf_named_pages.h"
+#include "public/epdf_view.h"
 #include "public/fpdf_formfill.h"
 
 #ifdef PDF_ENABLE_V8

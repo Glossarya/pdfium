@@ -24,6 +24,8 @@
 #include "public/cpp/fpdf_scopers.h"
 #include "public/epdf_annot.h"
 #include "public/epdf_form.h"
+#include "public/epdf_layer.h"
+#include "public/epdf_view.h"
 #include "public/fpdf_annot.h"
 #include "public/fpdf_edit.h"
 #include "public/fpdf_save.h"

@@ -21,6 +21,8 @@
 #include "core/fxcrt/retain_ptr.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "public/epdf_form.h"
+#include "public/epdf_layer.h"
+#include "public/epdf_view.h"
 #include "public/fpdf_annot.h"
 #include "public/fpdf_doc.h"
 #include "public/fpdf_edit.h"

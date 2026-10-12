@@ -31,6 +31,7 @@
 #include "fpdfsdk/epdf_edit_test_util.h"
 #include "public/cpp/fpdf_scopers.h"
 #include "public/epdf_annot.h"
+#include "public/epdf_layer.h"
 #include "public/fpdf_annot.h"
 #include "public/fpdf_attachment.h"
 #include "public/fpdf_doc.h"

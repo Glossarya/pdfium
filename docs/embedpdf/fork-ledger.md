@@ -469,10 +469,12 @@ component builds; don't bring back the empty `#else` branch.
 **Rule.** An `EPDF*` function or declaration placed inside an upstream API file
 (`fpdfsdk/fpdf_*.cpp`, `public/fpdf_*.h`), or a core helper that exists only to back one.
 **Why.** It was put there when the API was added.
-**Where.** `fpdf_view.cpp`, `fpdf_doc.cpp`, `fpdf_attachment.cpp`, `fpdf_save.cpp`,
-`fpdf_text.cpp` and their headers; the two colour types `public/fpdf_annot.h` adds for
-`public/epdf_annot.h`; core helpers such as `CPDF_Dest::GetPageObjectNumber`. The annotation API
-already lives in `public/epdf_annot.h` and `fpdfsdk/epdf_annot.cpp`.
+**Where.** `fpdf_view.cpp`, `fpdf_doc.cpp`, `fpdf_attachment.cpp`, `fpdf_save.cpp` and
+`fpdf_text.cpp`; our declarations in the other `public/fpdf_*.h` headers; the two colour
+types `public/fpdf_annot.h` adds for `public/epdf_annot.h`; core helpers such as
+`CPDF_Dest::GetPageObjectNumber`. Already in our own files: the annotation API
+(`public/epdf_annot.h`, `fpdfsdk/epdf_annot.cpp`) and what we declared in `public/fpdfview.h`
+(`public/epdf_view.h`, `public/epdf_layer.h`).
 **Guarded by.** The embedder tests of each API.
 **When upstream touches this.** Keep ours and take upstream's around it. These move to `epdf_*`
 files (upstream-sync plan, phase P4).

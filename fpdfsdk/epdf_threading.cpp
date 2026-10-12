@@ -14,6 +14,8 @@
 // simply wrap the normal init/destroy) so shared runtime code can call a single
 // lifecycle entry point regardless of platform.
 
+#include "public/epdf_view.h"
+
 #include "public/fpdfview.h"
 
 FPDF_EXPORT void FPDF_CALLCONV EPDF_InitThread() {

@@ -349,8 +349,9 @@ bool CPDF_PageImageCache::Entry::Continue(
 }
 
 // EmbedPDF(decoded-image-store): decide whether the store keeps this decode:
-// it must fit, and a JPX decode must skip the levels its key asked for. A huge
-// image the store keeps is decoded in full; the bitmap holds the same rows.
+// it must fit, and a JPX or DCT decode must skip the levels its key asked for.
+// A huge image the store keeps is decoded in full; the bitmap holds the same
+// rows.
 void CPDF_PageImageCache::Entry::ContinueGetCachedBitmap(
     CPDF_PageImageCache* pPageImageCache) {
   const CPDF_DIB* dib = cur_bitmap_.AsRaw<CPDF_DIB>();
@@ -360,11 +361,11 @@ void CPDF_PageImageCache::Entry::ContinueGetCachedBitmap(
 
   std::optional<CPDF_DecodedImageStore::Key> store_key =
       std::exchange(store_key_, std::nullopt);
-  std::optional<uint8_t> jpx_levels;
-  if (dib->IsJpxImage()) {
-    jpx_levels = dib->resolution_levels_to_skip();
+  std::optional<uint8_t> levels_skipped;
+  if (dib->SkipsResolutionLevels()) {
+    levels_skipped = dib->resolution_levels_to_skip();
     // Keep only what a request with the key's levels would decode.
-    if (jpx_levels.value() != store_levels_) {
+    if (levels_skipped.value() != store_levels_) {
       store_key.reset();
     }
   }
@@ -406,7 +407,8 @@ void CPDF_PageImageCache::Entry::ContinueGetCachedBitmap(
     kept.bitmap = cached_bitmap_;
     kept.mask = cached_mask_;
     kept.matte_color = matte_color_;
-    CPDF_DecodedImageStore::Get()->Insert(store_key.value(), kept, jpx_levels);
+    CPDF_DecodedImageStore::Get()->Insert(store_key.value(), kept,
+                                          levels_skipped);
   }
 }
 

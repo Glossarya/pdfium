@@ -12,7 +12,7 @@
 
 #include "build/build_config.h"
 #include "core/fxcodec/cfx_codec_memory.h"
-#include "core/fxcodec/jpeg/jpeg_progressive_decoder.h"
+#include "core/fxcodec/jpeg/libjpeg_jpeg_context.h"
 #include "core/fxcodec/progressive_decoder_context.h"
 #include "core/fxcrt/check.h"
 #include "core/fxcrt/check_op.h"
@@ -31,11 +31,15 @@
 #include "core/fxge/dib/fx_dib.h"
 
 #ifdef PDF_ENABLE_XFA_BMP
-#include "core/fxcodec/bmp/bmp_decoder.h"
+#if defined(PDF_ENABLE_RUST_BMP)
+#include "core/fxcodec/bmp/skia_bmp_context.h"
+#else
+#include "core/fxcodec/bmp/cfx_bmpcontext.h"
+#endif
 #endif  // PDF_ENABLE_XFA_BMP
 
 #ifdef PDF_ENABLE_XFA_GIF
-#include "core/fxcodec/gif/gif_decoder.h"
+#include "core/fxcodec/gif/cfx_gifcontext.h"
 #endif  // PDF_ENABLE_XFA_GIF
 
 #ifdef PDF_ENABLE_XFA_PNG
@@ -45,14 +49,14 @@
 // (Chromium already sets `pdf_use_skia_override = true` so having an extra
 // condition avoids affecting the Chromium behavior.)
 #if defined(PDF_USE_SKIA) && defined(PDF_ENABLE_RUST_PNG)
-#include "core/fxcodec/png/skia_png_decoder.h"
+#include "core/fxcodec/png/skia_png_context.h"
 #else
-#include "core/fxcodec/png/libpng_png_decoder.h"
+#include "core/fxcodec/png/libpng_png_context.h"
 #endif
 #endif  // PDF_ENABLE_XFA_PNG
 
 #ifdef PDF_ENABLE_XFA_TIFF
-#include "core/fxcodec/tiff/tiff_decoder.h"
+#include "core/fxcodec/tiff/libtiff_tiff_context.h"
 #endif  // PDF_ENABLE_XFA_TIFF
 
 namespace fxcodec {
@@ -60,6 +64,48 @@ namespace fxcodec {
 namespace {
 
 constexpr size_t kBlockSize = 4096;
+
+std::unique_ptr<ProgressiveDecoderContext> CreateDecoderContext(
+    FXCODEC_IMAGE_TYPE type,
+    ProgressiveDecoder* delegate) {
+  switch (type) {
+#ifdef PDF_ENABLE_XFA_BMP
+    case FXCODEC_IMAGE_BMP:
+#if defined(PDF_ENABLE_RUST_BMP)
+      return std::make_unique<SkiaBmpContext>(delegate);
+#else
+      return std::make_unique<CFX_BmpContext>(delegate);
+#endif
+#endif  // PDF_ENABLE_XFA_BMP
+#ifdef PDF_ENABLE_XFA_GIF
+    case FXCODEC_IMAGE_GIF:
+      return std::make_unique<CFX_GifContext>(delegate);
+#endif  // PDF_ENABLE_XFA_GIF
+    case FXCODEC_IMAGE_JPG: {
+      auto context = std::make_unique<LibjpegJpegContext>();
+      if (!context->create_ok_) {
+        return nullptr;
+      }
+      return context;
+    }
+#ifdef PDF_ENABLE_XFA_PNG
+    case FXCODEC_IMAGE_PNG:
+#if defined(PDF_USE_SKIA) && defined(PDF_ENABLE_RUST_PNG)
+      return std::make_unique<SkiaPngContext>(delegate);
+#else
+    {
+      auto context = std::make_unique<LibpngPngContext>(delegate);
+      if (!context->png_ || !context->info_) {
+        return nullptr;
+      }
+      return context;
+    }
+#endif
+#endif  // PDF_ENABLE_XFA_PNG
+    default:
+      return nullptr;
+  }
+}
 
 #ifdef PDF_ENABLE_XFA_PNG
 #if BUILDFLAG(IS_APPLE)
@@ -133,8 +179,8 @@ void ProgressiveDecoder::PngFinishedDecoding() {
 
 #ifdef PDF_ENABLE_XFA_GIF
 uint32_t ProgressiveDecoder::GifCurrentPosition() const {
-  uint32_t remain_size = pdfium::checked_cast<uint32_t>(
-      GifDecoder::GetAvailInput(gif_context_.get()));
+  uint32_t remain_size =
+      pdfium::checked_cast<uint32_t>(context_->GetAvailInput());
   return offset_ - remain_size;
 }
 
@@ -248,7 +294,7 @@ void ProgressiveDecoder::GifReadScanline(int32_t row_num,
 bool ProgressiveDecoder::BmpInputImagePositionBuf(uint32_t rcd_pos) {
   offset_ = rcd_pos;
   FXCODEC_STATUS error_status = FXCODEC_STATUS::kError;
-  return BmpReadMoreData(bmp_context_.get(), &error_status);
+  return BmpReadMoreData(context_.get(), &error_status);
 }
 
 void ProgressiveDecoder::BmpReadScanline(uint32_t row_num,
@@ -269,25 +315,31 @@ void ProgressiveDecoder::BmpReadScanline(uint32_t row_num,
 bool ProgressiveDecoder::BmpDetectImageTypeInBuffer(
     CFX_DIBAttribute* pAttribute) {
   std::unique_ptr<ProgressiveDecoderContext> pBmcontext =
-      BmpDecoder::StartDecode(this);
-  BmpDecoder::Input(pBmcontext.get(), codec_memory_);
+      CreateDecoderContext(FXCODEC_IMAGE_BMP, this);
+  pBmcontext->Input(codec_memory_);
+
+#if defined(PDF_ENABLE_RUST_BMP)
+  auto* ctx = static_cast<SkiaBmpContext*>(pBmcontext.get());
+#else
+  auto* ctx = static_cast<CFX_BmpContext*>(pBmcontext.get());
+#endif
 
   pdfium::span<const FX_ARGB> palette;
-  BmpDecoder::Status read_result = BmpDecoder::ReadHeader(
-      pBmcontext.get(), &src_width_, &src_height_, &bmp_is_top_bottom_,
-      &src_components_count_, &palette, pAttribute);
-  while (read_result == BmpDecoder::Status::kContinue) {
+  ProgressiveDecoderContext::Status read_result =
+      ctx->ReadHeader(&src_width_, &src_height_, &bmp_is_top_bottom_,
+                      &src_components_count_, &palette, pAttribute);
+  while (read_result == ProgressiveDecoderContext::Status::kContinue) {
     FXCODEC_STATUS error_status = FXCODEC_STATUS::kError;
     if (!BmpReadMoreData(pBmcontext.get(), &error_status)) {
       status_ = error_status;
       return false;
     }
-    read_result = BmpDecoder::ReadHeader(
-        pBmcontext.get(), &src_width_, &src_height_, &bmp_is_top_bottom_,
-        &src_components_count_, &palette, pAttribute);
+    read_result =
+        ctx->ReadHeader(&src_width_, &src_height_, &bmp_is_top_bottom_,
+                        &src_components_count_, &palette, pAttribute);
   }
 
-  if (read_result != BmpDecoder::Status::kSuccess) {
+  if (read_result != ProgressiveDecoderContext::Status::kSuccess) {
     status_ = FXCODEC_STATUS::kError;
     return false;
   }
@@ -322,14 +374,14 @@ bool ProgressiveDecoder::BmpDetectImageTypeInBuffer(
   }
 
   uint32_t available_data = pdfium::checked_cast<uint32_t>(
-      file_->GetSize() - offset_ + BmpDecoder::GetAvailInput(pBmcontext.get()));
-  if (needed_data.value().size > available_data) {
+      file_->GetSize() - offset_ + pBmcontext->GetAvailInput());
+  if (needed_data.value().size / src_components_count_ > available_data) {
     status_ = FXCODEC_STATUS::kError;
     return false;
   }
 
   src_bits_per_component_ = 8;
-  bmp_context_ = std::move(pBmcontext);
+  context_ = std::move(pBmcontext);
   if (!palette.empty()) {
     src_palette_.resize(palette.size());
     fxcrt::Copy(palette, src_palette_);
@@ -345,16 +397,15 @@ bool ProgressiveDecoder::BmpReadMoreData(ProgressiveDecoderContext* bmp_context,
   // `codec_memory_->GetUnconsumedSpan().size()`? (IIUC this is what
   // `GetAvailInput` uses in the end, but I haven't investigated that this is
   // the same instance of `CFX_CodecMemory`.)
-  FX_SAFE_SIZE_T avail_input = BmpDecoder::GetAvailInput(bmp_context);
+  FX_SAFE_SIZE_T avail_input = bmp_context->GetAvailInput();
   if (!avail_input.IsValid()) {
     return false;
   }
-
   if (!ReadMoreData(avail_input.ValueOrDie(), err_status)) {
     return false;
   }
-
-  return BmpDecoder::Input(bmp_context, codec_memory_);
+  bmp_context->Input(codec_memory_);
+  return true;
 }
 
 FXCODEC_STATUS ProgressiveDecoder::BmpStartDecode() {
@@ -369,21 +420,21 @@ FXCODEC_STATUS ProgressiveDecoder::BmpStartDecode() {
 }
 
 FXCODEC_STATUS ProgressiveDecoder::BmpContinueDecode() {
-  BmpDecoder::Status read_res = BmpDecoder::LoadImage(bmp_context_.get());
-  while (read_res == BmpDecoder::Status::kContinue) {
+  ProgressiveDecoderContext::Status read_res = context_->DecodeImage(0);
+  while (read_res == ProgressiveDecoderContext::Status::kContinue) {
     FXCODEC_STATUS error_status = FXCODEC_STATUS::kDecodeFinished;
-    if (!BmpReadMoreData(bmp_context_.get(), &error_status)) {
+    if (!BmpReadMoreData(context_.get(), &error_status)) {
       device_bitmap_ = nullptr;
       file_ = nullptr;
       status_ = error_status;
       return status_;
     }
-    read_res = BmpDecoder::LoadImage(bmp_context_.get());
+    read_res = context_->DecodeImage(0);
   }
 
   device_bitmap_ = nullptr;
   file_ = nullptr;
-  status_ = read_res == BmpDecoder::Status::kSuccess
+  status_ = read_res == ProgressiveDecoderContext::Status::kSuccess
                 ? FXCODEC_STATUS::kDecodeFinished
                 : FXCODEC_STATUS::kError;
   return status_;
@@ -396,41 +447,40 @@ bool ProgressiveDecoder::GifReadMoreData(FXCODEC_STATUS* err_status) {
   // `codec_memory_->GetUnconsumedSpan().size()`? (IIUC this is what
   // `GetAvailInput` uses in the end, but I haven't investigated that this is
   // the same instance of `CFX_CodecMemory`.)
-  FX_SAFE_SIZE_T avail_input = GifDecoder::GetAvailInput(gif_context_.get());
+  FX_SAFE_SIZE_T avail_input = context_->GetAvailInput();
   if (!avail_input.IsValid()) {
     return false;
   }
-
   if (!ReadMoreData(avail_input.ValueOrDie(), err_status)) {
     return false;
   }
 
-  return GifDecoder::Input(gif_context_.get(), codec_memory_);
+  context_->Input(codec_memory_);
+  return true;
 }
 
 bool ProgressiveDecoder::GifDetectImageTypeInBuffer() {
-  gif_context_ = GifDecoder::StartDecode(this);
-  GifDecoder::Input(gif_context_.get(), codec_memory_);
+  context_ = CreateDecoderContext(FXCODEC_IMAGE_GIF, this);
+  context_->Input(codec_memory_);
   src_components_count_ = 1;
-  GifDecoder::Status readResult =
-      GifDecoder::ReadHeader(gif_context_.get(), &src_width_, &src_height_,
-                             &gif_palette_, &gif_bg_index_);
-  while (readResult == GifDecoder::Status::kUnfinished) {
+  auto* ctx = static_cast<CFX_GifContext*>(context_.get());
+  ProgressiveDecoderContext::Status readResult =
+      ctx->ReadHeader(&src_width_, &src_height_, &gif_palette_, &gif_bg_index_);
+  while (readResult == ProgressiveDecoderContext::Status::kContinue) {
     FXCODEC_STATUS error_status = FXCODEC_STATUS::kError;
     if (!GifReadMoreData(&error_status)) {
-      gif_context_ = nullptr;
+      context_ = nullptr;
       status_ = error_status;
       return false;
     }
-    readResult =
-        GifDecoder::ReadHeader(gif_context_.get(), &src_width_, &src_height_,
-                               &gif_palette_, &gif_bg_index_);
+    readResult = ctx->ReadHeader(&src_width_, &src_height_, &gif_palette_,
+                                 &gif_bg_index_);
   }
-  if (readResult == GifDecoder::Status::kSuccess) {
+  if (readResult == ProgressiveDecoderContext::Status::kSuccess) {
     src_bits_per_component_ = 8;
     return true;
   }
-  gif_context_ = nullptr;
+  context_ = nullptr;
   status_ = FXCODEC_STATUS::kError;
   return false;
 }
@@ -449,9 +499,8 @@ FXCODEC_STATUS ProgressiveDecoder::GifStartDecode() {
 }
 
 FXCODEC_STATUS ProgressiveDecoder::GifContinueDecode() {
-  GifDecoder::Status readRes =
-      GifDecoder::LoadFrame(gif_context_.get(), frame_cur_);
-  while (readRes == GifDecoder::Status::kUnfinished) {
+  ProgressiveDecoderContext::Status readRes = context_->DecodeImage(frame_cur_);
+  while (readRes == ProgressiveDecoderContext::Status::kContinue) {
     FXCODEC_STATUS error_status = FXCODEC_STATUS::kDecodeFinished;
     if (!GifReadMoreData(&error_status)) {
       device_bitmap_ = nullptr;
@@ -459,10 +508,10 @@ FXCODEC_STATUS ProgressiveDecoder::GifContinueDecode() {
       status_ = error_status;
       return status_;
     }
-    readRes = GifDecoder::LoadFrame(gif_context_.get(), frame_cur_);
+    readRes = context_->DecodeImage(frame_cur_);
   }
 
-  if (readRes == GifDecoder::Status::kSuccess) {
+  if (readRes == ProgressiveDecoderContext::Status::kSuccess) {
     device_bitmap_ = nullptr;
     file_ = nullptr;
     status_ = FXCODEC_STATUS::kDecodeFinished;
@@ -477,41 +526,39 @@ FXCODEC_STATUS ProgressiveDecoder::GifContinueDecode() {
 #endif  // PDF_ENABLE_XFA_GIF
 
 bool ProgressiveDecoder::JpegReadMoreData(FXCODEC_STATUS* err_status) {
-  FX_SAFE_SIZE_T avail_input =
-      JpegProgressiveDecoder::GetAvailInput(jpeg_context_.get());
+  FX_SAFE_SIZE_T avail_input = context_->GetAvailInput();
   if (!avail_input.IsValid()) {
     return false;
   }
-
   if (!ReadMoreData(avail_input.ValueOrDie(), err_status)) {
     return false;
   }
-
-  return JpegProgressiveDecoder::Input(jpeg_context_.get(), codec_memory_);
+  context_->Input(codec_memory_);
+  return true;
 }
 
 bool ProgressiveDecoder::JpegDetectImageTypeInBuffer(
     CFX_DIBAttribute* pAttribute) {
-  jpeg_context_ = JpegProgressiveDecoder::Start();
-  if (!jpeg_context_) {
+  context_ = CreateDecoderContext(FXCODEC_IMAGE_JPG, this);
+  if (!context_) {
     status_ = FXCODEC_STATUS::kError;
     return false;
   }
-  JpegProgressiveDecoder::Input(jpeg_context_.get(), codec_memory_);
+  context_->Input(codec_memory_);
 
+  auto* ctx = static_cast<LibjpegJpegContext*>(context_.get());
   while (1) {
-    int read_result = JpegProgressiveDecoder::ReadHeader(
-        jpeg_context_.get(), &src_width_, &src_height_, &src_components_count_,
-        pAttribute);
+    int read_result = ctx->ReadHeader(&src_width_, &src_height_,
+                                      &src_components_count_, pAttribute);
     switch (read_result) {
-      case JpegProgressiveDecoder::kFatal:
-      case JpegProgressiveDecoder::kError:
+      case LibjpegJpegContext::kFatal:
+      case LibjpegJpegContext::kError:
         status_ = FXCODEC_STATUS::kError;
         return false;
-      case JpegProgressiveDecoder::kOk:
+      case LibjpegJpegContext::kOk:
         src_bits_per_component_ = 8;
         return true;
-      case JpegProgressiveDecoder::kNeedsMoreInput: {
+      case LibjpegJpegContext::kNeedsMoreInput: {
         FXCODEC_STATUS error_status = FXCODEC_STATUS::kError;
         if (!JpegReadMoreData(&error_status)) {
           status_ = error_status;
@@ -526,7 +573,8 @@ bool ProgressiveDecoder::JpegDetectImageTypeInBuffer(
 }
 
 FXCODEC_STATUS ProgressiveDecoder::JpegStartDecode() {
-  while (!JpegProgressiveDecoder::StartScanline(jpeg_context_.get())) {
+  auto* ctx = static_cast<LibjpegJpegContext*>(context_.get());
+  while (!ctx->StartScanline()) {
     // Maybe it needs more data.
     FXCODEC_STATUS error_status = FXCODEC_STATUS::kError;
     if (!JpegReadMoreData(&error_status)) {
@@ -558,15 +606,15 @@ FXCODEC_STATUS ProgressiveDecoder::JpegStartDecode() {
 }
 
 FXCODEC_STATUS ProgressiveDecoder::JpegContinueDecode() {
+  auto* ctx = static_cast<LibjpegJpegContext*>(context_.get());
   while (true) {
-    int err_code = JpegProgressiveDecoder::ReadScanline(jpeg_context_.get(),
-                                                        decode_buf_.data());
-    if (err_code == JpegProgressiveDecoder::kFatal) {
-      jpeg_context_.reset();
+    int err_code = ctx->ReadScanline(decode_buf_.data());
+    if (err_code == LibjpegJpegContext::kFatal) {
+      context_.reset();
       status_ = FXCODEC_STATUS::kError;
       return FXCODEC_STATUS::kError;
     }
-    if (err_code != JpegProgressiveDecoder::kOk) {
+    if (err_code != LibjpegJpegContext::kOk) {
       // Maybe it needs more data.
       FXCODEC_STATUS error_status = FXCODEC_STATUS::kDecodeFinished;
       if (JpegReadMoreData(&error_status)) {
@@ -598,19 +646,30 @@ bool ProgressiveDecoder::PngReadMoreData() {
     return false;
   }
 
-  return PngDecoder::ContinueDecode(png_context_.get(), codec_memory_);
+#if defined(PDF_USE_SKIA) && defined(PDF_ENABLE_RUST_PNG)
+  auto* ctx = static_cast<SkiaPngContext*>(context_.get());
+#else
+  auto* ctx = static_cast<LibpngPngContext*>(context_.get());
+#endif
+  return ctx->ContinueDecode(codec_memory_);
 }
 
 bool ProgressiveDecoder::PngDetectImageTypeInBuffer() {
-  png_context_ = PngDecoder::StartDecode(this);
-  if (!png_context_) {
+  context_ = CreateDecoderContext(FXCODEC_IMAGE_PNG, this);
+  if (!context_) {
     status_ = FXCODEC_STATUS::kError;
     return false;
   }
 
+#if defined(PDF_USE_SKIA) && defined(PDF_ENABLE_RUST_PNG)
+  auto* ctx = static_cast<SkiaPngContext*>(context_.get());
+#else
+  auto* ctx = static_cast<LibpngPngContext*>(context_.get());
+#endif
+
   // Keep feeding more input into the decoder until either the decoder 1) fails,
   // or 2) calls `PngReadHeader` to indicate that it `got_png_metadata_`.
-  if (PngDecoder::ContinueDecode(png_context_.get(), codec_memory_)) {
+  if (ctx->ContinueDecode(codec_memory_)) {
     while (!got_png_metadata_ && PngReadMoreData()) {
     }
   }
@@ -619,13 +678,13 @@ bool ProgressiveDecoder::PngDetectImageTypeInBuffer() {
   // have reported.  (In particular ignore the failure that `PngReadHeader`
   // reports when there is no `device_bitmap_` - e.g. during image type
   // detection.)
-  png_context_.reset();
+  context_.reset();
   return got_png_metadata_;
 }
 
 FXCODEC_STATUS ProgressiveDecoder::PngStartDecode() {
-  png_context_ = PngDecoder::StartDecode(this);
-  if (!png_context_) {
+  context_ = CreateDecoderContext(FXCODEC_IMAGE_PNG, this);
+  if (!context_) {
     device_bitmap_ = nullptr;
     file_ = nullptr;
     status_ = FXCODEC_STATUS::kError;
@@ -657,7 +716,7 @@ FXCODEC_STATUS ProgressiveDecoder::PngContinueDecode() {
     }
   }
 
-  png_context_.reset();
+  context_.reset();
   device_bitmap_ = nullptr;
   file_ = nullptr;
   CHECK(status_ == FXCODEC_STATUS::kDecodeFinished ||
@@ -669,21 +728,20 @@ FXCODEC_STATUS ProgressiveDecoder::PngContinueDecode() {
 #ifdef PDF_ENABLE_XFA_TIFF
 bool ProgressiveDecoder::TiffDetectImageTypeFromFile(
     CFX_DIBAttribute* pAttribute) {
-  tiff_context_ = TiffDecoder::CreateDecoder(file_);
-  if (!tiff_context_) {
+  auto ctx = std::make_unique<LibtiffTiffContext>();
+  if (!ctx->InitDecoder(file_)) {
     status_ = FXCODEC_STATUS::kError;
     return false;
   }
   int32_t dummy_bpc;
-  bool ret = TiffDecoder::LoadFrameInfo(tiff_context_.get(), 0, &src_width_,
-                                        &src_height_, &src_components_count_,
-                                        &dummy_bpc, pAttribute);
+  bool ret = ctx->LoadFrameInfo(0, &src_width_, &src_height_,
+                                &src_components_count_, &dummy_bpc, pAttribute);
   src_components_count_ = 4;
   if (!ret) {
-    tiff_context_.reset();
     status_ = FXCODEC_STATUS::kError;
     return false;
   }
+  context_ = std::move(ctx);
   return true;
 }
 
@@ -691,7 +749,8 @@ FXCODEC_STATUS ProgressiveDecoder::TiffContinueDecode() {
   // TODO(crbug.com/355630556): Consider adding support for
   // `FXDIB_Format::kBgraPremul`
   CHECK_EQ(device_bitmap_->GetFormat(), FXDIB_Format::kBgra);
-  status_ = TiffDecoder::Decode(tiff_context_.get(), std::move(device_bitmap_))
+  auto* ctx = static_cast<LibtiffTiffContext*>(context_.get());
+  status_ = ctx->Decode(std::move(device_bitmap_))
                 ? FXCODEC_STATUS::kDecodeFinished
                 : FXCODEC_STATUS::kError;
   file_ = nullptr;
@@ -960,29 +1019,6 @@ void ProgressiveDecoder::ResampleScanline(
         });
       }
       case TransformMethod::k8BppRgbToArgb: {
-#ifdef PDF_ENABLE_XFA_BMP
-        if (bmp_context_) {
-          UNSAFE_TODO({
-            uint32_t dest_r = 0;
-            uint32_t dest_g = 0;
-            uint32_t dest_b = 0;
-            for (int j = pPixelWeights->src_start_;
-                 j <= pPixelWeights->src_end_; j++) {
-              uint32_t pixel_weight =
-                  pPixelWeights->weights_[j - pPixelWeights->src_start_];
-              uint32_t argb = src_palette_[src_scan[j]];
-              dest_r += pixel_weight * FXARGB_R(argb);
-              dest_g += pixel_weight * FXARGB_G(argb);
-              dest_b += pixel_weight * FXARGB_B(argb);
-            }
-            *dest_scan++ = CStretchEngine::PixelFromFixed(dest_b);
-            *dest_scan++ = CStretchEngine::PixelFromFixed(dest_g);
-            *dest_scan++ = CStretchEngine::PixelFromFixed(dest_r);
-            *dest_scan++ = 0xFF;
-            break;
-          });
-        }
-#endif  // PDF_ENABLE_XFA_BMP
         UNSAFE_TODO({
           uint32_t dest_a = 0;
           uint32_t dest_r = 0;
@@ -1131,24 +1167,30 @@ std::pair<FXCODEC_STATUS, size_t> ProgressiveDecoder::GetFrames() {
       return {status_, 1};
 #ifdef PDF_ENABLE_XFA_GIF
     case FXCODEC_IMAGE_GIF: {
+      auto* ctx = static_cast<CFX_GifContext*>(context_.get());
       while (true) {
-        GifDecoder::Status readResult;
-        std::tie(readResult, frame_number_) =
-            GifDecoder::LoadFrameInfo(gif_context_.get());
-        while (readResult == GifDecoder::Status::kUnfinished) {
+        ProgressiveDecoderContext::Status readResult = ctx->GetFrame();
+        frame_number_ =
+            readResult == ProgressiveDecoderContext::Status::kSuccess
+                ? ctx->GetFrameNum()
+                : 0;
+        while (readResult == ProgressiveDecoderContext::Status::kContinue) {
           FXCODEC_STATUS error_status = FXCODEC_STATUS::kError;
           if (!GifReadMoreData(&error_status)) {
             return {error_status, 0};
           }
 
-          std::tie(readResult, frame_number_) =
-              GifDecoder::LoadFrameInfo(gif_context_.get());
+          readResult = ctx->GetFrame();
+          frame_number_ =
+              readResult == ProgressiveDecoderContext::Status::kSuccess
+                  ? ctx->GetFrameNum()
+                  : 0;
         }
-        if (readResult == GifDecoder::Status::kSuccess) {
+        if (readResult == ProgressiveDecoderContext::Status::kSuccess) {
           status_ = FXCODEC_STATUS::kDecodeReady;
           return {status_, frame_number_};
         }
-        gif_context_ = nullptr;
+        context_ = nullptr;
         status_ = FXCODEC_STATUS::kError;
         return {status_, 0};
       }

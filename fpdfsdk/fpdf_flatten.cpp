@@ -486,7 +486,7 @@ FPDF_EXPORT int FPDF_CALLCONV FPDFPage_Flatten(FPDF_PAGE page, int nFlag) {
   // and the form's fields; on a layer, they resolve to the layer's versions.
   ScopedFPDFPageView page_view(page);
   CPDF_Page* pPage = page_view.Get();
-  if (!page) {
+  if (!pPage) {
     return FLATTEN_FAIL;
   }
 

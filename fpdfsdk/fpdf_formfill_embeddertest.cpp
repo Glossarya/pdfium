@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -12,8 +13,10 @@
 #include "core/fxcrt/fx_coordinates.h"
 #include "core/fxcrt/fx_string.h"
 #include "core/fxcrt/fx_system.h"
+#include "core/fxcrt/span.h"
 #include "core/fxge/cfx_renderdevice.h"
 #include "public/cpp/fpdf_scopers.h"
+#include "public/fpdf_annot.h"
 #include "public/fpdf_formfill.h"
 #include "public/fpdf_fwlevent.h"
 #include "public/fpdf_progressive.h"
@@ -98,6 +101,16 @@ class FPDFFormFillInteractiveEmbedderTest : public FPDFFormFillEmbedderTest {
     // Type text starting with 'A' to as many chars as specified by |num_chars|.
     for (int i = 0; i < num_chars; ++i) {
       FORM_OnChar(form_handle(), page_, 'A' + i, 0);
+    }
+  }
+
+  void TypeCharactersIntoTextField(pdfium::span<const uint32_t> characters,
+                                   const CFX_PointF& point) {
+    EXPECT_EQ(GetFormType(), GetFormTypeAtPoint(point));
+    ClickOnFormFieldAtPoint(point);
+
+    for (uint32_t c : characters) {
+      FORM_OnChar(form_handle(), page_, c, 0);
     }
   }
 
@@ -596,7 +609,7 @@ class FPDFFormFillTextFormEmbedderTestVersion2
 };
 
 TEST_F(FPDFFormFillEmbedderTest, FirstTest) {
-  EmbedderTestMockDelegate mock;
+  auto& mock = SetOwnedDelegate<EmbedderTestMockDelegate>();
   EXPECT_CALL(mock, Alert(_, _, _, _)).Times(0);
   EXPECT_CALL(mock, UnsupportedHandler(_)).Times(0);
   EXPECT_CALL(mock, SetTimer(_, _)).Times(0);
@@ -605,16 +618,13 @@ TEST_F(FPDFFormFillEmbedderTest, FirstTest) {
   EXPECT_CALL(mock, DoURIAction(_)).Times(0);
   EXPECT_CALL(mock, DoURIActionWithKeyboardModifier(_, _, _)).Times(0);
   EXPECT_CALL(mock, DoGoToAction(_, _, _, _, _)).Times(0);
-  SetDelegate(&mock);
-
   ASSERT_TRUE(OpenDocument("hello_world.pdf"));
   ScopedPage page = LoadScopedPage(0);
   EXPECT_TRUE(page);
 }
 
 TEST_F(FPDFFormFillEmbedderTest, Bug487928) {
-  EmbedderTestTimerHandlingDelegate delegate;
-  SetDelegate(&delegate);
+  auto& delegate = SetOwnedDelegate<EmbedderTestTimerHandlingDelegate>();
 
   ASSERT_TRUE(OpenDocument("bug_487928.pdf"));
   ScopedPage page = LoadScopedPage(0);
@@ -624,8 +634,7 @@ TEST_F(FPDFFormFillEmbedderTest, Bug487928) {
 }
 
 TEST_F(FPDFFormFillEmbedderTest, Bug507316) {
-  EmbedderTestTimerHandlingDelegate delegate;
-  SetDelegate(&delegate);
+  auto& delegate = SetOwnedDelegate<EmbedderTestTimerHandlingDelegate>();
 
   ASSERT_TRUE(OpenDocument("bug_507316.pdf"));
   ScopedPage page = LoadScopedPage(2);
@@ -645,8 +654,7 @@ TEST_F(FPDFFormFillEmbedderTest, Bug514690) {
 }
 
 TEST_F(FPDFFormFillEmbedderTest, Bug900552) {
-  EmbedderTestTimerHandlingDelegate delegate;
-  SetDelegate(&delegate);
+  auto& delegate = SetOwnedDelegate<EmbedderTestTimerHandlingDelegate>();
 
   ASSERT_TRUE(OpenDocument("bug_900552.pdf"));
   ScopedPage page = LoadScopedPage(0);
@@ -663,8 +671,7 @@ TEST_F(FPDFFormFillEmbedderTest, Bug900552) {
 }
 
 TEST_F(FPDFFormFillEmbedderTest, Bug901654Case1) {
-  EmbedderTestTimerHandlingDelegate delegate;
-  SetDelegate(&delegate);
+  auto& delegate = SetOwnedDelegate<EmbedderTestTimerHandlingDelegate>();
 
   ASSERT_TRUE(OpenDocument("bug_901654.pdf"));
   ScopedPage page = LoadScopedPage(0);
@@ -681,8 +688,7 @@ TEST_F(FPDFFormFillEmbedderTest, Bug901654Case1) {
 }
 
 TEST_F(FPDFFormFillEmbedderTest, Bug901654Case2) {
-  EmbedderTestTimerHandlingDelegate delegate;
-  SetDelegate(&delegate);
+  auto& delegate = SetOwnedDelegate<EmbedderTestTimerHandlingDelegate>();
 
   ASSERT_TRUE(OpenDocument("bug_901654_2.pdf"));
   ScopedPage page = LoadScopedPage(0);
@@ -1053,8 +1059,7 @@ class DoURIActionBlockedDelegate final : public EmbedderTest::Delegate {
 };
 
 TEST_F(FPDFFormFillEmbedderTest, Bug851821) {
-  DoURIActionBlockedDelegate delegate;
-  SetDelegate(&delegate);
+  SetOwnedDelegate<DoURIActionBlockedDelegate>();
 
   ASSERT_TRUE(OpenDocument("redirect.pdf"));
   ScopedPage page = LoadScopedPage(0);
@@ -1063,8 +1068,7 @@ TEST_F(FPDFFormFillEmbedderTest, Bug851821) {
 }
 
 TEST_F(FPDFFormFillEmbedderTest, CheckReadOnlyInCheckbox) {
-  EmbedderTestTimerHandlingDelegate delegate;
-  SetDelegate(&delegate);
+  SetOwnedDelegate<EmbedderTestTimerHandlingDelegate>();
 
   ASSERT_TRUE(OpenDocument("click_form.pdf"));
   ScopedPage page = LoadScopedPage(0);
@@ -1099,8 +1103,7 @@ TEST_F(FPDFFormFillEmbedderTest, CheckReadOnlyInCheckbox) {
 }
 
 TEST_F(FPDFFormFillEmbedderTest, CheckReadOnlyInRadiobutton) {
-  EmbedderTestTimerHandlingDelegate delegate;
-  SetDelegate(&delegate);
+  SetOwnedDelegate<EmbedderTestTimerHandlingDelegate>();
 
   ASSERT_TRUE(OpenDocument("click_form.pdf"));
   ScopedPage page = LoadScopedPage(0);
@@ -1136,8 +1139,7 @@ TEST_F(FPDFFormFillEmbedderTest, CheckReadOnlyInRadiobutton) {
 #ifdef PDF_ENABLE_V8
 TEST_F(FPDFFormFillEmbedderTest, DisableJavaScript) {
   // Test that timers and intervals can't fire without JS.
-  EmbedderTestTimerHandlingDelegate delegate;
-  SetDelegate(&delegate);
+  auto& delegate = SetOwnedDelegate<EmbedderTestTimerHandlingDelegate>();
 
   ASSERT_TRUE(OpenDocumentWithoutJavaScript("bug_551248.pdf"));
   ScopedPage page = LoadScopedPage(0);
@@ -1164,8 +1166,7 @@ TEST_F(FPDFFormFillEmbedderTest, DisableJavaScript) {
 }
 
 TEST_F(FPDFFormFillEmbedderTest, DocumentAActions) {
-  EmbedderTestTimerHandlingDelegate delegate;
-  SetDelegate(&delegate);
+  auto& delegate = SetOwnedDelegate<EmbedderTestTimerHandlingDelegate>();
 
   ASSERT_TRUE(OpenDocument("document_aactions.pdf"));
   ScopedPage page = LoadScopedPage(0);
@@ -1187,8 +1188,7 @@ TEST_F(FPDFFormFillEmbedderTest, DocumentAActions) {
 }
 
 TEST_F(FPDFFormFillEmbedderTest, DocumentAActionsDisableJavaScript) {
-  EmbedderTestTimerHandlingDelegate delegate;
-  SetDelegate(&delegate);
+  auto& delegate = SetOwnedDelegate<EmbedderTestTimerHandlingDelegate>();
 
   ASSERT_TRUE(OpenDocumentWithoutJavaScript("document_aactions.pdf"));
   ScopedPage page = LoadScopedPage(0);
@@ -1207,8 +1207,7 @@ TEST_F(FPDFFormFillEmbedderTest, DocumentAActionsDisableJavaScript) {
 
 TEST_F(FPDFFormFillEmbedderTest, Bug551248) {
   // Test that timers fire once and intervals fire repeatedly.
-  EmbedderTestTimerHandlingDelegate delegate;
-  SetDelegate(&delegate);
+  auto& delegate = SetOwnedDelegate<EmbedderTestTimerHandlingDelegate>();
 
   ASSERT_TRUE(OpenDocument("bug_551248.pdf"));
   ScopedPage page = LoadScopedPage(0);
@@ -1258,8 +1257,7 @@ TEST_F(FPDFFormFillEmbedderTest, Bug551248) {
 
 TEST_F(FPDFFormFillEmbedderTest, Bug620428) {
   // Test that timers and intervals are cancelable.
-  EmbedderTestTimerHandlingDelegate delegate;
-  SetDelegate(&delegate);
+  auto& delegate = SetOwnedDelegate<EmbedderTestTimerHandlingDelegate>();
 
   ASSERT_TRUE(OpenDocument("bug_620428.pdf"));
   ScopedPage page = LoadScopedPage(0);
@@ -1274,8 +1272,7 @@ TEST_F(FPDFFormFillEmbedderTest, Bug620428) {
 
 TEST_F(FPDFFormFillEmbedderTest, Bug634394) {
   // Cancel timer inside timer callback.
-  EmbedderTestTimerHandlingDelegate delegate;
-  SetDelegate(&delegate);
+  auto& delegate = SetOwnedDelegate<EmbedderTestTimerHandlingDelegate>();
 
   ASSERT_TRUE(OpenDocument("bug_634394.pdf"));
   ScopedPage page = LoadScopedPage(0);
@@ -1295,8 +1292,7 @@ TEST_F(FPDFFormFillEmbedderTest, Bug634394) {
 }
 
 TEST_F(FPDFFormFillEmbedderTest, Bug634716) {
-  EmbedderTestTimerHandlingDelegate delegate;
-  SetDelegate(&delegate);
+  auto& delegate = SetOwnedDelegate<EmbedderTestTimerHandlingDelegate>();
 
   ASSERT_TRUE(OpenDocument("bug_634716.pdf"));
   ScopedPage page = LoadScopedPage(0);
@@ -1316,8 +1312,7 @@ TEST_F(FPDFFormFillEmbedderTest, Bug634716) {
 }
 
 TEST_F(FPDFFormFillEmbedderTest, Bug679649) {
-  EmbedderTestTimerHandlingDelegate delegate;
-  SetDelegate(&delegate);
+  auto& delegate = SetOwnedDelegate<EmbedderTestTimerHandlingDelegate>();
 
   ASSERT_TRUE(OpenDocument("bug_679649.pdf"));
   ScopedPage page = LoadScopedPage(0);
@@ -1332,8 +1327,7 @@ TEST_F(FPDFFormFillEmbedderTest, Bug679649) {
 }
 
 TEST_F(FPDFFormFillEmbedderTest, Bug707673) {
-  EmbedderTestTimerHandlingDelegate delegate;
-  SetDelegate(&delegate);
+  auto& delegate = SetOwnedDelegate<EmbedderTestTimerHandlingDelegate>();
 
   ASSERT_TRUE(OpenDocument("bug_707673.pdf"));
   ScopedPage page = LoadScopedPage(0);
@@ -1360,8 +1354,7 @@ TEST_F(FPDFFormFillEmbedderTest, Bug765384) {
 
 // Test passes if DCHECK() not hit.
 TEST_F(FPDFFormFillEmbedderTest, Bug1477093) {
-  EmbedderTestTimerHandlingDelegate delegate;
-  SetDelegate(&delegate);
+  auto& delegate = SetOwnedDelegate<EmbedderTestTimerHandlingDelegate>();
 
   ASSERT_TRUE(OpenDocument("bug_1477093.pdf"));
   ScopedPage page = LoadScopedPage(0);
@@ -1672,6 +1665,64 @@ TEST_F(FPDFFormFillEmbedderTest, SelectAllText) {
   EXPECT_EQ("Hello", GetPlatformString(buffer));
 }
 
+TEST_F(FPDFFormFillEmbedderTest,
+       SetTextDirectionUpdatesRenderingOfFocusedTextField) {
+  ASSERT_TRUE(OpenDocument("text_form.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+
+  ScopedFPDFAnnotation annot(FPDFPage_GetAnnot(page.get(), 0));
+  ASSERT_TRUE(annot);
+
+  // Focus the field and type "ABC"
+  EXPECT_TRUE(FORM_OnFocus(form_handle(), page.get(), 0, 120.0, 120.0));
+  constexpr auto kInput = std::to_array<uint32_t>({'A', 'B', 'C'});
+  for (uint32_t c : kInput) {
+    EXPECT_TRUE(FORM_OnChar(form_handle(), page.get(), c, 0));
+  }
+
+  EXPECT_EQ(FPDF_TEXTDIR_AUTO,
+            FORM_GetTextDirection(form_handle(), annot.get()));
+
+  // Change text direction to Right-to-Left (RTL).
+  EXPECT_TRUE(
+      FORM_SetTextDirection(form_handle(), annot.get(), FPDF_TEXTDIR_RTL));
+  EXPECT_EQ(FPDF_TEXTDIR_RTL,
+            FORM_GetTextDirection(form_handle(), annot.get()));
+
+  // Type 'D' and kill focus. This forces the form filler to flush its
+  // in-memory state and regenerate the PDF appearance stream with the new RTL
+  // layout.
+  EXPECT_TRUE(FORM_OnChar(form_handle(), page.get(), 'D', 0));
+  FORM_ForceToKillFocus(form_handle());
+  ScopedFPDFBitmap bitmap_rtl = RenderLoadedPage(page.get());
+
+  // Refocus the field and change text direction back to Left-to-Right (LTR).
+  EXPECT_TRUE(FORM_OnFocus(form_handle(), page.get(), 0, 120.0, 120.0));
+  EXPECT_TRUE(
+      FORM_SetTextDirection(form_handle(), annot.get(), FPDF_TEXTDIR_LTR));
+  EXPECT_EQ(FPDF_TEXTDIR_LTR,
+            FORM_GetTextDirection(form_handle(), annot.get()));
+
+  // Type 'E' and kill focus to flush the new LTR layout into the appearance
+  // stream.
+  EXPECT_TRUE(FORM_OnChar(form_handle(), page.get(), 'E', 0));
+  FORM_ForceToKillFocus(form_handle());
+  ScopedFPDFBitmap bitmap_ltr = RenderLoadedPage(page.get());
+
+  // Rendering should be visually different when the text direction changes.
+  EXPECT_NE(HashBitmap(bitmap_rtl.get()), HashBitmap(bitmap_ltr.get()));
+}
+
+TEST_F(FPDFFormFillTextFormEmbedderTest, FormTextFieldBiDiLiveEdit) {
+  constexpr auto kInput =
+      std::to_array<uint32_t>({'A', ' ', 0x05E9, ' ', 0x05DE, ' ', 'B'});
+  TypeCharactersIntoTextField(kInput, RegularFormBegin());
+
+  ScopedFPDFBitmap bitmap = RenderLoadedPage(page());
+  CompareBitmapWithExpectationSuffix(bitmap.get(), "bug_535730401");
+}
+
 TEST_F(FPDFFormFillTextFormEmbedderTest, GetSelectedTextEmptyAndBasicKeyboard) {
   // Test empty selection.
   EXPECT_EQ(FocusedFieldText(), "");
@@ -1744,6 +1795,15 @@ TEST_F(FPDFFormFillTextFormEmbedderTest, GetSelectedTextFragmentsMouse) {
   // Test selecting last character in backwards direction.
   SelectTextWithMouse(RegularFormEnd(), RegularFormAtX(186.0));
   EXPECT_EQ(Selection(), "L");
+}
+
+TEST_F(FPDFFormFillComboBoxFormEmbedderTest, FormComboBoxBiDiLiveEdit) {
+  constexpr auto kInput =
+      std::to_array<uint32_t>({'A', ' ', 0x05E9, ' ', 0x05DE, ' ', 'B'});
+  TypeCharactersIntoTextField(kInput, EditableFormBegin());
+
+  ScopedFPDFBitmap bitmap = RenderLoadedPage(page());
+  CompareBitmapWithExpectationSuffix(bitmap.get(), "bug_535730401_combobox");
 }
 
 TEST_F(FPDFFormFillComboBoxFormEmbedderTest,
@@ -2728,8 +2788,7 @@ TEST_F(FPDFFormFillTextFormEmbedderTest, DoubleClickInTextField) {
 }
 
 TEST_F(FPDFFormFillTextFormEmbedderTest, FocusAnnotationUpdateToEmbedder) {
-  testing::NiceMock<EmbedderTestMockDelegate> mock;
-  SetDelegate(&mock);
+  auto& mock = SetOwnedDelegate<testing::NiceMock<EmbedderTestMockDelegate>>();
   EXPECT_EQ(FocusedFieldText(), "");
 
 #ifdef PDF_ENABLE_XFA
@@ -2743,8 +2802,7 @@ TEST_F(FPDFFormFillTextFormEmbedderTest, FocusAnnotationUpdateToEmbedder) {
 
 TEST_F(FPDFFormFillTextFormEmbedderTestVersion2,
        FocusAnnotationUpdateToEmbedder) {
-  testing::NiceMock<EmbedderTestMockDelegate> mock;
-  SetDelegate(&mock);
+  auto& mock = SetOwnedDelegate<testing::NiceMock<EmbedderTestMockDelegate>>();
   EXPECT_EQ(FocusedFieldText(), "");
 
   EXPECT_CALL(mock, OnFocusChange(_, _, 0)).Times(1);
@@ -3505,11 +3563,9 @@ class FPDFFormFillActionUriTest : public EmbedderTest {
 };
 
 TEST_F(FPDFFormFillActionUriTest, ButtonActionInvokeTest) {
-  NiceMock<EmbedderTestMockDelegate> mock;
+  auto& mock = SetOwnedDelegate<NiceMock<EmbedderTestMockDelegate>>();
   // TODO(crbug.com/1028991): DoURIAction expect call should be 1.
   EXPECT_CALL(mock, DoURIAction(_)).Times(0);
-  SetDelegate(&mock);
-
   SetFocusOnNthAnnot(1);
 
   // Tab once from first form to go to button widget.
@@ -3521,7 +3577,7 @@ TEST_F(FPDFFormFillActionUriTest, ButtonActionInvokeTest) {
 }
 
 TEST_F(FPDFFormFillActionUriTest, LinkActionInvokeTest) {
-  NiceMock<EmbedderTestMockDelegate> mock;
+  auto& mock = SetOwnedDelegate<NiceMock<EmbedderTestMockDelegate>>();
   {
     InSequence sequence;
     const char kExpectedUri[] = "https://cs.chromium.org/";
@@ -3534,7 +3590,6 @@ TEST_F(FPDFFormFillActionUriTest, LinkActionInvokeTest) {
     EXPECT_CALL(mock, DoURIActionWithKeyboardModifier(_, _, _)).Times(0);
 #endif  // PDF_ENABLE_XFA
   }
-  SetDelegate(&mock);
   SetFocusOnNthAnnot(3);
   int modifier = 0;
   ASSERT_TRUE(FORM_OnKeyDown(form_handle(), page(), FWL_VKEY_Return, modifier));
@@ -3557,9 +3612,8 @@ TEST_F(FPDFFormFillActionUriTest, LinkActionInvokeTest) {
 }
 
 TEST_F(FPDFFormFillActionUriTest, InternalLinkActionInvokeTest) {
-  NiceMock<EmbedderTestMockDelegate> mock;
+  auto& mock = SetOwnedDelegate<NiceMock<EmbedderTestMockDelegate>>();
   EXPECT_CALL(mock, DoGoToAction(_, _, 1, _, _)).Times(12);
-  SetDelegate(&mock);
 
   SetFocusOnNthAnnot(4);
   int modifier = 0;
@@ -3610,7 +3664,7 @@ class FPDFFormFillActionUriTestVersion2 : public FPDFFormFillActionUriTest {
 };
 
 TEST_F(FPDFFormFillActionUriTestVersion2, LinkActionInvokeTest) {
-  NiceMock<EmbedderTestMockDelegate> mock;
+  auto& mock = SetOwnedDelegate<NiceMock<EmbedderTestMockDelegate>>();
   {
     InSequence sequence;
     EXPECT_CALL(mock, DoURIAction(_)).Times(0);
@@ -3624,7 +3678,6 @@ TEST_F(FPDFFormFillActionUriTestVersion2, LinkActionInvokeTest) {
     EXPECT_CALL(mock,
                 DoURIActionWithKeyboardModifier(_, StrEq(kExpectedUri), 3));
   }
-  SetDelegate(&mock);
   SetFocusOnNthAnnot(3);
   int modifier = 0;
   ASSERT_TRUE(FORM_OnKeyDown(form_handle(), page(), FWL_VKEY_Return, modifier));

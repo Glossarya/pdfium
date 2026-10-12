@@ -27,8 +27,8 @@ class CPDF_StreamAcc;
 struct DIB_COMP_DATA {
   float decode_min_;
   float decode_step_;
-  int color_key_min_;
-  int color_key_max_;
+  uint32_t color_key_min_;
+  uint32_t color_key_max_;
 };
 
 namespace fxcodec {
@@ -38,6 +38,9 @@ class ScanlineDecoder;
 
 constexpr size_t kHugeImageSize = 60000000;
 
+// Represents a device-independent bitmap parsed directly from a PDF image
+// stream. Handles image decoding, color space conversion, and masking (e.g.
+// color key masking).
 class CPDF_DIB final : public CFX_DIBBase {
  public:
   enum class LoadState : uint8_t { kFail, kSuccess, kContinue };
@@ -52,17 +55,18 @@ class CPDF_DIB final : public CFX_DIBBase {
   RetainPtr<CPDF_ColorSpace> GetColorSpace() const { return color_space_; }
   uint32_t GetMatteColor() const { return matte_color_; }
   bool IsJBigImage() const;
-  // EmbedPDF(decoded-image-store): the store keeps a JPX decode per
-  // resolution levels skipped.
-  bool IsJpxImage() const;
+  // EmbedPDF(decoded-image-store): whether a decode's size follows the
+  // resolution levels it skips: JPX, and DCT since upstream decodes JPEGs at
+  // a reduced size. The store keeps such a decode per levels skipped.
+  bool SkipsResolutionLevels() const;
 
-  // The JPX resolution levels a decode to `max_size_required` skips, for an
+  // The resolution levels a decode to `max_size_required` skips, for an
   // image `width` × `height` pixels; 0 when no size is required.
   static uint8_t ResolutionLevelsToSkip(int width,
                                         int height,
                                         const CFX_Size& max_size_required);
-  // The levels the last StartLoadDIBBase() computed. Only JPX decodes skip
-  // them.
+  // The levels the last StartLoadDIBBase() computed. Only the decodes
+  // SkipsResolutionLevels() names skip them.
   uint8_t resolution_levels_to_skip() const {
     return resolution_levels_to_skip_;
   }
@@ -109,7 +113,8 @@ class CPDF_DIB final : public CFX_DIBBase {
   void LoadPalette();
   LoadState CreateDecoder(uint8_t resolution_levels_to_skip);
   bool CreateDCTDecoder(pdfium::span<const uint8_t> src_span,
-                        const CPDF_Dictionary* pParams);
+                        const CPDF_Dictionary* pParams,
+                        uint8_t resolution_levels_to_skip);
   void TranslateScanline24bpp(pdfium::span<uint8_t> dest_scan,
                               pdfium::span<const uint8_t> src_scan) const;
   bool TranslateScanline24bppDefaultDecode(

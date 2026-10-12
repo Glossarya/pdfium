@@ -7,21 +7,37 @@
 #ifndef CORE_FXCODEC_BMP_CFX_BMPCONTEXT_H_
 #define CORE_FXCODEC_BMP_CFX_BMPCONTEXT_H_
 
-#include "core/fxcodec/bmp/bmp_decoder.h"
 #include "core/fxcodec/bmp/cfx_bmpdecompressor.h"
 #include "core/fxcodec/bmp/fx_bmp.h"
+#include "core/fxcodec/cfx_codec_memory.h"
 #include "core/fxcodec/progressive_decoder_context.h"
+#include "core/fxcrt/retain_ptr.h"
 #include "core/fxcrt/unowned_ptr.h"
 
 namespace fxcodec {
 
+class BmpDecoderDelegate;
+class CFX_DIBAttribute;
+
 class CFX_BmpContext final : public ProgressiveDecoderContext {
  public:
-  explicit CFX_BmpContext(BmpDecoder::Delegate* pDelegate);
+  explicit CFX_BmpContext(BmpDecoderDelegate* pDelegate);
   ~CFX_BmpContext() override;
 
+  // ProgressiveDecoderContext:
+  FX_FILESIZE GetAvailInput() const override;
+  void Input(RetainPtr<CFX_CodecMemory> codec_memory) override;
+  Status DecodeImage(size_t frame_index) override;
+
+  Status ReadHeader(int32_t* width,
+                    int32_t* height,
+                    bool* tb_flag,
+                    int32_t* components,
+                    pdfium::span<const FX_ARGB>* palette,
+                    CFX_DIBAttribute* attribute);
+
   CFX_BmpDecompressor bmp_;
-  UnownedPtr<BmpDecoder::Delegate> const delegate_;
+  UnownedPtr<BmpDecoderDelegate> const delegate_;
 };
 
 }  // namespace fxcodec

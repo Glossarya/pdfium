@@ -185,7 +185,8 @@ void AppendRedactLabelForRegion(CPDF_AnnotFontMap& map,
   CPVT_VariableText::Provider provider(&map);
   CPVT_VariableText vt(&provider);
   vt.SetPlateRect(region);
-  vt.SetAlignment(annot_dict->GetIntegerFor("Q"));
+  vt.SetAlignment(
+      CPVT_VariableText::ToAlignment(annot_dict->GetIntegerFor("Q")));
 
   const bool repeat = annot_dict->GetBooleanFor("Repeat", false);
   // A label shown once at auto-size (0) fits the region on one line: CPVT

@@ -106,9 +106,16 @@ uint32_t DecodeInlineStream(pdfium::span<const uint8_t> src_span,
         .bytes_consumed;
   }
   if (decoder == "DCTDecode") {
+    // DecodeAllScanlines() only walks the image to find where its stream ends;
+    // the decoded pixels are discarded and it is never drawn to a device, so
+    // there is no reduced target size to decode to. Pass scale_denom=1 (full
+    // size). This is not ideal -- a coarser decode would be faster, since the
+    // output is thrown away -- but it keeps this parsing path simple and avoids
+    // relying on reduced decoding consuming the exact same source bytes.
     std::unique_ptr<ScanlineDecoder> pDecoder = JpegModule::CreateDecoder(
         src_span, width, height, 0,
-        !pParam || pParam->GetIntegerFor("ColorTransform", 1));
+        !pParam || pParam->GetIntegerFor("ColorTransform", 1),
+        /*scale_denom=*/1);
     return DecodeAllScanlines(std::move(pDecoder));
   }
   if (decoder == "CCITTFaxDecode") {
@@ -127,7 +134,7 @@ uint32_t DecodeInlineStream(pdfium::span<const uint8_t> src_span,
     return RunLengthDecode(src_span).bytes_consumed;
   }
 #if defined(PDF_ENABLE_BROTLI)
-  if (decoder == "BrotliDecode") {
+  if (decoder == "BrotliDecode" && BrotliDecoder::GetBrotliEnabled()) {
     return BrotliDecoder::Decode(src_span, orig_size).bytes_consumed;
   }
 #endif

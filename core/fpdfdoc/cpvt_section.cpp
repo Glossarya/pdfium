@@ -9,11 +9,15 @@
 #include <algorithm>
 #include <array>
 #include <memory>
+#include <utility>
 
 #include "core/fpdfdoc/cpvt_variabletext.h"
 #include "core/fpdfdoc/cpvt_wordinfo.h"
+#include "core/fxcrt/cfx_bidi_resolver.h"
 #include "core/fxcrt/check.h"
 #include "core/fxcrt/compiler_specific.h"
+#include "core/fxcrt/containers/adapters.h"
+#include "core/fxcrt/notreached.h"
 #include "core/fxcrt/stl_util.h"
 
 namespace {
@@ -471,16 +475,16 @@ CPVT_FloatRect CPVT_Section::RearrangeCharArray() const {
   int32_t nStart = 0;
   CPVT_Section::Line* pLine = line_array_.front().get();
   switch (vt_->GetAlignment()) {
-    case 0:
+    case CPVT_VariableText::Alignment::kLeft:
       pLine->line_info_.fLineX = fNodeWidth * 0.5f;
       break;
-    case 1:
+    case CPVT_VariableText::Alignment::kCenter:
       nStart =
           (vt_->GetCharArray() - fxcrt::CollectionSize<int32_t>(word_array_)) /
           2;
       pLine->line_info_.fLineX = fNodeWidth * nStart - fNodeWidth * 0.5f;
       break;
-    case 2:
+    case CPVT_VariableText::Alignment::kRight:
       nStart =
           vt_->GetCharArray() - fxcrt::CollectionSize<int32_t>(word_array_);
       pLine->line_info_.fLineX = fNodeWidth * nStart - fNodeWidth * 0.5f;
@@ -677,52 +681,85 @@ CPVT_FloatRect CPVT_Section::SplitLines(bool bTypeset, float fFontSize) {
 }
 
 CPVT_FloatRect CPVT_Section::OutputLines(const CPVT_FloatRect& rect) const {
-  float fMinX;
   float fLineIndent = vt_->GetLineIndent();
   float fTypesetWidth = std::max(vt_->GetPlateWidth() - fLineIndent, 0.0f);
-  switch (vt_->GetAlignment()) {
-    default:
-    case 0:
-      fMinX = 0.0f;
-      break;
-    case 1:
-      fMinX = (fTypesetWidth - rect.Width()) * 0.5f;
-      break;
-    case 2:
-      fMinX = fTypesetWidth - rect.Width();
-      break;
-  }
+  CPVT_VariableText::Alignment alignment = vt_->GetAlignment();
+  auto get_alignment_offset = [alignment, fTypesetWidth](float line_width) {
+    switch (alignment) {
+      case CPVT_VariableText::Alignment::kLeft:
+        return 0.0f;
+      case CPVT_VariableText::Alignment::kCenter:
+        return (fTypesetWidth - line_width) * 0.5f;
+      case CPVT_VariableText::Alignment::kRight:
+        return fTypesetWidth - line_width;
+    }
+    NOTREACHED();
+  };
+
+  float fMinX = get_alignment_offset(rect.Width());
   float fMaxX = fMinX + rect.Width();
   float fMinY = 0.0f;
   float fMaxY = rect.Height();
 
-  float fPosX = 0.0f;
-  float fPosY = 0.0f;
-  for (const auto& line : line_array_) {
-    switch (vt_->GetAlignment()) {
-      default:
-      case 0:
-        fPosX = 0;
-        break;
-      case 1:
-        fPosX = (fTypesetWidth - line->line_info_.fLineWidth) * 0.5f;
-        break;
-      case 2:
-        fPosX = fTypesetWidth - line->line_info_.fLineWidth;
-        break;
+  std::unique_ptr<CFX_BidiResolver> bidi_resolver;
+  if (!word_array_.empty()) {
+    std::u16string paragraph_text;
+    paragraph_text.reserve(word_array_.size());
+    for (const std::unique_ptr<CPVT_WordInfo>& word : word_array_) {
+      paragraph_text.push_back(static_cast<char16_t>(word->Word));
     }
-    fPosX += fLineIndent;
+
+    bidi_resolver = CFX_BidiResolver::Create(std::move(paragraph_text),
+                                             vt_->GetTextDirection());
+  }
+
+  float fPosY = 0.0f;
+  for (const std::unique_ptr<CPVT_Section::Line>& line : line_array_) {
+    float fPosX =
+        get_alignment_offset(line->line_info_.fLineWidth) + fLineIndent;
     fPosY += vt_->GetLineLeading();
     fPosY += line->line_info_.fLineAscent;
 
     line->line_info_.fLineX = fPosX - fMinX;
     line->line_info_.fLineY = fPosY - fMinY;
-    pdfium::span<const std::unique_ptr<CPVT_WordInfo>> words = GetWordRangeSpan(
-        line->line_info_.nBeginWordIndex, line->line_info_.nEndWordIndex + 1);
-    for (const std::unique_ptr<CPVT_WordInfo>& word : words) {
-      word->fWordX = fPosX - fMinX;
-      word->fWordY = fPosY - fMinY;
-      fPosX += vt_->GetWordWidth(*word);
+
+    if (!bidi_resolver) {
+      fPosY -= line->line_info_.fLineDescent;
+      continue;
+    }
+
+    int32_t line_start = line->line_info_.nBeginWordIndex;
+    // `nEndWordIndex` is inclusive. Thus, `line_start == nEndWordIndex` implies
+    // a single-word line (length 1), except for the special case where both are
+    // -1 (representing an empty line), which also computes to length 1 but
+    // safely yields an empty span due to internal clamping in
+    // GetWordRangeIteratorPair().
+    int32_t line_length = line->line_info_.nEndWordIndex - line_start + 1;
+
+    auto position_word = [&fPosX, fMinX, fPosY, fMinY, this](
+                             CPVT_WordInfo& word, bool is_rtl) {
+      word.is_rtl = is_rtl;
+      word.fWordX = fPosX - fMinX;
+      word.fWordY = fPosY - fMinY;
+      fPosX += vt_->GetWordWidth(word);
+    };
+
+    std::vector<CFX_BidiResolver::ResolvedRun> visual_runs =
+        bidi_resolver->GetVisualRunsForLine(line_start, line_length);
+
+    for (const CFX_BidiResolver::ResolvedRun& run : visual_runs) {
+      pdfium::span<const std::unique_ptr<CPVT_WordInfo>> run_words =
+          GetWordRangeSpan(run.start, run.length);
+      if (run.is_rtl) {
+        for (const std::unique_ptr<CPVT_WordInfo>& word :
+             pdfium::Reversed(run_words)) {
+          position_word(*word, true);
+        }
+      } else {
+        for (const std::unique_ptr<CPVT_WordInfo>& word : run_words) {
+          position_word(*word, false);
+        }
+      }
     }
     fPosY -= line->line_info_.fLineDescent;
   }
@@ -758,9 +795,8 @@ CPVT_Section::WordRangeIteratorPair CPVT_Section::GetWordRangeIteratorPair(
 }
 
 pdfium::span<const std::unique_ptr<CPVT_WordInfo>>
-CPVT_Section::GetWordRangeSpan(int32_t begin_index, int32_t end_index) const {
-  WordRangeIteratorPair range =
-      GetWordRangeIteratorPair(begin_index, end_index);
+CPVT_Section::GetWordRangeSpan(int32_t start, int32_t length) const {
+  WordRangeIteratorPair range = GetWordRangeIteratorPair(start, start + length);
   // SAFETY: GetWordRangeIteratorPair() above returns valid iterators or
   // `word_array_.end()`.
   return UNSAFE_BUFFERS(pdfium::span<const std::unique_ptr<CPVT_WordInfo>>(

@@ -1593,10 +1593,9 @@ TEST_F(FPDFTextEmbedderTest, GetFontWeight) {
   // that is returned should be calculated from that (80*5 == 400).
   EXPECT_EQ(400, FPDFText_GetFontWeight(text_page.get(), 0));
 
-  // Using a /StemV value of 82, the estimate comes out to 410, even though
-  // /FontWeight is 400.
-  // TODO(crbug.com/42270423): Fix this the return value here.
-  EXPECT_EQ(410, FPDFText_GetFontWeight(text_page.get(), 1));
+  // Since the font specifies /FontWeight (400), it should be used instead of
+  // estimating from /StemV (82).
+  EXPECT_EQ(400, FPDFText_GetFontWeight(text_page.get(), 1));
 }
 
 TEST_F(FPDFTextEmbedderTest, GetTextRenderMode) {
@@ -2504,4 +2503,77 @@ TEST_F(FPDFTextEmbedderTest, Bug491516663) {
             FPDFText_GetText(textpage.get(), 0, std::size(buffer), buffer));
   EXPECT_THAT(pdfium::span(buffer).first<kHelloWorldTextSize>(),
               ElementsAreArray(kHelloWorldText));
+}
+
+TEST_F(FPDFTextEmbedderTest, ActualTextRtl) {
+  ASSERT_TRUE(OpenDocument("actual_text_rtl.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+
+  ScopedFPDFTextPage text_page(FPDFText_LoadPage(page.get()));
+  ASSERT_TRUE(text_page);
+
+  static constexpr auto kExpectedText = std::to_array<unsigned short>(
+      {'H', 'e', 'l', 'l', 'o', ' ', 'i', 's', ' ',
+       // שלום (logical order):
+       0x05e9, 0x05dc, 0x05d5, 0x05dd, '\r', '\n',
+       // Second line:
+       'W', 'a', 't', 'e', 'r', ' ', 'i', 's', ' ', 'w', 'a', 't', 'e', 'r',
+       ' ',
+       // מים (logical order):
+       0x05de, 0x05d9, 0x05dd, '\r', '\n',
+       // Third line:
+       'M', 'i', 'r', 'r', 'o', 'r', 'e', 'd', ' ',
+       // ם:
+       0x05dd, ']', '(', '\r', '\n',
+       // Pure RTL case:
+       // שלום (logical order):
+       0x05e9, 0x05dc, 0x05d5, 0x05dd, '\r', '\n',
+       // Predominantly RTL case:
+       // שלום (logical order):
+       0x05e9, 0x05dc, 0x05d5, 0x05dd, ' ', 'H', 'a', ' ',
+       // מים (logical order):
+       0x05de, 0x05d9, 0x05dd, '\r', '\n',
+       // Tie-Breaker case:
+       'H', 'e', ' ',
+       // שלום (logical order):
+       0x05e9, 0x05dc, 0x05d5, 0x05dd, '\r', '\n',
+       // Pure LTR text in /ActualText case:
+       'P', 'u', 'r', 'e', ' ', 'p', 'd', 'f', '\r', '\n',
+       // RTL followed by LTR in /ActualText case:
+       'H', 'i', ' ',
+       // שלום (logical order):
+       0x05e9, 0x05dc, 0x05d5, 0x05dd, ' ', 'h', 'i', '\r', '\n',
+       // LTR followed by RTL in /ActualText case:
+       'H', 'o', ' ', 'h', 'o', ' ',
+       // שלום (logical order):
+       0x05e9, 0x05dc, 0x05d5, 0x05dd, '\r', '\n',
+       // RTL, LTR, RTL in /ActualText case:
+       'H', 'u', ' ',
+       // שלום (logical order):
+       0x05e9, 0x05dc, 0x05d5, 0x05dd, ' ', 'H', 'a', ' ',
+       // מים (logical order):
+       0x05de, 0x05d9, 0x05dd, '\r', '\n',
+       // LTR, RTL, LTR in /ActualText case:
+       'N', 'a', ' ', 'H', 'i', ' ',
+       // שלום (logical order):
+       0x05e9, 0x05dc, 0x05d5, 0x05dd, ' ', 'G', 'o', '\r', '\n',
+       // Pure LTR /ActualText mixed with surrounding RTL text segments case:
+       // שלום (logical order):
+       0x05e9, 0x05dc, 0x05d5, 0x05dd, ' ', 'N', 'e', ' ', 'L', 'T', 'R', ' ',
+       // מים (logical order):
+       0x05de, 0x05d9, 0x05dd, '\r', '\n',
+       // Literal RTL text followed by RTL /ActualText case:
+       // TODO(crbug.com/525087036): Should be in logical order.
+       // םולש (/ActualText):
+       0x05dd, 0x05d5, 0x05dc, 0x05e9,
+       // בן (literal text):
+       0x05d1, 0x05df, '\0'});
+  static constexpr int kExpectedTextSize = std::size(kExpectedText);
+
+  unsigned short buffer[256] = {};
+  EXPECT_EQ(kExpectedTextSize,
+            FPDFText_GetText(text_page.get(), 0, std::size(buffer), buffer));
+  EXPECT_THAT(pdfium::span(buffer).first<kExpectedTextSize>(),
+              ElementsAreArray(kExpectedText));
 }

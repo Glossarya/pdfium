@@ -31,6 +31,7 @@
 #include "core/fpdfdoc/cpdf_formcontrol.h"
 #include "core/fpdfdoc/cpdf_icon.h"
 #include "core/fpdfdoc/cpvt_word.h"
+#include "core/fxcrt/cfx_bidi_resolver.h"
 #include "core/fxcrt/fx_string_wrappers.h"
 #include "core/fxcrt/notreached.h"
 #include "core/fxcrt/numerics/safe_conversions.h"
@@ -653,8 +654,9 @@ ByteString GetEditAppStream(CPWL_EditImpl* pEdit,
     CPVT_WordPlace place = pIterator->GetAt();
     CPVT_Word word;
     bool has_word = pIterator->GetWord(word);
+    bool is_rtl = has_word && word.is_rtl();
 
-    if (use_continuous_formatting) {
+    if (use_continuous_formatting && !is_rtl) {
       if (place.LineCmp(oldplace) != 0) {
         if (!sWords.IsEmpty()) {
           sEditStream << GetWordRenderString(sWords.AsStringView());
@@ -665,14 +667,22 @@ ByteString GetEditAppStream(CPWL_EditImpl* pEdit,
           ptNew = word.location() + ptOffset;
         } else {
           CPVT_Line line;
-          pIterator->GetLine(line);
-          ptNew = line.ptLine + ptOffset;
+          if (pIterator->GetLine(line)) {
+            ptNew = line.ptLine + ptOffset;
+          }
         }
 
         if (ptNew != ptOld) {
           WritePoint(sEditStream, ptNew - ptOld)
               << " " << kMoveTextPositionOperator << "\n";
 
+          ptOld = ptNew;
+        }
+      } else if (sWords.IsEmpty() && has_word) {
+        ptNew = word.location() + ptOffset;
+        if (ptNew != ptOld) {
+          WritePoint(sEditStream, ptNew - ptOld)
+              << " " << kMoveTextPositionOperator << "\n";
           ptOld = ptNew;
         }
       }
@@ -691,8 +701,12 @@ ByteString GetEditAppStream(CPWL_EditImpl* pEdit,
 
         sWords += pEdit->GetPDFWordString(nCurFontIndex, word.word(), SubWord);
       }
-      oldplace = place;
     } else {
+      if (!sWords.IsEmpty()) {
+        sEditStream << GetWordRenderString(sWords.AsStringView());
+        sWords.clear();
+      }
+
       if (has_word) {
         ptNew = word.location() + ptOffset;
 
@@ -712,6 +726,7 @@ ByteString GetEditAppStream(CPWL_EditImpl* pEdit,
                 .AsStringView());
       }
     }
+    oldplace = place;
   }
 
   if (!sWords.IsEmpty()) {
@@ -1547,6 +1562,7 @@ void CPDFSDK_AppStream::SetAsComboBox(std::optional<WideString> sValue) {
   }
 
   pEdit->Initialize();
+  pEdit->SetTextDirection(widget_->GetTextDirection());
   if (sValue.has_value()) {
     pEdit->SetText(sValue.value());
   } else {
@@ -1603,6 +1619,7 @@ void CPDFSDK_AppStream::SetAsListBox() {
   float fFontSize = widget_->GetFontSize();
   pEdit->SetFontSize(FXSYS_IsFloatZero(fFontSize) ? 12.0f : fFontSize);
   pEdit->Initialize();
+  pEdit->SetTextDirection(widget_->GetTextDirection());
 
   fxcrt::ostringstream sList;
   float fy = rcClient.top;
@@ -1731,6 +1748,7 @@ void CPDFSDK_AppStream::SetAsTextField(std::optional<WideString> sValue) {
   }
 
   pEdit->Initialize();
+  pEdit->SetTextDirection(widget_->GetTextDirection());
   pEdit->SetText(sValue.value_or(pField->GetValue()));
   pEdit->Paint();
 

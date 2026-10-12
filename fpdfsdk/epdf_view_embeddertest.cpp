@@ -527,14 +527,16 @@ TEST_F(EPDFViewEmbedderTest, DecodedImageStoreRendersAsNewDecodes) {
     std::vector<int> widths;
   };
   // The huge image, which a store keeps decoded in full; a masked and an
-  // inverted image; a JPX image, whose widths make it decode at several
-  // resolution levels and come back to them; and images of PDFium's own
-  // tests. The render baselines cover the huge image at more sizes, and drawn
-  // three times on one page.
+  // inverted image; a JPX image and a JPEG one, whose widths make them decode
+  // at several resolution levels and come back to them; and images of
+  // PDFium's own tests. The render baselines cover the huge image at more
+  // sizes, and drawn three times on one page.
   const Case kCases[] = {
       {"embedpdf_decoded_images.pdf", 0, {300, 150}},
       {"embedpdf_decoded_images.pdf", 2, {1400, 150, 600}},
       {"embedpdf_jpx_resolution_levels.pdf", 0, {1400, 150, 600, 1400, 150}},
+      {"jpeg_reduced_size.pdf", 0, {1400, 150, 600, 1400, 150}},
+      {"jpeg_reduced_size.pdf", 0, {150, 1400, 600, 150, 1400}},
       {"embedded_images.pdf", 0, {1400, 150, 600}},
       {"form_object_with_image.pdf", 0, {1400, 150, 600}},
       {"jpx_lzw.pdf", 0, {1400, 150, 600}},

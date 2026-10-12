@@ -178,7 +178,7 @@ bool IsRightToLeft(const CPDF_TextObject& text_obj) {
       str += wc;
     }
   }
-  return CFX_BidiString(str).OverallDirection() ==
+  return CFX_BidiString(str, /*auto_order=*/true).OverallDirection() ==
          CFX_BidiChar::Direction::kRight;
 }
 
@@ -875,10 +875,7 @@ void CPDF_TextPage::ProcessObject() {
       ProcessFormObject(page_obj->AsForm(), CFX_Matrix());
     }
   }
-  for (const auto& obj : text_objects_) {
-    ProcessTextObject(obj);
-  }
-
+  ProcessTransformedTextObjects();
   text_objects_.clear();
   CloseTempLine();
 }
@@ -954,7 +951,7 @@ void CPDF_TextPage::CloseTempLine() {
     }
     prev_char_is_space = true;
   }
-  CFX_BidiString bidi(str);
+  CFX_BidiString bidi(str, /*auto_order=*/false);
   if (rtl_) {
     bidi.SetOverallDirectionRight();
   }
@@ -967,8 +964,19 @@ void CPDF_TextPage::CloseTempLine() {
         (segment.direction == CFX_BidiChar::Direction::kNeutral &&
          current_direction == CFX_BidiChar::Direction::kRight)) {
       current_direction = CFX_BidiChar::Direction::kRight;
-      for (size_t i = segment.count; i > 0; --i) {
-        AddCharInfo(str_span[i - 1], char_span[i - 1], /*is_rtl=*/true);
+      const bool is_actual_text =
+          !char_span.empty() &&
+          char_span[0].char_type() == CharType::kActualText;
+      if (is_actual_text) {
+        // Since /ActualText strings are already in logical order, pass their
+        // characters in forward order instead of reversing them.
+        for (auto [c, info] : fxcrt::Zip(str_span, char_span)) {
+          AddCharInfo(c, info, /*is_rtl=*/true);
+        }
+      } else {
+        for (size_t i = segment.count; i > 0; --i) {
+          AddCharInfo(str_span[i - 1], char_span[i - 1], /*is_rtl=*/true);
+        }
       }
     } else {
       if (segment.direction != CFX_BidiChar::Direction::kLeftWeak) {
@@ -992,11 +1000,10 @@ void CPDF_TextPage::ProcessTextObject(
     return;
   }
 
-  size_t count = text_objects_.size();
   TransformedTextObject new_obj;
   new_obj.text_obj_ = text_obj;
   new_obj.form_matrix_ = form_matrix;
-  if (count == 0) {
+  if (text_objects_.empty()) {
     text_objects_.push_back(new_obj);
     return;
   }
@@ -1004,7 +1011,8 @@ void CPDF_TextPage::ProcessTextObject(
     return;
   }
 
-  TransformedTextObject prev_obj = text_objects_[count - 1];
+  // Explicitly copy in case `text_objects_` gets cleared.
+  TransformedTextObject prev_obj = text_objects_.back();
   size_t nItem = prev_obj.text_obj_->CountItems();
   if (nItem == 0) {
     return;
@@ -1032,15 +1040,13 @@ void CPDF_TextPage::ProcessTextObject(
   CFX_PointF this_pos =
       display_matrix_.Transform(form_matrix.Transform(text_obj->GetPos()));
   if (fabs(this_pos.y - prev_pos.y) > threshold * 2) {
-    for (size_t i = 0; i < count; ++i) {
-      ProcessTextObject(text_objects_[i]);
-    }
+    ProcessTransformedTextObjects();
     text_objects_.clear();
     text_objects_.push_back(new_obj);
     return;
   }
 
-  for (size_t i = count; i > 0; --i) {
+  for (size_t i = text_objects_.size(); i > 0; --i) {
     TransformedTextObject prev_text_obj = text_objects_[i - 1];
     CFX_PointF new_prev_pos =
         display_matrix_.Transform(prev_text_obj.form_matrix_.Transform(
@@ -1137,14 +1143,7 @@ void CPDF_TextPage::ProcessMarkedContent(const TransformedTextObject& obj) {
   }
 
   RetainPtr<CPDF_Font> const font = text_obj->GetFont();
-  // EmbedPDF(bug-fix): an ActualText string is the logical text. The line is
-  // closed as if its characters were in visual order (CloseTempLine reverses
-  // right-to-left segments), so a right-to-left string is appended in
-  // visual order here; otherwise every RTL ActualText (Acrobat writes one
-  // around each shaped Hebrew or Arabic run) extracted backwards.
-  const size_t length = actual_text.GetLength();
-  for (size_t v = 0; v < length; ++v) {
-    const size_t k = is_rtl ? length - 1 - v : v;
+  for (size_t k = 0; k < actual_text.GetLength(); ++k) {
     wchar_t wc = actual_text[k];
     if (wc <= 0x80 && !isprint(wc)) {
       wc = 0x20;
@@ -1157,8 +1156,9 @@ void CPDF_TextPage::ProcessMarkedContent(const TransformedTextObject& obj) {
     char_box.Translate(k * step, 0);
     temp_text_buf_.AppendChar(wc);
     // EmbedPDF(text-geometry): not a real glyph, so no local origin.
-    temp_char_list_.push_back(CharInfo::Synthetic(
-        CharType::kPiece, wc, text_obj->GetPos(), char_box, matrix, text_obj));
+    temp_char_list_.push_back(
+        CharInfo::Synthetic(CharType::kActualText, wc, text_obj->GetPos(),
+                            char_box, matrix, text_obj));
   }
 }
 
@@ -1173,73 +1173,70 @@ void CPDF_TextPage::FindPreviousTextObject() {
   }
 }
 
-void CPDF_TextPage::SwapTempTextBuf(size_t iCharListStartAppend,
-                                    size_t iBufStartAppend) {
+void CPDF_TextPage::ReverseTempTextBufs(size_t char_list_index,
+                                        size_t buf_index) {
   DCHECK(!temp_char_list_.empty());
-  if (iCharListStartAppend < temp_char_list_.size()) {
-    auto fwd = temp_char_list_.begin() + iCharListStartAppend;
-    auto rev = temp_char_list_.end() - 1;
-    for (; fwd < rev; ++fwd, --rev) {
-      std::swap(*fwd, *rev);
-    }
+  if (char_list_index < temp_char_list_.size()) {
+    pdfium::span<CharInfo> reverse_span =
+        pdfium::span(temp_char_list_).subspan(char_list_index);
+    std::ranges::reverse(reverse_span);
   }
   pdfium::span<wchar_t> temp_span = temp_text_buf_.GetWideSpan();
   DCHECK(!temp_span.empty());
-  if (iBufStartAppend < temp_span.size()) {
-    pdfium::span<wchar_t> reverse_span = temp_span.subspan(iBufStartAppend);
-    std::reverse(reverse_span.begin(), reverse_span.end());
+  if (buf_index < temp_span.size()) {
+    pdfium::span<wchar_t> reverse_span = temp_span.subspan(buf_index);
+    std::ranges::reverse(reverse_span);
   }
 }
 
-void CPDF_TextPage::ProcessTextObject(const TransformedTextObject& obj) {
-  CPDF_TextObject* const text_obj = obj.text_obj_;
-  if (fabs(text_obj->GetRect().Width()) < kSizeEpsilon) {
-    return;
-  }
+void CPDF_TextPage::ProcessTransformedTextObjects() {
+  for (const TransformedTextObject& obj : text_objects_) {
+    CPDF_TextObject* const text_obj = obj.text_obj_;
+    if (fabs(text_obj->GetRect().Width()) < kSizeEpsilon) {
+      continue;
+    }
 
-  const CFX_Matrix form_matrix = obj.form_matrix_;
-  const MarkedContentState ePreMKC = PreMarkedContent(text_obj);
-  if (ePreMKC == MarkedContentState::kDone) {
-    prev_text_obj_ = text_obj;
-    prev_matrix_ = form_matrix;
-    return;
-  }
+    const CFX_Matrix& form_matrix = obj.form_matrix_;
+    const MarkedContentState ePreMKC = PreMarkedContent(text_obj);
+    if (ePreMKC == MarkedContentState::kDone) {
+      prev_text_obj_ = text_obj;
+      prev_matrix_ = form_matrix;
+      continue;
+    }
 
-  if (prev_text_obj_) {
-    GenerateCharacter type = ProcessInsertObject(text_obj, form_matrix);
-    if (type == GenerateCharacter::kLineBreak) {
-      curline_rect_ = text_obj->GetRect();
+    if (prev_text_obj_) {
+      GenerateCharacter type = ProcessInsertObject(text_obj, form_matrix);
+      if (type == GenerateCharacter::kLineBreak) {
+        curline_rect_ = text_obj->GetRect();
+      } else {
+        curline_rect_.Union(text_obj->GetRect());
+      }
+
+      if (!ProcessGenerateCharacter(type, text_obj, form_matrix)) {
+        continue;
+      }
     } else {
-      curline_rect_.Union(text_obj->GetRect());
+      curline_rect_ = text_obj->GetRect();
     }
 
-    if (!ProcessGenerateCharacter(type, text_obj, form_matrix)) {
-      return;
+    if (ePreMKC == MarkedContentState::kDelay) {
+      ProcessMarkedContent(obj);
+      prev_text_obj_ = text_obj;
+      prev_matrix_ = form_matrix;
+      continue;
     }
-  } else {
-    curline_rect_ = text_obj->GetRect();
-  }
 
-  if (ePreMKC == MarkedContentState::kDelay) {
-    ProcessMarkedContent(obj);
     prev_text_obj_ = text_obj;
     prev_matrix_ = form_matrix;
-    return;
-  }
 
-  prev_text_obj_ = text_obj;
-  prev_matrix_ = form_matrix;
+    const CFX_Matrix matrix = text_obj->GetTextMatrix() * form_matrix;
+    // Save these before ProcessTextObjectItems() modifies the containers.
+    const size_t orig_char_list_index = temp_char_list_.size();
+    const size_t orig_buf_index = temp_text_buf_.GetLength();
 
-  const bool is_rtl = IsRightToLeft(*text_obj);
-  const CFX_Matrix matrix = text_obj->GetTextMatrix() * form_matrix;
-  const bool is_bidi_and_mirror_inverse =
-      is_rtl && (matrix.a * matrix.d - matrix.b * matrix.c) < 0;
-  const size_t iBufStartAppend = temp_text_buf_.GetLength();
-  const size_t iCharListStartAppend = temp_char_list_.size();
-
-  ProcessTextObjectItems(text_obj, form_matrix, matrix);
-  if (is_bidi_and_mirror_inverse) {
-    SwapTempTextBuf(iCharListStartAppend, iBufStartAppend);
+    if (ProcessTextObjectItems(text_obj, form_matrix, matrix)) {
+      ReverseTempTextBufs(orig_char_list_index, orig_buf_index);
+    }
   }
 }
 
@@ -1300,7 +1297,9 @@ bool CPDF_TextPage::IsHyphen(wchar_t current_char) const {
   }
 
   const CharInfo* prev_char_info = GetPrevCharInfo();
-  return prev_char_info && prev_char_info->char_type() == CharType::kPiece &&
+  return prev_char_info &&
+         (prev_char_info->char_type() == CharType::kPiece ||
+          prev_char_info->char_type() == CharType::kActualText) &&
          IsHyphenCode(prev_char_info->unicode());
 }
 
@@ -1315,9 +1314,9 @@ CPDF_TextPage::GenerateCharacter CPDF_TextPage::ProcessInsertObject(
     const CPDF_TextObject* text_obj,
     const CFX_Matrix& form_matrix) {
   FindPreviousTextObject();
-  TextOrientation WritingMode = GetTextObjectWritingMode(text_obj);
-  if (WritingMode == TextOrientation::kUnknown) {
-    WritingMode = GetTextObjectWritingMode(prev_text_obj_);
+  TextOrientation writing_mode = GetTextObjectWritingMode(text_obj);
+  if (writing_mode == TextOrientation::kUnknown) {
+    writing_mode = GetTextObjectWritingMode(prev_text_obj_);
   }
 
   size_t nItem = prev_text_obj_->CountItems();
@@ -1325,7 +1324,7 @@ CPDF_TextPage::GenerateCharacter CPDF_TextPage::ProcessInsertObject(
     return GenerateCharacter::kNone;
   }
 
-  CPDF_TextObject::Item PrevItem = prev_text_obj_->GetItemInfo(nItem - 1);
+  CPDF_TextObject::Item prev_item = prev_text_obj_->GetItemInfo(nItem - 1);
   CPDF_TextObject::Item item = text_obj->GetItemInfo(0);
   const CFX_FloatRect& this_rect = text_obj->GetRect();
   const CFX_FloatRect& prev_rect = prev_text_obj_->GetRect();
@@ -1336,12 +1335,12 @@ CPDF_TextPage::GenerateCharacter CPDF_TextPage::ProcessInsertObject(
   }
 
   wchar_t current_char = unicode.Front();
-  if (WritingMode == TextOrientation::kHorizontal) {
+  if (writing_mode == TextOrientation::kHorizontal) {
     if (EndHorizontalLine(this_rect, prev_rect)) {
       return IsHyphen(current_char) ? GenerateCharacter::kHyphen
                                     : GenerateCharacter::kLineBreak;
     }
-  } else if (WritingMode == TextOrientation::kVertical) {
+  } else if (writing_mode == TextOrientation::kVertical) {
     if (EndVerticalLine(this_rect, prev_rect, curline_rect_,
                         text_obj->GetFontSize(),
                         prev_text_obj_->GetFontSize())) {
@@ -1350,9 +1349,9 @@ CPDF_TextPage::GenerateCharacter CPDF_TextPage::ProcessInsertObject(
     }
   }
 
-  float last_pos = PrevItem.origin_.x;
+  float last_pos = prev_item.origin_.x;
   int nLastWidth =
-      GetCharWidth(PrevItem.char_code_, prev_text_obj_->GetFont().Get());
+      GetCharWidth(prev_item.char_code_, prev_text_obj_->GetFont().Get());
   float last_width = nLastWidth * prev_text_obj_->GetFontSize() / 1000;
   last_width = fabs(last_width);
   int nThisWidth = GetCharWidth(item.char_code_, text_obj->GetFont().Get());
@@ -1360,16 +1359,16 @@ CPDF_TextPage::GenerateCharacter CPDF_TextPage::ProcessInsertObject(
   float threshold = std::max(last_width, this_width) / 4;
 
   CFX_Matrix prev_matrix = prev_text_obj_->GetTextMatrix() * prev_matrix_;
-  CFX_Matrix prev_reverse = prev_matrix.GetInverse();
+  CFX_Matrix prev_matrix_inverse = prev_matrix.GetInverse();
 
   CFX_PointF pos =
-      prev_reverse.Transform(form_matrix.Transform(text_obj->GetPos()));
+      prev_matrix_inverse.Transform(form_matrix.Transform(text_obj->GetPos()));
   if (last_width < this_width) {
-    threshold = prev_reverse.TransformDistance(threshold);
+    threshold = prev_matrix_inverse.TransformDistance(threshold);
   }
 
   bool is_newline = false;
-  if (WritingMode == TextOrientation::kHorizontal) {
+  if (writing_mode == TextOrientation::kHorizontal) {
     CFX_FloatRect rect = prev_text_obj_->GetRect();
     float rect_height = rect.Height();
     rect.Normalize();
@@ -1378,9 +1377,9 @@ CPDF_TextPage::GenerateCharacter CPDF_TextPage::ProcessInsertObject(
          (fabs(pos.y) >= 1 || fabs(pos.y) > fabs(pos.x)))) {
       is_newline = true;
       if (nItem > 1) {
-        CPDF_TextObject::Item tempItem = prev_text_obj_->GetItemInfo(0);
+        CPDF_TextObject::Item first_item = prev_text_obj_->GetItemInfo(0);
         CFX_Matrix m = prev_text_obj_->GetTextMatrix();
-        if (PrevItem.origin_.x > tempItem.origin_.x &&
+        if (prev_item.origin_.x > first_item.origin_.x &&
             display_matrix_.a > 0.9 && display_matrix_.b < 0.1 &&
             display_matrix_.c < 0.1 && display_matrix_.d < -0.9 && m.b < 0.1 &&
             m.c < 0.1) {
@@ -1413,10 +1412,9 @@ CPDF_TextPage::GenerateCharacter CPDF_TextPage::ProcessInsertObject(
     return GenerateCharacter::kNone;
   }
 
-  WideString PrevStr =
-      prev_text_obj_->GetFont()->UnicodeFromCharCode(PrevItem.char_code_);
-  wchar_t preChar = PrevStr.Back();
-  if (preChar == L' ') {
+  WideString prev_str =
+      prev_text_obj_->GetFont()->UnicodeFromCharCode(prev_item.char_code_);
+  if (prev_str.Back() == L' ') {
     return GenerateCharacter::kNone;
   }
 
@@ -1428,7 +1426,7 @@ CPDF_TextPage::GenerateCharacter CPDF_TextPage::ProcessInsertObject(
   } else {
     threshold2 *= fabs(text_obj->GetFontSize());
     threshold2 = matrix.TransformDistance(threshold2);
-    threshold2 = prev_reverse.TransformDistance(threshold2);
+    threshold2 = prev_matrix_inverse.TransformDistance(threshold2);
   }
   threshold2 /= 1000;
   if ((threshold2 < 1.4881 && threshold2 > 1.4879) ||
@@ -1485,7 +1483,7 @@ bool CPDF_TextPage::ProcessGenerateCharacter(GenerateCharacter type,
   NOTREACHED();
 }
 
-void CPDF_TextPage::ProcessTextObjectItems(CPDF_TextObject* text_object,
+bool CPDF_TextPage::ProcessTextObjectItems(CPDF_TextObject* text_object,
                                            const CFX_Matrix& form_matrix,
                                            const CFX_Matrix& matrix) {
   const float base_space = CalculateBaseSpace(text_object, matrix) +
@@ -1556,12 +1554,17 @@ void CPDF_TextPage::ProcessTextObjectItems(CPDF_TextObject* text_object,
         kTextCharRatioGapDelta * text_object->GetFontSize());
     for (int n = fxcrt::CollectionSize<int>(temp_char_list_);
          n > fxcrt::CollectionSize<int>(temp_char_list_) - count; --n) {
-      const CharInfo& charinfo1 = temp_char_list_[n - 1];
-      CFX_PointF diff = charinfo1.origin() - charinfo.origin();
-      if (charinfo1.char_code() == charinfo.char_code() &&
-          charinfo1.text_object()->GetFont() ==
-              charinfo.text_object()->GetFont() &&
-          fabs(diff.x) < threshold && fabs(diff.y) < threshold) {
+      const CharInfo& candidate_charinfo = temp_char_list_[n - 1];
+      if (candidate_charinfo.char_code() != charinfo.char_code()) {
+        continue;
+      }
+      if (!candidate_charinfo.text_object() ||
+          candidate_charinfo.text_object()->GetFont() !=
+              charinfo.text_object()->GetFont()) {
+        continue;
+      }
+      CFX_PointF diff = candidate_charinfo.origin() - charinfo.origin();
+      if (fabs(diff.x) < threshold && fabs(diff.y) < threshold) {
         add_unicode = false;
         break;
       }
@@ -1580,6 +1583,10 @@ void CPDF_TextPage::ProcessTextObjectItems(CPDF_TextObject* text_object,
       }
     }
   }
+  // Tell the caller to reverse the temporary text buffers if RTL text has a
+  // mirrored matrix (determinant < 0).
+  const bool is_rtl = IsRightToLeft(*text_object);
+  return is_rtl && (matrix.a * matrix.d - matrix.b * matrix.c) < 0;
 }
 
 bool CPDF_TextPage::IsSameTextObject(CPDF_TextObject* text_obj1,

@@ -3,6 +3,7 @@
 
 #include "public/epdf_redact.h"
 
+#include <cstdlib>
 #include <functional>
 #include <memory>
 #include <set>
@@ -256,10 +257,108 @@ constexpr char kCheckerJbig2[] =
     "bff8410410410410417ff86104104104105ffc20820820820820bffc30820820"
     "82082ffe0020020000000231000100000000";
 
-// A 300 x 300 page drawing `image` (a 20 x 10 image's stream object) at
-// x 50..250, y 100..200 after `before`, with `more` objects from 6 on.
-// Rendered at 600 x 600, a sample is 20 pixels: the image is x 100..500,
-// y 200..400, and a mark over x 50..90 covers its first four columns.
+// A 40 x 20 gray baseline JPEG (JFIF), in hex.
+constexpr char kGrayJpeg[] =
+    "FFD8FFE000104A46494600010100000100010000FFDB00430008060607060508"
+    "0707070909080A0C140D0C0B0B0C1912130F141D1A1F1E1D1A1C1C20242E2720"
+    "222C231C1C2837292C30313434341F27393D38323C2E333432FFC0000B080014"
+    "002801011100FFC4001F00000105010101010101000000000000000001020304"
+    "05060708090A0BFFC400B5100002010303020403050504040000017D01020300"
+    "041105122131410613516107227114328191A1082342B1C11552D1F024336272"
+    "82090A161718191A25262728292A3435363738393A434445464748494A535455"
+    "565758595A636465666768696A737475767778797A838485868788898A929394"
+    "95969798999AA2A3A4A5A6A7A8A9AAB2B3B4B5B6B7B8B9BAC2C3C4C5C6C7C8C9"
+    "CAD2D3D4D5D6D7D8D9DAE1E2E3E4E5E6E7E8E9EAF1F2F3F4F5F6F7F8F9FAFFDA"
+    "0008010100003F00E652DBEC7DB7EEFC318FFF005D4E96DF63EDBF77E18C5584"
+    "B6FB1F6DFBBF0C63FF00D75612DBEC7DB7EEFC318FFF005D584B6FB1F6DFBFF0"
+    "C62ABA5B7D8FB6FDDF8631FF00EBAB096DF63EDBF77E18C7FF00AEAC25B7D8FB"
+    "6FDDF863153A5B7D8FB6FDDF86315612DBEC7DB7EEFC318FFF005D54D3D17E7E"
+    "3D2AC69F1AFCFC7A558D3E35F9F8F4A9F4F45F9F8F4FEB5634F8D7E7E3D2BFFF"
+    "D9";
+
+// A 40 x 20 RGB JPEG, YCbCr 4:2:0 (JFIF), in hex.
+constexpr char kColorJpeg[] =
+    "FFD8FFE000104A46494600010100000100010000FFDB00430008060607060508"
+    "0707070909080A0C140D0C0B0B0C1912130F141D1A1F1E1D1A1C1C20242E2720"
+    "222C231C1C2837292C30313434341F27393D38323C2E333432FFDB0043010809"
+    "090C0B0C180D0D1832211C213232323232323232323232323232323232323232"
+    "323232323232323232323232323232323232323232323232323232323232FFC0"
+    "0011080014002803012200021101031101FFC4001F0000010501010101010100"
+    "000000000000000102030405060708090A0BFFC400B510000201030302040305"
+    "0504040000017D01020300041105122131410613516107227114328191A10823"
+    "42B1C11552D1F02433627282090A161718191A25262728292A3435363738393A"
+    "434445464748494A535455565758595A636465666768696A737475767778797A"
+    "838485868788898A92939495969798999AA2A3A4A5A6A7A8A9AAB2B3B4B5B6B7"
+    "B8B9BAC2C3C4C5C6C7C8C9CAD2D3D4D5D6D7D8D9DAE1E2E3E4E5E6E7E8E9EAF1"
+    "F2F3F4F5F6F7F8F9FAFFC4001F01000301010101010101010100000000000001"
+    "02030405060708090A0BFFC400B5110002010204040304070504040001027700"
+    "0102031104052131061241510761711322328108144291A1B1C109233352F015"
+    "6272D10A162434E125F11718191A262728292A35363738393A43444546474849"
+    "4A535455565758595A636465666768696A737475767778797A82838485868788"
+    "898A92939495969798999AA2A3A4A5A6A7A8A9AAB2B3B4B5B6B7B8B9BAC2C3C4"
+    "C5C6C7C8C9CAD2D3D4D5D6D7D8D9DAE2E3E4E5E6E7E8E9EAF2F3F4F5F6F7F8F9"
+    "FAFFDA000C03010002110311003F00E652DBEC7DB7EEFC318FFF005D4E96DF63"
+    "EDBF77E18C56825B7D8FB6FDDF8631FF00EBAB096DF63EDBF77E18C7FF00AEBD"
+    "FAF5CCF0D88B795BF0FF003B99E96DF63EDBF77E18C7FF00AEAC25B7D8FB6FDD"
+    "F8631FFEBAD04B6FB1F6DFBBF0C62A74B6FB1F6DFBBF0C62BC4AF5CFA3C3626D"
+    "E56FC3FCEE504B6FB1F6DFBFF0C628AD74B6FB1F6DFBBF0C63FF00D7457913AF"
+    "AEE7BB4F17CB1B7372F96E54D3D17E7E3D2AC69F1AFCFC7A51457BF59B3F28C1"
+    "37FBBF99634F8D7E7E3D2A7D3D17E7E3D3FAD14578B59B3E8B04DFEEFE658D3E"
+    "35F9F8F4A28A2BC96F53E9708DFB147FFFD9";
+
+// A 40 x 20 CMYK JPEG with an Adobe marker, stored inverted (read with
+// /Decode [1 0 1 0 1 0 1 0], as Photoshop writes them), in hex.
+constexpr char kAdobeCmykJpeg[] =
+    "FFD8FFEE000E41646F626500640000000000FFDB004300080606070605080707"
+    "070909080A0C140D0C0B0B0C1912130F141D1A1F1E1D1A1C1C20242E2720222C"
+    "231C1C2837292C30313434341F27393D38323C2E333432FFC000140800140028"
+    "044311004D11005911004B1100FFC4001F000001050101010101010000000000"
+    "0000000102030405060708090A0BFFC400B51000020103030204030505040400"
+    "00017D01020300041105122131410613516107227114328191A1082342B1C115"
+    "52D1F02433627282090A161718191A25262728292A3435363738393A43444546"
+    "4748494A535455565758595A636465666768696A737475767778797A83848586"
+    "8788898A92939495969798999AA2A3A4A5A6A7A8A9AAB2B3B4B5B6B7B8B9BAC2"
+    "C3C4C5C6C7C8C9CAD2D3D4D5D6D7D8D9DAE1E2E3E4E5E6E7E8E9EAF1F2F3F4F5"
+    "F6F7F8F9FAFFDA000E0443004D0059004B00003F00E4ECFF00E29EC7FCBC79FF"
+    "00F00DBB7F3CF5AE33EC1ED5D44DFF0012FF00FA69BFF0C63FFD75EFF5D059FF"
+    "00C53D8FF978F3FF00E01B76FE79EB47D83DAB3E6FF897FF00D34DFF008631FF"
+    "00EBA2BA0B3FF8A7B1FF002F1E7FFC036EDFCF3D68FB07B567CDFF0012FF00FA"
+    "69BFF0C63FFD74574167FF0014F63FE5E3CFFF00806DDBF9E7AD1F60F6ACF9BF"
+    "E25FFF004D37FE18C7FF00AE8AE82CFF00E29EC7FCBC79FF00F00DBB7F3CF5A3"
+    "EC1ED59F37FC4BFF00E9A6FF00C318FF00F5D15F3FD9FF00C53D8FF978F3FF00"
+    "E01B76FE79EB5D47D83DABD026FF00897FFD34DFF8631FFEBA2BA0B3FF008A7B"
+    "1FF2F1E7FF00C036EDFCF3D68FB07B567CDFF12FFF00A69BFF000C63FF00D745"
+    "74167FF14F63FE5E3CFF00F806DDBF9E7AD1F60F6ACF9BFE25FF00F4D37FE18C"
+    "7FFAE8AE82CFFE29EC7FCBC79FFF0000DBB7F3CF5A3EC1ED59F37FC4BFFE9A6F"
+    "FC318FFF005D15D059FF00C53D8FF978F3FF00E01B76FE79EB47D83DAB3E6FF8"
+    "97FF00D34DFF008631FF00EBA2BE7FF07FFCBCFF00C03FAD745E4A7A57A059FF"
+    "00CB5FC3FAD15D0783FF00E5E7FE01FD68F253D2B3ECFF00E5AFE1FD68AE83C1"
+    "FF00F2F3FF0000FEB47929E959F67FF2D7F0FEB45741E0FF00F979FF00807F5A"
+    "3C94F4ACFB3FF96BF87F5A2BA0F07FFCBCFF00C03FAD1E4A7A567D9FFCB5FC3F"
+    "AD15FFD9";
+
+// A 40 x 20 gray progressive JPEG carrying an EXIF segment whose description
+// reads EXIFSECRET, in hex.
+constexpr char kProgressiveExifJpeg[] =
+    "FFD8FFE000104A46494600010100000100010000FFE1003A4578696600004D4D"
+    "002A000000080001010E0002000000170000001A000000004558494653454352"
+    "4554206465736372697074696F6E0000FFDB0043000806060706050807070709"
+    "09080A0C140D0C0B0B0C1912130F141D1A1F1E1D1A1C1C20242E2720222C231C"
+    "1C2837292C30313434341F27393D38323C2E333432FFC2000B08001400280101"
+    "1100FFC400160001010100000000000000000000000000030205FFDA00080101"
+    "00000001CCB4443444414444FFC4001710010101010000000000000000000000"
+    "0012000301FFDA000801010001050222222222222222222222CECF967CB3B3E5"
+    "FFC40014100100000000000000000000000000000030FFDA0008010100063F02"
+    "7FFFC4001810000301010000000000000000000000000100117121FFDA000801"
+    "0100013F211A546951A546951A546951A546951A5469501D41D41D4075075FFF"
+    "DA00080101000000107F39FFC4001A1000030101010100000000000000000000"
+    "110051A1F141C1FFDA0008010100013F109B203ACD900CD901D66C80EB366033"
+    "640759B203ACD900CD900CD901D7C58F831F063E2CFAF831FFD9";
+
+// A 300 x 300 page drawing `image` (an image's stream object) at x 50..250,
+// y 100..200 after `before`, with `more` objects from 6 on. Rendered at
+// 600 x 600 the image is x 100..500, y 200..400: a sample of a 20 x 10 image
+// is 20 pixels, and a mark over x 50..90 covers its first four columns.
 std::string ImagePage(const std::string& image,
                       const std::string& before = "",
                       const std::vector<std::string>& more = {}) {
@@ -306,6 +405,24 @@ std::string Flate(const std::string& data) {
   DataVector<uint8_t> compressed =
       fxcodec::FlateModule::Encode(pdfium::as_byte_span(data));
   return std::string(compressed.begin(), compressed.end());
+}
+
+// Whether every channel of `pixel` is at least `floor`.
+bool AtLeast(uint32_t pixel, uint32_t floor) {
+  return (pixel >> 16 & 0xff) >= floor && (pixel >> 8 & 0xff) >= floor &&
+         (pixel & 0xff) >= floor;
+}
+
+// Whether no channel of `a` and `b` differs by more than `tolerance`.
+bool Near(uint32_t a, uint32_t b, int tolerance) {
+  for (int shift : {0, 8, 16}) {
+    const int x = static_cast<int>(a >> shift & 0xff);
+    const int y = static_cast<int>(b >> shift & 0xff);
+    if (std::abs(x - y) > tolerance) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // The only image page 0 names, whatever its name (content regeneration can
@@ -1422,4 +1539,178 @@ TEST_F(EPDFRedactEmbedderTest,
     EXPECT_EQ("FlateDecode", mask->GetDict()->GetNameFor("Filter"));
     EXPECT_EQ("DeviceGray", mask->GetDict()->GetNameFor("ColorSpace"));
   }
+}
+
+// A redacted JPEG stays a JPEG. Its blocks away from the mark are its own, so
+// it keeps its size and quality; blocks the mark covers become paper, and a
+// block its edge crosses only where it covers. No marker of the original but
+// the colour transform's comes along.
+TEST_F(EPDFRedactEmbedderTest, ARedactedJpegStaysAJpeg) {
+  struct JpegCase {
+    const char* name;
+    std::string entries;
+    const char* hex;
+    bool progressive;
+  };
+  const JpegCase cases[] = {
+      {"gray", "/ColorSpace /DeviceGray", kGrayJpeg, false},
+      {"RGB, 4:2:0",
+       "/ColorSpace /DeviceRGB /DecodeParms [null << /ColorTransform 1 >>]",
+       kColorJpeg, false},
+      {"Adobe CMYK", "/ColorSpace /DeviceCMYK /Decode [1 0 1 0 1 0 1 0]",
+       kAdobeCmykJpeg, false},
+      {"progressive, EXIF", "/ColorSpace /DeviceGray", kProgressiveExifJpeg,
+       true},
+  };
+  for (const JpegCase& jpeg : cases) {
+    const std::string input = ImagePage(StreamObject(
+        "/Type /XObject /Subtype /Image /Width 40 /Height 20 "
+        "/BitsPerComponent 8 /Filter [/ASCIIHexDecode /DCTDecode] " +
+            jpeg.entries,
+        std::string(jpeg.hex) + ">"));
+    const size_t source_size = strlen(jpeg.hex) / 2;
+    for (bool layer : {false, true}) {
+      SCOPED_TRACE(std::string(jpeg.name) +
+                   (layer ? ", layer transaction" : ", document"));
+      OpenedPdf opened = OpenPdf(input, layer);
+      ASSERT_TRUE(opened.doc);
+      ScopedFPDFPage page(FPDF_LoadPage(opened.doc.get(), 0));
+      ASSERT_TRUE(page);
+      auto before = Render(page.get());
+      // A sample is 10 pixels: the mark covers columns 0..12, so block 0 is
+      // under it and block 1 (columns 8..15) partly.
+      ASSERT_NO_FATAL_FAILURE(MarkAndApply(opened.doc.get(), page.get(), layer,
+                                           {50, 200, 115, 100}));
+      auto after = Render(page.get());
+      for (int y : {215, 305, 385}) {
+        EXPECT_TRUE(AtLeast(Pixel(after.get(), 135, y), 0xf0)) << y;
+      }
+      EXPECT_TRUE(AtLeast(Pixel(after.get(), 205, 305), 0xe0));
+      EXPECT_TRUE(Near(Pixel(before.get(), 245, 305),
+                       Pixel(after.get(), 245, 305), 48));
+      ExpectSamePixels(before.get(), after.get(), 350, 200, 500, 400);
+
+      RetainPtr<const CPDF_Stream> kept = OnlyImage(opened.doc.get());
+      ASSERT_TRUE(kept);
+      RetainPtr<const CPDF_Dictionary> dict = kept->GetDict();
+      EXPECT_EQ("DCTDecode", dict->GetNameFor("Filter"));
+      EXPECT_EQ(8, dict->GetIntegerFor("BitsPerComponent"));
+      EXPECT_EQ(jpeg.entries.find("/Decode ") != std::string::npos,
+                dict->KeyExist("Decode"));
+      if (jpeg.entries.find("ColorTransform") != std::string::npos) {
+        RetainPtr<const CPDF_Dictionary> params =
+            dict->GetDictFor("DecodeParms");
+        ASSERT_TRUE(params);
+        EXPECT_EQ(1, params->GetIntegerFor("ColorTransform"));
+      }
+      const std::string bytes = StreamText(kept.Get());
+      EXPECT_LE(bytes.size(), source_size * 5 / 4 + 64);
+      EXPECT_EQ(std::string::npos, bytes.find("EXIFSECRET"));
+      EXPECT_EQ(std::string::npos, bytes.find("Exif"));
+      EXPECT_EQ(jpeg.progressive, bytes.find("\xFF\xC2") != std::string::npos);
+      EXPECT_EQ(std::string(jpeg.name) == "Adobe CMYK",
+                bytes.find("Adobe") != std::string::npos);
+
+      ClearString();
+      ASSERT_TRUE(FPDF_SaveAsCopy(opened.doc.get(), this, FPDF_NO_INCREMENTAL));
+      ASSERT_TRUE(OpenSavedDocument());
+      FPDF_PAGE reloaded = LoadSavedPage(0);
+      ASSERT_TRUE(reloaded);
+      auto saved = Render(reloaded);
+      ExpectSamePixels(after.get(), saved.get(), 100, 200, 500, 400);
+      CloseSavedPage(reloaded);
+      CloseSavedDocument();
+    }
+  }
+}
+
+// A JPEG soft mask stays a JPEG too, on its own grid, opaque in the hole.
+TEST_F(EPDFRedactEmbedderTest, AJpegSoftMaskStaysAJpeg) {
+  const std::string input = ImagePage(
+      StreamObject("/Type /XObject /Subtype /Image /Width 20 /Height 10 "
+                   "/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter "
+                   "/FlateDecode /SMask 6 0 R",
+                   Flate(std::string(200, '\x28'))),
+      "0 0 1 rg 50 100 200 100 re f",
+      {StreamObject("/Type /XObject /Subtype /Image /Width 40 /Height 20 "
+                    "/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter "
+                    "[/ASCIIHexDecode /DCTDecode]",
+                    std::string(kGrayJpeg) + ">")});
+  for (bool layer : {false, true}) {
+    SCOPED_TRACE(layer ? "layer transaction" : "document");
+    OpenedPdf opened = OpenPdf(input, layer);
+    ASSERT_TRUE(opened.doc);
+    ScopedFPDFPage page(FPDF_LoadPage(opened.doc.get(), 0));
+    ASSERT_TRUE(page);
+    auto before = Render(page.get());
+    ASSERT_NO_FATAL_FAILURE(
+        MarkAndApply(opened.doc.get(), page.get(), layer, {50, 200, 90, 100}));
+    auto after = Render(page.get());
+    EXPECT_TRUE(AtLeast(Pixel(after.get(), 130, 300), 0xf0));
+    ExpectSamePixels(before.get(), after.get(), 350, 200, 500, 400);
+    RetainPtr<const CPDF_Stream> kept = OnlyImage(opened.doc.get());
+    ASSERT_TRUE(kept);
+    CPDF_Document* pdf = CPDFDocumentFromFPDFDocument(opened.doc.get());
+    CPDF_DocumentViewScope document_view(pdf);
+    RetainPtr<const CPDF_Stream> mask = kept->GetDict()->GetStreamFor("SMask");
+    ASSERT_TRUE(mask);
+    EXPECT_EQ("DCTDecode", mask->GetDict()->GetNameFor("Filter"));
+  }
+}
+
+// A JPEG libjpeg reads only with a warning is decoded and written from its
+// pixels instead. Here three bytes in the middle of its coded data become a
+// run of one bits, a Huffman code no table has.
+TEST_F(EPDFRedactEmbedderTest, AJpegReadWithAWarningIsRewrittenFromItsPixels) {
+  std::string hex(kGrayJpeg);
+  size_t scan = 0;
+  while (hex.compare(scan, 4, "FFDA") != 0) {
+    scan += 2;
+  }
+  const size_t start =
+      scan + 4 + std::stoul(hex.substr(scan + 4, 4), nullptr, 16) * 2;
+  size_t at = start + (hex.size() - 4 - start) / 4 * 2;
+  while (hex.compare(at - 2, 2, "FF") == 0) {
+    at += 2;
+  }
+  hex.replace(at, 6, "FF00FF00FF00");
+  const std::string input = ImagePage(StreamObject(
+      "/Type /XObject /Subtype /Image /Width 40 /Height 20 /ColorSpace "
+      "/DeviceGray /BitsPerComponent 8 /Filter [/ASCIIHexDecode /DCTDecode]",
+      hex + ">"));
+  OpenedPdf opened = OpenPdf(input, /*layer=*/false);
+  ASSERT_TRUE(opened.doc);
+  ScopedFPDFPage page(FPDF_LoadPage(opened.doc.get(), 0));
+  ASSERT_TRUE(page);
+  ASSERT_NO_FATAL_FAILURE(
+      MarkAndApply(opened.doc.get(), page.get(), false, {50, 200, 115, 100}));
+  auto after = Render(page.get());
+  EXPECT_TRUE(AtLeast(Pixel(after.get(), 135, 305), 0xf0));
+  RetainPtr<const CPDF_Stream> kept = OnlyImage(opened.doc.get());
+  ASSERT_TRUE(kept);
+  EXPECT_NE("DCTDecode", kept->GetDict()->GetNameFor("Filter"));
+  EXPECT_EQ("DeviceRGB", kept->GetDict()->GetNameFor("ColorSpace"));
+}
+
+// An image that can't be decoded at all (here: a JPEG cut short) fails the
+// apply: nothing is drawn over pixels that could not be removed.
+TEST_F(EPDFRedactEmbedderTest, AnImageThatCannotBeDecodedFailsTheApply) {
+  std::string hex(kGrayJpeg);
+  hex.resize(hex.size() * 3 / 5 / 2 * 2);
+  const std::string input = ImagePage(StreamObject(
+      "/Type /XObject /Subtype /Image /Width 40 /Height 20 /ColorSpace "
+      "/DeviceGray /BitsPerComponent 8 /Filter [/ASCIIHexDecode /DCTDecode]",
+      hex + ">"));
+  OpenedPdf opened = OpenPdf(input, /*layer=*/false);
+  ASSERT_TRUE(opened.doc);
+  ScopedFPDFPage page(FPDF_LoadPage(opened.doc.get(), 0));
+  ASSERT_TRUE(page);
+  {
+    ScopedFPDFAnnotation mark(
+        FPDFPage_CreateAnnot(page.get(), FPDF_ANNOT_REDACT));
+    ASSERT_TRUE(mark);
+    const FS_RECTF rect = {50, 200, 115, 100};
+    ASSERT_TRUE(FPDFAnnot_SetRect(mark.get(), &rect));
+  }
+  EXPECT_FALSE(EPDFPage_ApplyRedactions(page.get(), nullptr));
 }

@@ -19,11 +19,12 @@ class CPDF_Page;
 // else the page's), against which its /ColorSpace name resolves;
 // `parent_to_page` maps that content's space to the page.
 //
-// An image whose filters leave plain samples (Flate, LZW, RunLength, the
-// ASCII filters, and 1-bit CCITT or JBIG2) keeps its colour space, bits per
-// component and /Decode; its hole is the colour space's paper (white, no
-// ink) and it is compressed with Flate here, so a save copies its bytes.
-// Others (JPEG, JPEG 2000) are rewritten as RGB.
+// An image keeps its colour space, bits per component and /Decode, and its
+// hole is the colour space's paper (white, no ink). One whose filters leave
+// plain samples (Flate, LZW, RunLength, the ASCII filters, and 1-bit CCITT or
+// JBIG2) is written with Flate here, so a save copies its bytes; a JPEG stays
+// a JPEG, its blocks away from the hole untouched (FillJpegRects()). Others
+// (JPEG 2000, a JPEG libjpeg reads with a warning) are rewritten as RGB.
 //
 // A failure once the image is known to be hit (a decode that fails) is
 // reported as a failure, so the caller never paints an overlay over pixels

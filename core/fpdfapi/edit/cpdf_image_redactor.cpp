@@ -26,6 +26,7 @@
 #include "core/fpdfapi/parser/cpdf_stream.h"
 #include "core/fpdfapi/parser/cpdf_stream_acc.h"
 #include "core/fxcodec/flate/flatemodule.h"
+#include "core/fxcodec/jpeg/jpeg_coefficients.h"
 #include "core/fxcodec/jpeg/jpegmodule.h"
 #include "core/fxcodec/scanlinedecoder.h"
 #include "core/fxcrt/data_vector.h"
@@ -242,7 +243,7 @@ bool InAnyBox(int x, int y, pdfium::span<const GridBox> boxes) {
   return false;
 }
 
-// -- Samples kept -------------------------------------------------------------
+// -- Format kept --------------------------------------------------------------
 
 // What a redacted sample becomes.
 enum class Hole {
@@ -277,10 +278,12 @@ bool DibInvertsRows(const CPDF_Dictionary& dict) {
   return stencil && (!decode || !decode->GetIntegerAt(0));
 }
 
-// `stream`'s samples, or nullopt when its filters don't leave plain samples
-// (JPEG, JPEG 2000) or they can't be read.
+// `stream`'s samples, `acc` its data through every filter that leaves
+// samples; nullopt when its filters don't leave plain samples (JPEG, JPEG
+// 2000) or they can't be read.
 std::optional<Samples> DecodeSamples(CPDF_Document* doc,
                                      RetainPtr<const CPDF_Stream> stream,
+                                     const CPDF_StreamAcc& acc,
                                      int components,
                                      int bpc) {
   RetainPtr<const CPDF_Dictionary> dict = stream->GetDict();
@@ -306,12 +309,10 @@ std::optional<Samples> DecodeSamples(CPDF_Document* doc,
   samples.pitch = pitch.ValueOrDie();
   samples.data.resize(size.ValueOrDie());
 
-  auto acc = pdfium::MakeRetain<CPDF_StreamAcc>(stream);
-  acc->LoadAllDataFiltered();
-  const ByteString decoder = acc->GetImageDecoder();
+  const ByteString decoder = acc.GetImageDecoder();
   if (decoder.IsEmpty()) {
     // Short data reads as zeros, as CPDF_DIB reads it.
-    pdfium::span<const uint8_t> data = acc->GetSpan();
+    pdfium::span<const uint8_t> data = acc.GetSpan();
     const size_t n = std::min(data.size(), samples.data.size());
     fxcrt::Copy(data.first(n), samples.data);
     return samples;
@@ -526,25 +527,48 @@ void FillHole(Samples& samples,
   }
 }
 
-// A new image stream holding `samples`, compressed with Flate, with `keys`
-// copied from `source` (and nothing else of it).
-RetainPtr<CPDF_Stream> WriteSamples(CPDF_Document* doc,
+// An image's redacted content, ready to be written: its samples, written
+// with Flate, or its JPEG, written as is.
+struct Content {
+  int width = 0;
+  int height = 0;
+  std::optional<Samples> samples;
+  DataVector<uint8_t> jpeg;
+  // The JPEG's /ColorTransform, when the image's /DCTDecode had one.
+  std::optional<int> color_transform;
+};
+
+// A new image stream holding `content`, with `keys` copied from `source` (and
+// nothing else of it).
+RetainPtr<CPDF_Stream> WriteContent(CPDF_Document* doc,
                                     const CPDF_Dictionary& source,
                                     pdfium::span<const char* const> keys,
-                                    const Samples& samples) {
+                                    const Content& content) {
   RetainPtr<CPDF_Dictionary> dict = doc->New<CPDF_Dictionary>();
   dict->SetNewFor<CPDF_Name>("Type", "XObject");
   dict->SetNewFor<CPDF_Name>("Subtype", "Image");
-  dict->SetNewFor<CPDF_Number>("Width", samples.width);
-  dict->SetNewFor<CPDF_Number>("Height", samples.height);
+  dict->SetNewFor<CPDF_Number>("Width", content.width);
+  dict->SetNewFor<CPDF_Number>("Height", content.height);
   for (const char* key : keys) {
     if (RetainPtr<const CPDF_Object> value = source.GetObjectFor(key)) {
       dict->SetFor(key, value->CloneForHolder(doc));
     }
   }
-  dict->SetNewFor<CPDF_Name>("Filter", "FlateDecode");
-  auto stream = pdfium::MakeRetain<CPDF_Stream>(
-      fxcodec::FlateModule::Encode(samples.data), std::move(dict));
+  DataVector<uint8_t> data;
+  if (content.samples.has_value()) {
+    dict->SetNewFor<CPDF_Name>("Filter", "FlateDecode");
+    data = fxcodec::FlateModule::Encode(content.samples->data);
+  } else {
+    dict->SetNewFor<CPDF_Name>("Filter", "DCTDecode");
+    if (content.color_transform.has_value()) {
+      dict->SetNewFor<CPDF_Dictionary>("DecodeParms")
+          ->SetNewFor<CPDF_Number>("ColorTransform",
+                                   content.color_transform.value());
+    }
+    data = content.jpeg;
+  }
+  auto stream =
+      pdfium::MakeRetain<CPDF_Stream>(std::move(data), std::move(dict));
   if (doc->AddIndirectObject(stream) == 0) {
     return nullptr;
   }
@@ -563,10 +587,70 @@ constexpr const char* kSoftMaskKeys[] = {"ColorSpace", "BitsPerComponent",
 constexpr const char* kMaskKeys[] = {"ImageMask", "BitsPerComponent", "Decode",
                                      "Interpolate"};
 
-// `stream`'s samples (the image's, its soft mask's or its mask's) with those
-// under `page_rects` set to `hole`; `image_to_page` places the unit square
-// every one of them fills. Nullopt when they can't be kept.
-std::optional<Samples> RedactedSamples(
+// `dict`'s image grid boxes under `page_rects`; `image_to_page` places the
+// unit square the image fills.
+std::vector<GridBox> HoleBoxes(int width,
+                               int height,
+                               const CFX_Matrix& image_to_page,
+                               pdfium::span<const CFX_FloatRect> page_rects) {
+  std::vector<CFX_FloatRect> grid_rects;
+  PageRectsToImageGrid(image_to_page, width, height, page_rects, &grid_rects);
+  return GridBoxesOf(grid_rects, width, height);
+}
+
+// A JPEG's content with the hole filled in its blocks (FillJpegRects()):
+// the blocks away from the hole are its own, the size about the same.
+std::optional<Content> RedactedJpeg(
+    const CPDF_StreamAcc& acc,
+    const CPDF_Dictionary& dict,
+    const CPDF_ColorSpace* color_space,
+    Hole hole,
+    const CFX_Matrix& image_to_page,
+    pdfium::span<const CFX_FloatRect> page_rects) {
+  Content content;
+  content.width = dict.GetIntegerFor("Width");
+  content.height = dict.GetIntegerFor("Height");
+  if (!color_space || dict.GetIntegerFor("BitsPerComponent", 8) != 8) {
+    return std::nullopt;
+  }
+  const int components = color_space->ComponentCount();
+  std::optional<std::vector<uint32_t>> fill =
+      HoleSamples(hole, dict, color_space, components, 8);
+  if (!fill.has_value()) {
+    return std::nullopt;
+  }
+  std::vector<uint8_t> fill_bytes(fill->begin(), fill->end());
+  // Grid boxes count rows from the bottom; a JPEG's from the top.
+  std::vector<fxcodec::JpegRect> rects;
+  for (const GridBox& box :
+       HoleBoxes(content.width, content.height, image_to_page, page_rects)) {
+    rects.push_back({.left = box.x0,
+                     .top = content.height - box.y1,
+                     .right = box.x1,
+                     .bottom = content.height - box.y0});
+  }
+  // The colour transform as CPDF_DIB reads it.
+  RetainPtr<const CPDF_Dictionary> params = acc.GetImageParam();
+  const bool color_transform =
+      !params || params->GetIntegerFor("ColorTransform", 1);
+  std::optional<DataVector<uint8_t>> jpeg =
+      fxcodec::FillJpegRects(acc.GetSpan(), content.width, content.height,
+                             components, color_transform, rects, fill_bytes);
+  if (!jpeg.has_value()) {
+    return std::nullopt;
+  }
+  content.jpeg = std::move(jpeg.value());
+  if (params && params->KeyExist("ColorTransform")) {
+    content.color_transform = params->GetIntegerFor("ColorTransform");
+  }
+  return content;
+}
+
+// `stream`'s content (the image's, its soft mask's or its mask's) with what
+// lies under `page_rects` set to `hole`: a JPEG stays a JPEG, other images
+// keep their samples. `image_to_page` places the unit square every one of
+// them fills. Nullopt when it can't be kept.
+std::optional<Content> RedactedContent(
     CPDF_Document* doc,
     RetainPtr<const CPDF_Stream> stream,
     const CPDF_ColorSpace* color_space,
@@ -574,10 +658,17 @@ std::optional<Samples> RedactedSamples(
     const CFX_Matrix& image_to_page,
     pdfium::span<const CFX_FloatRect> page_rects) {
   RetainPtr<const CPDF_Dictionary> dict = stream->GetDict();
+  auto acc = pdfium::MakeRetain<CPDF_StreamAcc>(stream);
+  acc->LoadAllDataFiltered();
+  if (acc->GetImageDecoder() == "DCTDecode") {
+    return RedactedJpeg(*acc, *dict, color_space, hole, image_to_page,
+                        page_rects);
+  }
   const bool stencil = hole == Hole::kPainted || hole == Hole::kUnpainted;
   const int components = stencil ? 1 : color_space->ComponentCount();
   const int bpc = stencil ? 1 : dict->GetIntegerFor("BitsPerComponent");
-  std::optional<Samples> samples = DecodeSamples(doc, stream, components, bpc);
+  std::optional<Samples> samples =
+      DecodeSamples(doc, stream, *acc, components, bpc);
   if (!samples.has_value()) {
     return std::nullopt;
   }
@@ -586,13 +677,15 @@ std::optional<Samples> RedactedSamples(
   if (!fill.has_value()) {
     return std::nullopt;
   }
-  std::vector<CFX_FloatRect> grid_rects;
-  PageRectsToImageGrid(image_to_page, samples->width, samples->height,
-                       page_rects, &grid_rects);
-  FillHole(samples.value(),
-           GridBoxesOf(grid_rects, samples->width, samples->height),
-           fill.value());
-  return samples;
+  FillHole(
+      samples.value(),
+      HoleBoxes(samples->width, samples->height, image_to_page, page_rects),
+      fill.value());
+  Content content;
+  content.width = samples->width;
+  content.height = samples->height;
+  content.samples = std::move(samples);
+  return content;
 }
 
 // The colour space `dict`'s /ColorSpace names, read as CPDF_DIB reads it.
@@ -611,9 +704,9 @@ RetainPtr<CPDF_ColorSpace> ColorSpaceOf(CPDF_Document* doc,
                      : page_data->GetColorSpace(object.Get(), page_resources);
 }
 
-// Redacts `image_object` keeping its samples (see RedactImageObject()), or
-// nullopt when they can't be kept: then the image is rewritten as RGB.
-std::optional<RedactResult> RedactKeepingSamples(
+// Redacts `image_object` keeping its format (see RedactImageObject()), or
+// nullopt when it can't be kept: then the image is rewritten as RGB.
+std::optional<RedactResult> RedactKeepingFormat(
     CPDF_Page* page,
     CPDF_ImageObject* image_object,
     const CPDF_Dictionary* resources,
@@ -659,34 +752,34 @@ std::optional<RedactResult> RedactKeepingSamples(
       soft_mask ? nullptr : dict->GetStreamFor("Mask");
 
   // Everything is read before anything is written.
-  std::optional<Samples> samples = RedactedSamples(
+  std::optional<Content> content = RedactedContent(
       doc, stream, color_space.Get(), stencil ? Hole::kUnpainted : Hole::kPaper,
       image_to_page, page_rects);
-  std::optional<Samples> soft_mask_samples;
+  std::optional<Content> soft_mask_content;
   if (soft_mask) {
-    soft_mask_samples =
-        RedactedSamples(doc, soft_mask, soft_mask_space.Get(), Hole::kOpaque,
+    soft_mask_content =
+        RedactedContent(doc, soft_mask, soft_mask_space.Get(), Hole::kOpaque,
                         image_to_page, page_rects);
   }
-  std::optional<Samples> mask_samples;
+  std::optional<Content> mask_content;
   if (mask) {
-    mask_samples = RedactedSamples(doc, mask, nullptr, Hole::kPainted,
+    mask_content = RedactedContent(doc, mask, nullptr, Hole::kPainted,
                                    image_to_page, page_rects);
   }
-  if (!samples.has_value() || (soft_mask && !soft_mask_samples.has_value()) ||
-      (mask && !mask_samples.has_value())) {
+  if (!content.has_value() || (soft_mask && !soft_mask_content.has_value()) ||
+      (mask && !mask_content.has_value())) {
     return std::nullopt;
   }
 
   RetainPtr<CPDF_Stream> replacement =
-      WriteSamples(doc, *dict, kImageKeys, samples.value());
+      WriteContent(doc, *dict, kImageKeys, content.value());
   if (!replacement) {
     return RedactResult{.succeeded = false};
   }
   RetainPtr<CPDF_Dictionary> replacement_dict = replacement->GetMutableDict();
   if (soft_mask) {
-    RetainPtr<CPDF_Stream> copy = WriteSamples(
-        doc, *soft_mask->GetDict(), kSoftMaskKeys, soft_mask_samples.value());
+    RetainPtr<CPDF_Stream> copy = WriteContent(
+        doc, *soft_mask->GetDict(), kSoftMaskKeys, soft_mask_content.value());
     if (!copy) {
       return RedactResult{.succeeded = false};
     }
@@ -694,7 +787,7 @@ std::optional<RedactResult> RedactKeepingSamples(
                                                 copy->GetObjNum());
   } else if (mask) {
     RetainPtr<CPDF_Stream> copy =
-        WriteSamples(doc, *mask->GetDict(), kMaskKeys, mask_samples.value());
+        WriteContent(doc, *mask->GetDict(), kMaskKeys, mask_content.value());
     if (!copy) {
       return RedactResult{.succeeded = false};
     }
@@ -1080,7 +1173,7 @@ RedactResult RedactImageObject(CPDF_Page* page,
   }
   // A black fill shows only under the black boxes drawn over every region;
   // paper is as good there.
-  std::optional<RedactResult> kept = RedactKeepingSamples(
+  std::optional<RedactResult> kept = RedactKeepingFormat(
       page, image_object, resources, page_rects, image_to_page);
   if (kept.has_value()) {
     return kept.value();

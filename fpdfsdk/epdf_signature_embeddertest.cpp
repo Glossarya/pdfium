@@ -1,7 +1,6 @@
 // Copyright 2026 CloudPDF LTD
 // SPDX-License-Identifier: Apache-2.0
 
-#include "public/epdf_annot.h"
 #include "public/epdf_signature.h"
 
 #include <stdint.h>
@@ -20,6 +19,7 @@
 #include "core/fxcrt/data_vector.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "public/cpp/fpdf_scopers.h"
+#include "public/epdf_annot.h"
 #include "public/epdf_form.h"
 #include "public/fpdf_annot.h"
 #include "public/fpdf_edit.h"

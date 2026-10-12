@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "public/epdf_annot.h"
 #include "public/fpdf_annot.h"
+#include "public/epdf_annot.h"
 #include "public/epdf_signature.h"
 #include "public/epdf_form.h"
 #include "public/epdf_text.h"

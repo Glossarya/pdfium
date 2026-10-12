@@ -109,14 +109,16 @@ typedef enum FPDF_ANNOT_REPLY_TYPE {
 } FPDF_ANNOT_REPLY_TYPE;
 
 // Experimental EmbedPDF Extension API.
-// Set |key| in |annot|'s dictionary to a number: |value| truncated to an
-// integer.
+// Set |key| in |annot|'s dictionary to the number |value|, the counterpart of
+// FPDFAnnot_GetNumberValue(). A whole number is written as a PDF integer, so
+// integer entries such as /MaxLen stay integers; any other value is written as
+// a real.
 //
 //   annot - handle to an annotation.
-//   key   - the key to set, encoded in UTF-8.
-//   value - the number.
+//   key   - the key to set, encoded in UTF-8. Must not be NULL or empty.
+//   value - the number. Must be finite.
 //
-// Returns true on success.
+// Returns true on success. A refused call changes nothing.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetNumberValue(FPDF_ANNOTATION annot,
                          FPDF_BYTESTRING key,

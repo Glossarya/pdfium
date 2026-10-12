@@ -699,12 +699,25 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 EPDFAnnot_SetNumberValue(FPDF_ANNOTATION annot,
                          FPDF_BYTESTRING key,
                          float value) {
-  RetainPtr<CPDF_Dictionary> pAnnotDict =
-      GetMutableAnnotDictFromFPDFAnnotation(annot);
-  if (!pAnnotDict) {
+  // Refused before the dictionary is opened for writing, so a refused call
+  // changes nothing, and on a layer copies nothing up.
+  if (!key || !key[0] || !std::isfinite(value)) {
     return false;
   }
-  pAnnotDict->SetNewFor<CPDF_Number>(key, static_cast<int>(value));
+  RetainPtr<CPDF_Dictionary> annot_dict =
+      GetMutableAnnotDictFromFPDFAnnotation(annot);
+  if (!annot_dict) {
+    return false;
+  }
+  // A whole number is written as a PDF integer, so integer entries such as
+  // /MaxLen stay integers; any other value is written as a real.
+  const bool whole = std::trunc(value) == value && value >= -2147483648.0f &&
+                     value < 2147483648.0f;
+  if (whole) {
+    annot_dict->SetNewFor<CPDF_Number>(key, static_cast<int>(value));
+  } else {
+    annot_dict->SetNewFor<CPDF_Number>(key, value);
+  }
   return true;
 }
 

@@ -27,6 +27,7 @@
 #include "public/fpdf_flatten.h"
 #include "public/fpdf_save.h"
 #include "public/fpdf_text.h"
+#include "testing/document_sentinels.h"
 #include "testing/embedder_test.h"
 #include "testing/fx_string_testhelpers.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -72,77 +73,6 @@ void ExpectSamePixels(FPDF_BITMAP before,
       ASSERT_EQ(Pixel(before, x, y), Pixel(after, x, y)) << x << ", " << y;
     }
   }
-}
-
-// These controlled fixtures use ASCII sentinels. Inspect the saved graph as
-// well as text extraction: an unused resource or replacement-text property
-// can retain the sentinel even when the rendered page/text extractor is clean.
-// This is deliberately NOT a general-purpose PDF sanitization oracle.
-void ExpectNoSentinel(CPDF_Document* doc, const std::string& sentinel) {
-  std::vector<RetainPtr<const CPDF_Object>> pending{
-      pdfium::WrapRetain(doc->GetRoot())};
-  std::set<const CPDF_Object*> visited;
-  while (!pending.empty()) {
-    auto object = pending.back()->GetDirect();
-    pending.pop_back();
-    if (!object || !visited.insert(object.Get()).second) {
-      continue;
-    }
-    if (const CPDF_Stream* stream = object->AsStream()) {
-      auto acc = pdfium::MakeRetain<CPDF_StreamAcc>(pdfium::WrapRetain(stream));
-      acc->LoadAllDataFiltered();
-      const auto bytes = acc->GetSpan();
-      const std::string decoded(bytes.begin(), bytes.end());
-      EXPECT_EQ(std::string::npos, decoded.find(sentinel)) << decoded;
-      pending.push_back(stream->GetDict());
-    } else if (const CPDF_Dictionary* dict = object->AsDictionary()) {
-      for (const auto& key : dict->GetKeys()) {
-        pending.push_back(dict->GetObjectFor(key.AsStringView()));
-      }
-    } else if (const CPDF_Array* array = object->AsArray()) {
-      for (size_t i = 0; i < array->size(); ++i) {
-        pending.push_back(array->GetObjectAt(i));
-      }
-    } else if (object->IsString()) {
-      const ByteString value = object->GetString();
-      EXPECT_EQ(std::string::npos,
-                std::string(value.c_str(), value.GetLength()).find(sentinel));
-    }
-  }
-}
-
-// How many streams reachable from the document's root carry `sentinel`.
-int CountSentinel(CPDF_Document* doc, const std::string& sentinel) {
-  int count = 0;
-  std::vector<RetainPtr<const CPDF_Object>> pending{
-      pdfium::WrapRetain(doc->GetRoot())};
-  std::set<const CPDF_Object*> visited;
-  while (!pending.empty()) {
-    auto object = pending.back()->GetDirect();
-    pending.pop_back();
-    if (!object || !visited.insert(object.Get()).second) {
-      continue;
-    }
-    if (const CPDF_Stream* stream = object->AsStream()) {
-      auto acc = pdfium::MakeRetain<CPDF_StreamAcc>(pdfium::WrapRetain(stream));
-      acc->LoadAllDataFiltered();
-      const auto bytes = acc->GetSpan();
-      if (std::string(bytes.begin(), bytes.end()).find(sentinel) !=
-          std::string::npos) {
-        ++count;
-      }
-      pending.push_back(stream->GetDict());
-    } else if (const CPDF_Dictionary* dict = object->AsDictionary()) {
-      for (const auto& key : dict->GetKeys()) {
-        pending.push_back(dict->GetObjectFor(key.AsStringView()));
-      }
-    } else if (const CPDF_Array* array = object->AsArray()) {
-      for (size_t i = 0; i < array->size(); ++i) {
-        pending.push_back(array->GetObjectAt(i));
-      }
-    }
-  }
-  return count;
 }
 
 // A PDF file of `objects`, numbered from 1, with its cross-reference table.

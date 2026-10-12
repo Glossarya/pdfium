@@ -218,6 +218,8 @@ pdfium_embeddertest_source_set("embeddertests") {
     "epdf_sliced_load_embeddertest.cpp",
     # EmbedPDF: covers the /Names /Pages and /Templates name-tree APIs.
     "epdf_named_pages_embeddertest.cpp",
+    # EmbedPDF: a content rewrite keeps what it did not change.
+    "epdf_content_rewrite_embeddertest.cpp",
     "epdf_redact_embeddertest.cpp",
     # EmbedPDF: covers EPDF_DigestBuffer.
     "epdf_digest_embeddertest.cpp",

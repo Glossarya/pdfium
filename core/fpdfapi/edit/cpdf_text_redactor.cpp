@@ -14,8 +14,10 @@
 #include "core/fpdfapi/edit/cpdf_pagecontentgenerator.h"
 #include "core/fpdfapi/edit/cpdf_pagecontentmanager.h"
 #include "core/fpdfapi/edit/cpdf_redaction_mark_sanitizer.h"
+#include "core/fpdfapi/edit/cpdf_type3_redactor.h"
 #include "core/fpdfapi/font/cpdf_cidfont.h"
 #include "core/fpdfapi/font/cpdf_font.h"
+#include "core/fpdfapi/page/cpdf_clippath.h"
 #include "core/fpdfapi/page/cpdf_form.h"
 #include "core/fpdfapi/page/cpdf_formobject.h"
 #include "core/fpdfapi/page/cpdf_page.h"
@@ -517,6 +519,45 @@ RedactOutcome RedactTextObjectMulti(CPDF_TextObject* to,
 }
 
 // Map page-space rects into the image's sample grid (image-local).
+// EmbedPDF: text in render modes 4 to 7 leaves a copy of itself in the clip
+// of what is drawn after it, and writing the page writes that copy as clip
+// text. Its glyphs inside the regions go as they go from the text itself,
+// or the copy would write them back. Returns whether any went; adds the
+// Type3 fonts that lost glyphs to `type3_fonts`.
+bool RedactClipTexts(CPDF_PageObject* object,
+                     pdfium::span<const RedactRegion> regions,
+                     pdfium::span<const CFX_FloatRect> region_bboxes,
+                     const CFX_Matrix& to_page,
+                     std::set<RetainPtr<CPDF_Font>>* type3_fonts) {
+  const CPDF_ClipPath& clip_path = object->clip_path();
+  if (!clip_path.HasRef()) {
+    return false;
+  }
+  bool hit = false;
+  for (size_t i = 0; i < clip_path.GetTextCount() && !hit; ++i) {
+    const CPDF_TextObject* text = clip_path.GetText(i);
+    hit = text && IntersectsAny(to_page.TransformRect(text->GetRect()),
+                                region_bboxes);
+  }
+  if (!hit) {
+    return false;
+  }
+  bool changed = false;
+  object->mutable_clip_path().EditTexts([&](CPDF_TextObject* text) {
+    const RedactOutcome outcome =
+        RedactTextObjectMulti(text, regions, region_bboxes, to_page);
+    if (outcome != RedactOutcome::kUnchanged) {
+      changed = true;
+      if (RetainPtr<CPDF_Font> font = text->GetFont();
+          font && font->IsType3Font()) {
+        type3_fonts->insert(std::move(font));
+      }
+    }
+    return outcome != RedactOutcome::kRemovedAll;
+  });
+  return changed;
+}
+
 static void PageRectsToImageGrid(const CFX_Matrix& image_to_page,
                                  int img_w, int img_h,
                                  pdfium::span<const CFX_FloatRect> page_rects,
@@ -934,11 +975,23 @@ RedactResult RedactHolder(CPDF_Page* page_for_cache,
     if (!po->IsActive())
       continue;
 
+    if (RedactClipTexts(po, regions, region_bboxes, to_page,
+                        &result.type3_fonts)) {
+      mark_sanitizer.Record(po);
+      result.changed = true;
+    }
+
     if (CPDF_TextObject* to = po->AsText()) {
       const RedactOutcome out =
           RedactTextObjectMulti(to, regions, region_bboxes, to_page);
       if (out != RedactOutcome::kUnchanged) {
         mark_sanitizer.Record(po);
+        // EmbedPDF: a Type3 font's glyphs are content of their own
+        // (RedactType3Glyphs()).
+        if (RetainPtr<CPDF_Font> font = to->GetFont();
+            font && font->IsType3Font()) {
+          result.type3_fonts.insert(std::move(font));
+        }
       }
       if (out == RedactOutcome::kRemovedAll) {
         to_remove.push_back(po);
@@ -1019,6 +1072,8 @@ RedactResult RedactHolder(CPDF_Page* page_for_cache,
           result.succeeded = false;
           return result;
         }
+        result.type3_fonts.insert(form_result.type3_fonts.begin(),
+                                  form_result.type3_fonts.end());
         if (form_result.changed) {
           mark_sanitizer.Record(po);
           CPDF_PageContentGenerator form_gen(form);
@@ -1120,6 +1175,11 @@ RedactResult RedactTextInRegions(CPDF_Page* page,
                    /*fill_black=*/draw_black_boxes, &sanitized_properties);
   if (!result.succeeded) {
     return result;
+  }
+  // EmbedPDF: what only the redacted glyphs of a Type3 font drew goes with
+  // them, from every use of the font on the page.
+  if (RedactType3Glyphs(page, result.type3_fonts)) {
+    result.changed = true;
   }
 
   if (draw_black_boxes) {

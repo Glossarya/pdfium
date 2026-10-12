@@ -59,6 +59,12 @@ void CPDF_Type3Font::WillBeDestroyed() {
   }
 }
 
+// static
+bool CPDF_Type3Font::GlyphsUseContentResources(
+    const CPDF_Dictionary* font_dict) {
+  return !font_dict->GetDictFor("Resources");
+}
+
 bool CPDF_Type3Font::Load() {
   RetainPtr<const CPDF_Dictionary> font_resources =
       font_dict_->GetDictFor("Resources");
@@ -112,6 +118,10 @@ void CPDF_Type3Font::CheckType3FontMetrics() {
   CheckFontMetrics();
 }
 
+const char* CPDF_Type3Font::GetCharProcName(uint32_t charcode) const {
+  return GetAdobeCharName(base_encoding_, char_names_, charcode);
+}
+
 CPDF_Type3Char* CPDF_Type3Font::LoadChar(uint32_t charcode) {
   if (char_loading_depth_ >= kMaxType3FormLevel) {
     return nullptr;
@@ -122,7 +132,7 @@ CPDF_Type3Char* CPDF_Type3Font::LoadChar(uint32_t charcode) {
     return it->second.get();
   }
 
-  const char* name = GetAdobeCharName(base_encoding_, char_names_, charcode);
+  const char* name = GetCharProcName(charcode);
   if (!name) {
     return nullptr;
   }
@@ -140,7 +150,10 @@ CPDF_Type3Char* CPDF_Type3Font::LoadChar(uint32_t charcode) {
   }
 
   std::unique_ptr<CPDF_Font::FormIface> pForm = form_factory_->CreateForm(
-      document_, font_resources_ ? font_resources_ : page_resources_, pStream);
+      document_,
+      GlyphsUseContentResources(font_dict_.Get()) ? page_resources_
+                                                  : font_resources_,
+      pStream);
 
   auto pNewChar = std::make_unique<CPDF_Type3Char>();
 

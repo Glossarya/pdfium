@@ -146,6 +146,22 @@ class CPDF_PageObjectHolder {
   void AddImageMaskBoundingBox(const CFX_FloatRect& box);
   bool HasDirtyStreams() const { return !dirty_streams_.empty(); }
   std::set<int32_t> TakeDirtyStreams();
+  // EmbedPDF: content stream `stream` is to be written again though none of
+  // its objects changed: what changed is what it may name.
+  void MarkStreamDirty(int32_t stream) { dirty_streams_.insert(stream); }
+
+  // EmbedPDF: when content is next written, the resources' entry `name` of
+  // `type` names object `replacement` (CPDF_PageContentGenerator).
+  using ResourceReplacements =
+      std::map<std::pair<ByteString, ByteString>, uint32_t>;
+  void ReplaceResource(const ByteString& type,
+                       const ByteString& name,
+                       uint32_t replacement) {
+    resource_replacements_[{type, name}] = replacement;
+  }
+  ResourceReplacements TakeResourceReplacements() {
+    return std::move(resource_replacements_);
+  }
 
   // EmbedPDF: the name caches below remember which resource name the
   // content generator gave a font, graphics state or colour space. A cached
@@ -207,9 +223,14 @@ class CPDF_PageObjectHolder {
   mutable std::unique_ptr<CPDF_PageObjectGroups> object_groups_;
 
   CTMMap all_ctms_;
+  // EmbedPDF: the CTM the content begins with, in the space of page objects'
+  // matrices: the identity for a page, a form's /Matrix for a form drawn as
+  // page content (its objects' matrices include it).
+  CFX_Matrix ctm_at_beginning_of_content_;
 
   // The indexes of Content streams that are dirty and need to be regenerated.
   std::set<int32_t> dirty_streams_;
+  ResourceReplacements resource_replacements_;
 
   // All the resources from `resources_` that are unused. Hold on to them here
   // in case they need to be restored.

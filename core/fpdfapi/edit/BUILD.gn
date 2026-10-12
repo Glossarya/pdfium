@@ -23,6 +23,8 @@ source_set("edit") {
     "cpdf_path_redactor.h",
     "cpdf_redaction_mark_sanitizer.cpp",
     "cpdf_redaction_mark_sanitizer.h",
+    "cpdf_resourceuse.cpp",
+    "cpdf_resourceuse.h",
     "cpdf_save_object_reader.cpp",
     "cpdf_save_object_reader.h",
     "cpdf_save_trailer.cpp",
@@ -31,6 +33,10 @@ source_set("edit") {
     "cpdf_stringarchivestream.h",
     "cpdf_text_redactor.cpp",
     "cpdf_text_redactor.h",
+    "cpdf_tounicodecmap.cpp",
+    "cpdf_tounicodecmap.h",
+    "cpdf_type3_redactor.cpp",
+    "cpdf_type3_redactor.h",
   ]
   configs += [
     "../../../:pdfium_strict_config",
@@ -72,6 +78,7 @@ pdfium_unittest_source_set("unittests") {
     "cpdf_pagecontentgenerator_unittest.cpp",
     "cpdf_path_redactor_unittest.cpp",
     "cpdf_text_redactor_unittest.cpp",
+    "cpdf_tounicodecmap_unittest.cpp",
   ]
   deps = [
     ":edit",

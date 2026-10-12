@@ -25,6 +25,8 @@ source_set("page") {
     "cpdf_contentmarkitem.h",
     "cpdf_contentmarks.cpp",
     "cpdf_contentmarks.h",
+    "cpdf_contentnames.cpp",
+    "cpdf_contentnames.h",
     "cpdf_contentparser.cpp",
     "cpdf_contentparser.h",
     "cpdf_contentversions.cpp",
@@ -153,6 +155,7 @@ source_set("unit_test_support") {
 pdfium_unittest_source_set("unittests") {
   sources = [
     "cpdf_colorspace_unittest.cpp",
+    "cpdf_contentnames_unittest.cpp",
     "cpdf_devicecs_unittest.cpp",
     "cpdf_function_unittest.cpp",
     "cpdf_pageimagecache_unittest.cpp",

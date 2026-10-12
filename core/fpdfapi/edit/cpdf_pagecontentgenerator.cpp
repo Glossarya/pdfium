@@ -14,13 +14,16 @@
 #include <sstream>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 #include "constants/page_object.h"
 #include "core/fpdfapi/edit/cpdf_contentstream_write_utils.h"
 #include "core/fpdfapi/edit/cpdf_pagecontentmanager.h"
+#include "core/fpdfapi/edit/cpdf_resourceuse.h"
 #include "core/fpdfapi/edit/cpdf_stringarchivestream.h"
 #include "core/fpdfapi/font/cpdf_truetypefont.h"
 #include "core/fpdfapi/font/cpdf_type1font.h"
+#include "core/fpdfapi/page/cpdf_clippath.h"
 #include "core/fpdfapi/page/cpdf_contentmarks.h"
 #include "core/fpdfapi/page/cpdf_docpagedata.h"
 #include "core/fpdfapi/page/cpdf_form.h"
@@ -54,14 +57,31 @@
 #include "core/fxcrt/notreached.h"
 #include "core/fxcrt/numerics/safe_conversions.h"
 #include "core/fxcrt/span.h"
+#include "core/fxge/cfx_graphstate.h"
 
 namespace {
 
-constexpr const char* kResourceKeys[] = {"ExtGState", "Font", "XObject", "ColorSpace", "Pattern", "Shading"};
 
 // Key: The resource type.
 // Value: The resource names of a given type.
 using ResourcesMap = std::map<ByteString, std::set<ByteString>>;
+
+// Whether `holder`, or a form it draws, shows text or clips with it.
+bool ShowsText(const CPDF_PageObjectHolder* holder) {
+  for (const auto& object : *holder) {
+    if (!object->IsActive()) {
+      continue;
+    }
+    const CPDF_ClipPath& clip_path = object->clip_path();
+    const CPDF_FormObject* form = object->AsForm();
+    if (object->IsText() ||
+        (clip_path.HasRef() && clip_path.GetTextCount() > 0) ||
+        (form && ShowsText(form->form()))) {
+      return true;
+    }
+  }
+  return false;
+}
 
 bool TextObjectNeedsTJ(const CPDF_TextObject* obj) {
   // We don’t have a public accessor for char_codes_, but we can reuse CountItems()
@@ -114,6 +134,99 @@ void EndProcessGraphics(fxcrt::ostringstream& buf) {
   buf << " Q\n";
 }
 
+// EmbedPDF: a colour space array as its PDF text. The holder's cache and the
+// resources are matched on it, so the same colour space finds the same name
+// whether it is held directly or by reference, or as the copy a layer
+// transaction, or a form borrowing its parent's resources, makes of it.
+ByteString ColorSpaceKey(const CPDF_Object* object) {
+  RetainPtr<const CPDF_Object> array = object ? object->GetDirect() : nullptr;
+  if (!array || !array->IsArray()) {
+    return ByteString();
+  }
+  fxcrt::ostringstream buf;
+  CPDF_StringArchiveStream archive(&buf);
+  array->WriteTo(&archive, nullptr);
+  return ByteString(buf);
+}
+
+// EmbedPDF: the name `resources` give the colour space `key` describes,
+// `hint` when that is one; empty when they give it none.
+ByteString FindColorSpaceName(const CPDF_Dictionary* resources,
+                              const ByteString& key,
+                              const ByteString& hint) {
+  RetainPtr<const CPDF_Dictionary> spaces =
+      resources ? resources->GetDictFor("ColorSpace") : nullptr;
+  if (!spaces) {
+    return ByteString();
+  }
+  if (!hint.IsEmpty() &&
+      ColorSpaceKey(spaces->GetObjectFor(hint.AsStringView()).Get()) == key) {
+    return hint;
+  }
+  CPDF_DictionaryLocker locker(spaces);
+  for (const auto& [name, value] : locker) {
+    if (ColorSpaceKey(value.Get()) == key) {
+      return name;
+    }
+  }
+  return ByteString();
+}
+
+// EmbedPDF: the line width, cap, join, miter limit and dash: each one the
+// defaults don't already give, or `all` of them.
+void WriteLineState(fxcrt::ostringstream& buf,
+                    const CFX_GraphState& state,
+                    bool all) {
+  const float line_width = state.GetLineWidth();
+  if (all || line_width != 1.0f) {
+    WriteFloat(buf, line_width) << " w ";
+  }
+  const CFX_GraphStateData::LineCap cap = state.GetLineCap();
+  if (all || cap != CFX_GraphStateData::LineCap::kButt) {
+    buf << static_cast<int>(cap) << " J ";
+  }
+  const CFX_GraphStateData::LineJoin join = state.GetLineJoin();
+  if (all || join != CFX_GraphStateData::LineJoin::kMiter) {
+    buf << static_cast<int>(join) << " j ";
+  }
+  const float miter_limit = state.GetMiterLimit();
+  if (all || miter_limit != 10.0f) {
+    WriteFloat(buf, miter_limit) << " M ";
+  }
+  const std::vector<float> dash_array = state.GetLineDashArray();
+  if (all || !dash_array.empty()) {
+    buf << "[";
+    for (size_t i = 0; i < dash_array.size(); ++i) {
+      if (i > 0) {
+        buf << " ";
+      }
+      WriteFloat(buf, dash_array[i]);
+    }
+    buf << "] ";
+    WriteFloat(buf, state.GetLineDashPhase()) << " d ";
+  }
+}
+
+// EmbedPDF: whether one of the ExtGStates `names` sets a line parameter.
+bool SetsLineState(const CPDF_Dictionary* resources,
+                   pdfium::span<const ByteString> names) {
+  RetainPtr<const CPDF_Dictionary> states =
+      resources ? resources->GetDictFor("ExtGState") : nullptr;
+  if (!states) {
+    return false;
+  }
+  for (const ByteString& name : names) {
+    RetainPtr<const CPDF_Dictionary> state =
+        states->GetDictFor(name.AsStringView());
+    if (state && (state->KeyExist("LW") || state->KeyExist("LC") ||
+                  state->KeyExist("LJ") || state->KeyExist("ML") ||
+                  state->KeyExist("D"))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void RecordPageObjectResourceUsage(const CPDF_PageObject* page_object,
                                    ResourcesMap& seen_resources) {
   const ByteString& resource_name = page_object->GetResourceName();
@@ -147,6 +260,27 @@ void RecordPageObjectResourceUsage(const CPDF_PageObject* page_object,
       seen_resources["Pattern"].insert(cs.GetFillPatternResName());
     if (!cs.GetStrokePatternResName().IsEmpty())
       seen_resources["Pattern"].insert(cs.GetStrokePatternResName());
+  }
+  // EmbedPDF: the fonts of the text it is clipped by, written with it.
+  const CPDF_ClipPath& clip_path = page_object->clip_path();
+  if (clip_path.HasRef()) {
+    for (size_t i = 0; i < clip_path.GetTextCount(); ++i) {
+      const CPDF_TextObject* text = clip_path.GetText(i);
+      if (text && !text->GetResourceName().IsEmpty()) {
+        seen_resources["Font"].insert(text->GetResourceName());
+      }
+    }
+  }
+  // EmbedPDF: an image's /ColorSpace can name one of these resources (an
+  // inline image's may; some writers do it for image XObjects too).
+  if (const CPDF_ImageObject* image_object = page_object->AsImage()) {
+    RetainPtr<CPDF_Image> image = image_object->GetImage();
+    RetainPtr<const CPDF_Stream> stream = image ? image->GetStream() : nullptr;
+    RetainPtr<const CPDF_Object> color_space =
+        stream ? stream->GetDict()->GetDirectObjectFor("ColorSpace") : nullptr;
+    if (color_space && color_space->IsName()) {
+      seen_resources["ColorSpace"].insert(color_space->GetString());
+    }
   }
 }
 
@@ -226,7 +360,7 @@ void RemoveOrRestoreUnusedResources(
     RetainPtr<CPDF_Dictionary> resources_dict,
     const ResourcesMap& resources_in_use,
     CPDF_PageObjectHolder::AllRemovedResourcesMap& all_removed_resources_map) {
-  for (const char* resource_key : kResourceKeys) {
+  for (const char* resource_key : CPDF_ResourceUse::kTypes) {
     auto resources_in_use_it = resources_in_use.find(resource_key);
     const std::set<ByteString>* resource_in_use_of_current_type =
         resources_in_use_it != resources_in_use.end()
@@ -239,7 +373,11 @@ void RemoveOrRestoreUnusedResources(
       continue;
     }
 
-    const std::vector<ByteString> keys = current_resource_dict->GetKeys();
+    // EmbedPDF: a name can be in use with no dictionary of its type here (a
+    // default colour space, a name borrowing content mentions).
+    const std::vector<ByteString> keys =
+        current_resource_dict ? current_resource_dict->GetKeys()
+                              : std::vector<ByteString>();
     CPDF_PageObjectHolder::RemovedResourceMap removed_resource_map =
         RemoveUnusedResources(current_resource_dict, keys,
                               resource_in_use_of_current_type);
@@ -342,7 +480,7 @@ void CloneResourcesDictEntries(CPDF_Document* doc,
       // self-referencing loops.
       if (object != resources_dict &&
           object->GetType() == CPDF_Object::kReference &&
-          pdfium::Contains(kResourceKeys, key)) {
+          pdfium::Contains(CPDF_ResourceUse::kTypes, key)) {
         RetainPtr<const CPDF_Object> direct_object = object->GetDirect();
         if (direct_object) {
           entries_to_maybe_clone.emplace_back(key, std::move(direct_object));
@@ -508,6 +646,8 @@ CPDF_PageContentGenerator::GenerateModifiedStreams() {
 
     // Set the default graphic state values. Update CTM to be the identity
     // matrix for the duration of this stream, if it is not already.
+    // EmbedPDF: a form drawn as page content begins at its /Matrix, which
+    // its objects' matrices already include: the inverse undoes it.
     buf << "q\n";
     const CFX_Matrix ctm = obj_holder_->GetCTMAtBeginningOfStream(dirty_stream);
     if (!ctm.IsIdentity()) {
@@ -515,6 +655,12 @@ CPDF_PageContentGenerator::GenerateModifiedStreams() {
     }
 
     ProcessDefaultGraphics(&buf);
+    // EmbedPDF: text is written with its spacing only when not 0. A form
+    // starts with the spacing of the content drawing it
+    // (WriteInheritedTextState()), so it starts again from 0.
+    if (!obj_holder_->IsPage()) {
+      buf << "0 Tc 0 Tw ";
+    }
     streams[dirty_stream] = std::move(buf);
     empty_streams.insert(dirty_stream);
     current_content_marks[dirty_stream] = empty_content_marks.get();
@@ -544,12 +690,10 @@ CPDF_PageContentGenerator::GenerateModifiedStreams() {
     CFX_Matrix prev_ctm;
     CFX_Matrix ctm;
     bool affects_ctm;
-    if (dirty_stream == 0) {
-      // For the first stream, `prev_ctm` is the identity matrix.
-      ctm = obj_holder_->GetCTMAtEndOfStream(dirty_stream);
-      affects_ctm = !ctm.IsIdentity();
-    } else if (dirty_stream > 0) {
-      prev_ctm = obj_holder_->GetCTMAtEndOfStream(dirty_stream - 1);
+    if (dirty_stream >= 0) {
+      // EmbedPDF: the first stream begins at the CTM the content begins with
+      // (a form's /Matrix), not always the identity.
+      prev_ctm = obj_holder_->GetCTMAtBeginningOfStream(dirty_stream);
       ctm = obj_holder_->GetCTMAtEndOfStream(dirty_stream);
       affects_ctm = prev_ctm != ctm;
     } else {
@@ -634,6 +778,11 @@ void CPDF_PageContentGenerator::UpdateResourcesDict(bool regenerated_all_streams
   // shared. Checked for that and clone those as well.
   CloneResourcesDictEntries(document_, resources);
 
+  // EmbedPDF: objects the content is to draw instead of others - a soft mask
+  // or a tiling pattern whose own content changed - under the same names.
+  // After the copies above: they name what the content does.
+  ApplyResourceReplacements(resources.Get());
+
   // EmbedPDF: pruning is only sound when THIS pass rewrote every content
   // stream. `page_objects_` / `seen_resources` describe the SERIALIZED
   // output; an untouched stream's raw ops can reference resources no page
@@ -655,59 +804,168 @@ void CPDF_PageContentGenerator::UpdateResourcesDict(bool regenerated_all_streams
   if (!default_graphics_name_.IsEmpty()) {
     seen_resources["ExtGState"].insert(default_graphics_name_);
   }
+  // EmbedPDF: the fonts forms inherit, which no page object names.
+  seen_resources["Font"].insert(inherited_font_names_.begin(),
+                                inherited_font_names_.end());
+  // EmbedPDF: the default colour spaces apply to device colours without being
+  // named, and content reading these resources without its own names what it
+  // uses only in its own stream.
+  for (const char* name : {"DefaultGray", "DefaultRGB", "DefaultCMYK"}) {
+    seen_resources["ColorSpace"].insert(name);
+  }
+  AddNamesBorrowed(seen_resources);
 
   RemoveOrRestoreUnusedResources(std::move(resources), seen_resources,
                                  obj_holder_->all_removed_resources_map());
 }
 
+void CPDF_PageContentGenerator::ApplyResourceReplacements(
+    CPDF_Dictionary* resources) {
+  for (const auto& [entry, objnum] : obj_holder_->TakeResourceReplacements()) {
+    const auto& [type, name] = entry;
+    RetainPtr<CPDF_Dictionary> names =
+        resources->GetMutableDictFor(type.AsStringView());
+    if (names && names->KeyExist(name.AsStringView())) {
+      names->SetNewFor<CPDF_Reference>(name, document_, objnum);
+    }
+  }
+}
+
+void CPDF_PageContentGenerator::AddNamesBorrowed(
+    ResourcesMap& seen_resources) const {
+  // Content can look names up in these resources without naming them in
+  // its own: a form drawn here, the glyphs of a Type3 font and, on a page,
+  // an annotation's appearance - and what those draw in turn. Only what is
+  // still drawn is walked: what nothing draws any more goes, with what only
+  // it drew.
+  RetainPtr<const CPDF_Dictionary> resources = obj_holder_->GetResources();
+  if (!resources) {
+    return;
+  }
+  RetainPtr<const CPDF_Dictionary> page_resources =
+      obj_holder_->IsPage() ? resources : obj_holder_->GetPageResources();
+  CPDF_ResourceUse use(document_, resources);
+  use.SetPageResources(page_resources);
+
+  // The forms drawn here (an inactive object is not written), and the
+  // glyphs of the Type3 fonts this holder's own text selects.
+  for (const auto& object : *obj_holder_) {
+    const CPDF_FormObject* form_object =
+        object->IsActive() ? object->AsForm() : nullptr;
+    RetainPtr<const CPDF_Stream> stream =
+        form_object ? form_object->form()->GetStream() : nullptr;
+    if (!stream) {
+      continue;
+    }
+    RetainPtr<const CPDF_Dictionary> own =
+        stream->GetDict()->GetDictFor("Resources");
+    use.Walk(stream.Get(),
+             CPDF_Form::ChooseResourcesDict(own.Get(), resources.Get(),
+                                            page_resources.Get()),
+             page_resources.Get());
+  }
+  use.WalkType3Glyphs(seen_resources["Font"], resources.Get(),
+                      page_resources.Get());
+
+  // Appearances: a form whose page resources are the page's
+  // (CPDF_DocPageData::CreateForm()).
+  RetainPtr<const CPDF_Array> annots =
+      obj_holder_->IsPage() ? obj_holder_->GetDict()->GetArrayFor("Annots")
+                            : nullptr;
+  for (size_t i = 0; annots && i < annots->size(); ++i) {
+    RetainPtr<const CPDF_Dictionary> annot = annots->GetDictAt(i);
+    RetainPtr<const CPDF_Dictionary> ap =
+        annot ? annot->GetDictFor("AP") : nullptr;
+    if (!ap) {
+      continue;
+    }
+    for (const char* mode : {"N", "R", "D"}) {
+      RetainPtr<const CPDF_Object> entry = ap->GetDirectObjectFor(mode);
+      std::vector<RetainPtr<const CPDF_Stream>> appearances;
+      if (const CPDF_Stream* stream = entry ? entry->AsStream() : nullptr) {
+        appearances.push_back(pdfium::WrapRetain(stream));
+      } else if (const CPDF_Dictionary* states =
+                     entry ? entry->AsDictionary() : nullptr) {
+        CPDF_DictionaryLocker state_locker(pdfium::WrapRetain(states));
+        for (const auto& state : state_locker) {
+          if (RetainPtr<const CPDF_Stream> stream =
+                  ToStream(state.second->GetDirect())) {
+            appearances.push_back(std::move(stream));
+          }
+        }
+      }
+      for (const auto& stream : appearances) {
+        RetainPtr<const CPDF_Dictionary> own =
+            stream->GetDict()->GetDictFor("Resources");
+        use.Walk(stream.Get(),
+             CPDF_Form::ChooseResourcesDict(own.Get(), nullptr,
+                                            page_resources.Get()),
+             page_resources.Get());
+      }
+    }
+  }
+
+  for (const auto& [type, names] : use.used()) {
+    seen_resources[type].insert(names.begin(), names.end());
+  }
+}
+
 ByteString CPDF_PageContentGenerator::RealizeColorSpaceObject(
     const CPDF_ColorSpace* cs) {
-  if (!cs) return ByteString();
-
-  const auto fam = cs->GetFamily();
-  if (fam == CPDF_ColorSpace::Family::kDeviceGray ||
-      fam == CPDF_ColorSpace::Family::kDeviceRGB  ||
-      fam == CPDF_ColorSpace::Family::kDeviceCMYK) {
-    return ByteString(); // device spaces don't need a resource
+  if (auto it = color_space_names_.find(cs); it != color_space_names_.end()) {
+    return it->second;
+  }
+  RetainPtr<const CPDF_Array> array = cs ? cs->GetArray() : nullptr;
+  const ByteString key = ColorSpaceKey(array.Get());
+  if (key.IsEmpty()) {
+    return ByteString();
   }
 
-  if (fam == CPDF_ColorSpace::Family::kICCBased) {
-    RetainPtr<CPDF_IccProfile> profile = cs->GetIccProfile();
-    if (!profile) return ByteString();
-
-    RetainPtr<const CPDF_StreamAcc> acc = profile->GetStreamAcc();
-    if (!acc)
-      return ByteString();
-    RetainPtr<const CPDF_Stream> icc = acc->GetStream();
-    if (!icc)
-      return ByteString();
-
-    // Stable cache key based on stream objnum
-    ByteString key = ByteString::Format("ICCB:%u", icc->GetObjNum());
-    if (auto hit = obj_holder_->ColorSpaceMapSearch(key))
-      return *hit;
-
-    // IMPORTANT: make array indirect
-    RetainPtr<CPDF_Array> arr = document_->NewIndirect<CPDF_Array>();
-    arr->AppendNew<CPDF_Name>("ICCBased");
-    arr->AppendNew<CPDF_Reference>(document_, icc->GetObjNum());
-
-    ByteString name = RealizeResource(arr.Get(), "ColorSpace");
-    obj_holder_->ColorSpaceMapInsert(key, name);
-    return name;
+  // The name these resources give it: the one this holder gave it before,
+  // or the /CS0 the content was written with. Only a colour space they don't
+  // name yet gets a name of its own.
+  const ByteString hint =
+      obj_holder_->ColorSpaceMapSearch(key).value_or(ByteString());
+  ByteString name =
+      FindColorSpaceName(obj_holder_->GetResources().Get(), key, hint);
+  if (name.IsEmpty()) {
+    // A resource is written as a reference: a direct array gets a copy of
+    // its own to refer to.
+    RetainPtr<const CPDF_Object> resource = array;
+    if (!array->GetObjNum()) {
+      RetainPtr<CPDF_Object> copy = array->Clone();
+      document_->AddIndirectObject(copy);
+      resource = std::move(copy);
+    }
+    name = RealizeResource(resource.Get(), "ColorSpace");
   }
-
-  // (CalGray/CalRGB/Lab/Separation/DeviceN can be added later)
-  return ByteString();
+  obj_holder_->ColorSpaceMapInsert(key, name);
+  color_space_names_[cs] = name;
+  return name;
 }
 
 bool CPDF_PageContentGenerator::EmitColor(fxcrt::ostringstream& buf,
                                           const CPDF_Color* color,
                                           bool is_stroke,
                                           CPDF_PageObject* owner) {
-  if (!color) return false;
+  if (!color || !color->GetColorSpace()) {
+    return false;
+  }
 
-  // Handle pattern colors: emit "/Pattern cs /PatternName scn"
+  CPDF_ColorState& color_state = owner->mutable_color_state();
+  auto set_color_space_name = [&](ByteString name) {
+    if (is_stroke) {
+      color_state.SetStrokeColorSpaceResName(std::move(name));
+    } else {
+      color_state.SetFillColorSpaceResName(std::move(name));
+    }
+  };
+  const char* const select_color_space = is_stroke ? " CS " : " cs ";
+  const char* const set_color = is_stroke ? " SCN " : " scn ";
+
+  // Pattern colours: "/Pattern cs /P0 scn". An uncoloured pattern paints in a
+  // colour of its pattern colour space's base, so that space is written
+  // instead, with the colour before the pattern: "/CS0 cs 0 .6 0 /P0 scn".
   if (color->IsPattern()) {
     RetainPtr<CPDF_Pattern> pattern = color->GetPattern();
     if (!pattern)
@@ -729,10 +987,18 @@ bool CPDF_PageContentGenerator::EmitColor(fxcrt::ostringstream& buf,
     } else {
       owner->mutable_color_state().SetFillPatternResName(pattern_name);
     }
-    
-    // Emit: /Pattern cs /PatternName scn  (or CS/SCN for stroke)
-    buf << "/Pattern" << (is_stroke ? " CS " : " cs ");
-    buf << "/" << PDF_NameEncode(pattern_name) << (is_stroke ? " SCN " : " scn ");
+
+    const ByteString color_space =
+        RealizeColorSpaceObject(color->GetColorSpace());
+    set_color_space_name(color_space);
+    buf << "/"
+        << PDF_NameEncode(color_space.IsEmpty() ? ByteString("Pattern")
+                                                : color_space)
+        << select_color_space;
+    for (float component : color->GetPatternComps()) {
+      WriteFloat(buf, component) << " ";
+    }
+    buf << "/" << PDF_NameEncode(pattern_name) << set_color;
     return true;
   }
 
@@ -740,9 +1006,7 @@ bool CPDF_PageContentGenerator::EmitColor(fxcrt::ostringstream& buf,
     auto comps = color->GetRawNonPatternComps();
     if (comps.size() == 1) {
       WriteFloat(buf, comps[0]) << (is_stroke ? " G " : " g ");
-      // device space → clear any remembered resource name
-      if (is_stroke) owner->mutable_color_state().SetStrokeColorSpaceResName({});
-      else           owner->mutable_color_state().SetFillColorSpaceResName({});
+      set_color_space_name({});
       return true;
     }
     return false;
@@ -754,8 +1018,7 @@ bool CPDF_PageContentGenerator::EmitColor(fxcrt::ostringstream& buf,
     WriteFloat(buf, rgb->red)   << " ";
     WriteFloat(buf, rgb->green) << " ";
     WriteFloat(buf, rgb->blue)  << (is_stroke ? " RG " : " rg ");
-    if (is_stroke) owner->mutable_color_state().SetStrokeColorSpaceResName({});
-    else           owner->mutable_color_state().SetFillColorSpaceResName({});
+    set_color_space_name({});
     return true;
   }
 
@@ -766,29 +1029,38 @@ bool CPDF_PageContentGenerator::EmitColor(fxcrt::ostringstream& buf,
       WriteFloat(buf, comps[1]) << " ";
       WriteFloat(buf, comps[2]) << " ";
       WriteFloat(buf, comps[3]) << (is_stroke ? " K " : " k ");
-      if (is_stroke) owner->mutable_color_state().SetStrokeColorSpaceResName({});
-      else           owner->mutable_color_state().SetFillColorSpaceResName({});
+      set_color_space_name({});
       return true;
     }
     return false;
   }
 
-  // Non-device: realize resource + scn/SCN
-  const CPDF_ColorSpace* cs = color->GetColorSpace();
-  ByteString cs_name = RealizeColorSpaceObject(cs);
-  if (cs_name.IsEmpty()) return false;
+  // Every other colour space - CalGray, CalRGB, Lab, ICCBased, Indexed,
+  // Separation, DeviceN - is written as the array it was read from, by name:
+  // "/CS0 cs 1 scn".
+  const ByteString color_space = RealizeColorSpaceObject(color->GetColorSpace());
+  if (color_space.IsEmpty()) {
+    // One not read from an array: its RGB equivalent, never no colour (which
+    // would leave the object black).
+    std::optional<FX_RGB_STRUCT<float>> rgb = color->GetRGB();
+    if (!rgb) {
+      return false;
+    }
+    WriteFloat(buf, rgb->red) << " ";
+    WriteFloat(buf, rgb->green) << " ";
+    WriteFloat(buf, rgb->blue) << (is_stroke ? " RG " : " rg ");
+    set_color_space_name({});
+    return true;
+  }
 
-  if (is_stroke) owner->mutable_color_state().SetStrokeColorSpaceResName(cs_name);
-  else           owner->mutable_color_state().SetFillColorSpaceResName(cs_name);
-
-  buf << "/" << PDF_NameEncode(cs_name) << (is_stroke ? " CS " : " cs ");
-
+  set_color_space_name(color_space);
+  buf << "/" << PDF_NameEncode(color_space) << select_color_space;
   auto comps = color->GetRawNonPatternComps();
   for (size_t i = 0; i < comps.size(); ++i) {
     if (i) buf << " ";
     WriteFloat(buf, comps[i]);
   }
-  buf << (is_stroke ? " SCN " : " scn ");
+  buf << set_color;
   return true;
 }
 
@@ -1019,6 +1291,7 @@ void CPDF_PageContentGenerator::ProcessForm(fxcrt::ostringstream* buf,
   pFormObj->SetResourceName(name);
 
   ProcessGraphics(buf, pFormObj);
+  WriteInheritedTextState(*buf, pFormObj);
 
   if (!matrix.IsIdentity()) {
     WriteMatrix(*buf, matrix) << " cm ";
@@ -1148,71 +1421,115 @@ void CPDF_PageContentGenerator::ProcessGraphics(fxcrt::ostringstream* buf,
   if (const CPDF_Color* stroke = pPageObj->color_state().GetStrokeColor()) {
     EmitColor(*buf, stroke, /*is_stroke=*/true, pPageObj);
   }
-  float line_width = pPageObj->graph_state().GetLineWidth();
-  if (line_width != 1.0f) {
-    WriteFloat(*buf, line_width) << " w ";
+  // EmbedPDF: names the resources no longer define are forgotten, and the
+  // state is made again (ProcessGraphicsState): an aborted layer transaction
+  // drops the graphics state this generator made for the object, while the
+  // object keeps its name.
+  if (!std::ranges::all_of(pPageObj->GetGraphicsResourceNames(),
+                           [this](const ByteString& name) {
+                             return obj_holder_->ResourcesDefine("ExtGState",
+                                                                 name);
+                           })) {
+    pPageObj->mutable_general_state().SetGraphicsResourceNames({});
   }
-  CFX_GraphStateData::LineCap lineCap = pPageObj->graph_state().GetLineCap();
-  if (lineCap != CFX_GraphStateData::LineCap::kButt) {
-    *buf << static_cast<int>(lineCap) << " J ";
+  // EmbedPDF: an ExtGState can set the line width, cap, join, miter limit and
+  // dash too. The object's values are the ones the content set last, so
+  // after an ExtGState that sets any of them, all of them are written.
+  const CFX_GraphState& graph_state = pPageObj->graph_state();
+  const bool graphics_state_sets_lines =
+      SetsLineState(obj_holder_->GetResources().Get(),
+                    pPageObj->GetGraphicsResourceNames());
+  if (!graphics_state_sets_lines) {
+    WriteLineState(*buf, graph_state, /*all=*/false);
   }
-  CFX_GraphStateData::LineJoin lineJoin = pPageObj->graph_state().GetLineJoin();
-  if (lineJoin != CFX_GraphStateData::LineJoin::kMiter) {
-    *buf << static_cast<int>(lineJoin) << " j ";
+  ProcessClip(buf, pPageObj);
+  ProcessGraphicsState(buf, pPageObj);
+  if (graphics_state_sets_lines) {
+    WriteLineState(*buf, graph_state, /*all=*/true);
   }
-  std::vector<float> dash_array = pPageObj->graph_state().GetLineDashArray();
-  if (dash_array.size()) {
-    *buf << "[";
-    for (size_t i = 0; i < dash_array.size(); ++i) {
-      if (i > 0) {
-        *buf << " ";
-      }
-      WriteFloat(*buf, dash_array[i]);
-    }
-    *buf << "] ";
-    WriteFloat(*buf, pPageObj->graph_state().GetLineDashPhase()) << " d ";
-  }
+}
 
+void CPDF_PageContentGenerator::ProcessClip(fxcrt::ostringstream* buf,
+                                            CPDF_PageObject* pPageObj) {
   const CPDF_ClipPath& clip_path = pPageObj->clip_path();
-  if (clip_path.HasRef()) {
-    for (size_t i = 0; i < clip_path.GetPathCount(); ++i) {
-      CPDF_Path path = clip_path.GetPath(i);
-      ProcessPathPoints(buf, &path);
-      switch (clip_path.GetClipType(i)) {
-        case CFX_FillRenderOptions::FillType::kWinding:
-          *buf << " W ";
-          break;
-        case CFX_FillRenderOptions::FillType::kEvenOdd:
-          *buf << " W* ";
-          break;
-        case CFX_FillRenderOptions::FillType::kNoFill:
-          NOTREACHED();
-      }
-
-      // Use a no-op path-painting operator to terminate the path without
-      // causing any marks to be placed on the page.
-      *buf << "n ";
+  if (!clip_path.HasRef()) {
+    return;
+  }
+  for (size_t i = 0; i < clip_path.GetPathCount(); ++i) {
+    CPDF_Path path = clip_path.GetPath(i);
+    ProcessPathPoints(buf, &path);
+    switch (clip_path.GetClipType(i)) {
+      case CFX_FillRenderOptions::FillType::kWinding:
+        *buf << " W ";
+        break;
+      case CFX_FillRenderOptions::FillType::kEvenOdd:
+        *buf << " W* ";
+        break;
+      case CFX_FillRenderOptions::FillType::kNoFill:
+        NOTREACHED();
     }
+
+    // Use a no-op path-painting operator to terminate the path without
+    // causing any marks to be placed on the page.
+    *buf << "n ";
   }
 
+  // Each text object of a BT ... ET that clipped intersects the clip with its
+  // glyphs at the ET. They are written invisible (7 Tr): text that also
+  // paints (modes 4 to 6) is drawn by its own object. A null entry ends each
+  // BT ... ET.
+  const size_t text_count = clip_path.GetTextCount();
+  for (size_t i = 0; i < text_count; ++i) {
+    *buf << "BT ";
+    for (; i < text_count && clip_path.GetText(i); ++i) {
+      CPDF_TextObject* text = clip_path.GetText(i);
+      RetainPtr<CPDF_Font> font;
+      const ByteString font_name = RealizeFont(text, &font);
+      if (font_name.IsEmpty()) {
+        continue;
+      }
+      WriteMatrix(*buf, text->GetTextMatrix()) << " Tm ";
+      WriteTextShowing(*buf, text, font.Get(), font_name,
+                       TextRenderingMode::MODE_CLIP);
+      // Spacing is text state: the text drawn next would inherit it.
+      if (text->GetCharSpace() != 0.0f) {
+        *buf << " 0 Tc";
+      }
+      if (text->GetWordSpace() != 0.0f) {
+        *buf << " 0 Tw";
+      }
+      *buf << " ";
+    }
+    *buf << "ET ";
+  }
+}
+
+void CPDF_PageContentGenerator::ProcessGraphicsState(
+    fxcrt::ostringstream* buf,
+    CPDF_PageObject* pPageObj) {
   // Emit any existing graphics state resources first (these may contain
   // properties beyond alpha/blend like soft masks, overprint modes, etc.)
   pdfium::span<const ByteString> existing_gs_names =
       pPageObj->GetGraphicsResourceNames();
-  // EmbedPDF: names the resources no longer define are forgotten, and the
-  // state below is made again: an aborted layer transaction drops the
-  // graphics state this generator made for the object, while the object
-  // keeps its name.
-  if (!std::ranges::all_of(existing_gs_names, [this](const ByteString& name) {
-        return obj_holder_->ResourcesDefine("ExtGState", name);
-      })) {
-    pPageObj->mutable_general_state().SetGraphicsResourceNames({});
-    existing_gs_names = pPageObj->GetGraphicsResourceNames();
-  }
   if (!existing_gs_names.empty()) {
+    // EmbedPDF: a soft mask is placed by the CTM in effect when the gs that
+    // set it ran, which the objects' matrices no longer carry: set that CTM
+    // around the gs operators.
+    const CPDF_GeneralState& general_state = pPageObj->general_state();
+    const CFX_Matrix* mask_ctm = general_state.GetSoftMask()
+                                     ? general_state.GetSMaskMatrix()
+                                     : nullptr;
+    const bool place_mask =
+        mask_ctm && !mask_ctm->IsIdentity() && mask_ctm->IsInvertible();
+    if (place_mask) {
+      WriteMatrix(*buf, *mask_ctm) << " cm ";
+    }
     // Emit all existing ExtGState resources with their original names
     for (const ByteString& gs_name : existing_gs_names) {
       *buf << "/" << PDF_NameEncode(gs_name) << " gs ";
+    }
+    if (place_mask) {
+      WriteMatrix(*buf, mask_ctm->GetInverse()) << " cm ";
     }
     return;
   }
@@ -1308,15 +1625,38 @@ void CPDF_PageContentGenerator::ProcessText(fxcrt::ostringstream* buf,
     *buf << "1 0 0 1 0 0 Tm ";
   }
 
+  RetainPtr<CPDF_Font> font;
+  const ByteString font_name = RealizeFont(pTextObj, &font);
+  if (font_name.IsEmpty()) {
+    *buf << "ET";  // bail out cleanly
+    EndProcessGraphics(*buf);
+    return;
+  }
+  WriteTextShowing(*buf, pTextObj, font.Get(), font_name,
+                   pTextObj->GetTextRenderMode());
+  *buf << " ET";
+  EndProcessGraphics(*buf);
+}
+
+ByteString CPDF_PageContentGenerator::RealizeFont(CPDF_TextObject* text,
+                                                  RetainPtr<CPDF_Font>* font) {
+  *font = text->GetFont();
+  ByteString dict_name = RealizeFont(font);
+  if (!dict_name.IsEmpty()) {
+    text->SetResourceName(dict_name);
+  }
+  return dict_name;
+}
+
+ByteString CPDF_PageContentGenerator::RealizeFont(RetainPtr<CPDF_Font>* font) {
   // Ensure we have a font.
-  RetainPtr<CPDF_Font> font(pTextObj->GetFont());
-  if (!font) {
-    font = CPDF_Font::GetStockFont(document_, "Helvetica");
+  if (!*font) {
+    *font = CPDF_Font::GetStockFont(document_, "Helvetica");
   }
 
   // --- Object-number keyed font resource binding ---
   // Get the font dictionary; if it's inline, make it indirect so it has a stable objnum.
-  RetainPtr<const CPDF_Object> pFontDict = font->GetFontDict();
+  RetainPtr<const CPDF_Object> pFontDict = (*font)->GetFontDict();
   if (pFontDict && pFontDict->IsInline()) {
     RetainPtr<CPDF_Object> clone = pFontDict->Clone();
     document_->AddIndirectObject(clone);
@@ -1339,20 +1679,18 @@ void CPDF_PageContentGenerator::ProcessText(fxcrt::ostringstream* buf,
     // Last-resort path (should be rare): name by (type, base name) like before.
     FontData data;
     const CPDF_FontEncoding* pEncoding = nullptr;
-    if (font->IsType1Font()) {
+    if ((*font)->IsType1Font()) {
       data.type = "Type1";
-      pEncoding = font->AsType1Font()->GetEncoding();
-    } else if (font->IsTrueTypeFont()) {
+      pEncoding = (*font)->AsType1Font()->GetEncoding();
+    } else if ((*font)->IsTrueTypeFont()) {
       data.type = "TrueType";
-      pEncoding = font->AsTrueTypeFont()->GetEncoding();
-    } else if (font->IsCIDFont()) {
+      pEncoding = (*font)->AsTrueTypeFont()->GetEncoding();
+    } else if ((*font)->IsCIDFont()) {
       data.type = "Type0";
     } else {
-      *buf << "ET";  // bail out cleanly
-      EndProcessGraphics(*buf);
-      return;
+      return ByteString();
     }
-    data.baseFont = font->GetBaseFontName();
+    data.baseFont = (*font)->GetBaseFontName();
 
     if (auto hit = obj_holder_->FontsMapSearch(data)) {
       dict_name = *hit;
@@ -1371,30 +1709,53 @@ void CPDF_PageContentGenerator::ProcessText(fxcrt::ostringstream* buf,
       obj_holder_->FontsMapInsert(data, dict_name);
     }
   }
+  return dict_name;
+}
 
-  pTextObj->SetResourceName(dict_name);
-
-  *buf << "/" << PDF_NameEncode(dict_name) << " ";
-  WriteFloat(*buf, pTextObj->GetFontSize()) << " Tf ";
-  *buf << static_cast<int>(pTextObj->GetTextRenderMode()) << " Tr ";
-
-  const float tc = pTextObj->GetCharSpace();
-  const float tw = pTextObj->GetWordSpace();
-
-  if (tc != 0.0f) WriteFloat(*buf, tc) << " Tc ";
-  if (tw != 0.0f) WriteFloat(*buf, tw) << " Tw ";
-
-  if (TextObjectNeedsTJ(pTextObj)) {
-    WriteTextAsTJ(*buf, pTextObj, font.Get());
-    *buf << " ET";
-  } else {
-    ByteString text;
-    for (uint32_t charcode : pTextObj->GetCharCodes()) {
-      if (charcode != CPDF_Font::kInvalidCharCode)
-        font->AppendChar(&text, charcode);
-    }
-    *buf << PDF_HexEncodeString(text.AsStringView()) << " Tj ET";
+void CPDF_PageContentGenerator::WriteInheritedTextState(
+    fxcrt::ostringstream& buf,
+    CPDF_FormObject* form_object) {
+  const CPDF_TextState& state = form_object->text_state();
+  if (!state.HasRef() || !ShowsText(form_object->form())) {
+    return;
   }
+  if (RetainPtr<CPDF_Font> font = state.GetFont()) {
+    const ByteString font_name = RealizeFont(&font);
+    if (!font_name.IsEmpty()) {
+      inherited_font_names_.insert(font_name);
+      buf << "/" << PDF_NameEncode(font_name) << " ";
+      WriteFloat(buf, state.GetFontSize()) << " Tf ";
+    }
+  }
+  buf << static_cast<int>(state.GetTextMode()) << " Tr ";
+  WriteFloat(buf, state.GetCharSpace()) << " Tc ";
+  WriteFloat(buf, state.GetWordSpace()) << " Tw ";
+}
 
-  EndProcessGraphics(*buf);
+void CPDF_PageContentGenerator::WriteTextShowing(
+    fxcrt::ostringstream& buf,
+    CPDF_TextObject* text,
+    CPDF_Font* font,
+    const ByteString& font_name,
+    TextRenderingMode render_mode) {
+  buf << "/" << PDF_NameEncode(font_name) << " ";
+  WriteFloat(buf, text->GetFontSize()) << " Tf ";
+  buf << static_cast<int>(render_mode) << " Tr ";
+
+  const float tc = text->GetCharSpace();
+  const float tw = text->GetWordSpace();
+
+  if (tc != 0.0f) WriteFloat(buf, tc) << " Tc ";
+  if (tw != 0.0f) WriteFloat(buf, tw) << " Tw ";
+
+  if (TextObjectNeedsTJ(text)) {
+    WriteTextAsTJ(buf, text, font);
+  } else {
+    ByteString showing;
+    for (uint32_t charcode : text->GetCharCodes()) {
+      if (charcode != CPDF_Font::kInvalidCharCode)
+        font->AppendChar(&showing, charcode);
+    }
+    buf << PDF_HexEncodeString(showing.AsStringView()) << " Tj";
+  }
 }

@@ -6,7 +6,10 @@
 
 #include <array>
 #include <optional>
+#include <set>
 
+#include "core/fpdfapi/font/cpdf_font.h"
+#include "core/fxcrt/retain_ptr.h"
 #include "core/fxcrt/span.h"
 #include "core/fxcrt/fx_coordinates.h"
 
@@ -35,6 +38,8 @@ struct RedactRegion {
 struct RedactResult {
   bool succeeded = true;
   bool changed = false;
+  // EmbedPDF: the Type3 fonts text lost glyphs of (RedactType3Glyphs()).
+  std::set<RetainPtr<CPDF_Font>> type3_fonts;
 };
 
 // Build a region from FS_QUADPOINTSF-slot corners (US, UE, LS, LE).

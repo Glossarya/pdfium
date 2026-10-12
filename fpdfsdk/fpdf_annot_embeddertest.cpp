@@ -1126,6 +1126,48 @@ TEST_F(FPDFAnnotEmbedderTest, DrawingAnnotationsWithoutAppearancesWritesNone) {
   EXPECT_TRUE(drawn);
 }
 
+// A redaction mark another app wrote without an appearance (redact_annot.pdf)
+// is drawn from one built in memory: drawing writes no /AP or /RO and adds no
+// object, so on a layer it leaves the read-only base alone.
+TEST_F(FPDFAnnotEmbedderTest, DrawingARedactionMarkWithoutAppearanceWritesNone) {
+  FileAccessForTesting base_access("redact_annot.pdf");
+  EPDF_BASE_DOCUMENT base = EPDF_LoadBaseDocument(&base_access, nullptr);
+  ASSERT_TRUE(base);
+  {
+    ScopedFPDFDocument layer(
+        EPDFLayer_OpenLayer(base, nullptr, nullptr, nullptr));
+    ASSERT_TRUE(layer);
+    const CPDF_Document* pdf = CPDFDocumentFromFPDFDocument(layer.get());
+    const uint32_t last_object = pdf->GetLastObjNum();
+    ScopedFPDFPage page(FPDF_LoadPage(layer.get(), 0));
+    ASSERT_TRUE(page);
+    {
+      ScopedFPDFAnnotation mark(FPDFPage_GetAnnot(page.get(), 0));
+      ASSERT_EQ(FPDF_ANNOT_REDACT, FPDFAnnot_GetSubtype(mark.get()));
+      ASSERT_FALSE(FPDFAnnot_HasKey(mark.get(), "AP"));
+    }
+
+    ScopedFPDFBitmap bitmap(FPDFBitmap_Create(612, 792, /*alpha=*/0));
+    FPDFBitmap_FillRect(bitmap.get(), 0, 0, 612, 792, 0xFFFFFFFF);
+    FPDF_RenderPageBitmap(bitmap.get(), page.get(), 0, 0, 612, 792,
+                          /*rotate=*/0, FPDF_ANNOT);
+
+    ScopedFPDFAnnotation mark(FPDFPage_GetAnnot(page.get(), 0));
+    EXPECT_FALSE(FPDFAnnot_HasKey(mark.get(), "AP"));
+    EXPECT_FALSE(FPDFAnnot_HasKey(mark.get(), "RO"));
+    EXPECT_EQ(last_object, pdf->GetLastObjNum());
+    // The red outline is drawn all the same, along the mark's top edge (page
+    // y 542, row 250).
+    bool outlined = false;
+    for (int y = 248; y < 253 && !outlined; ++y) {
+      const uint32_t color = GetPixelColor(bitmap.get(), 320, y);
+      outlined = ((color >> 16) & 0xFF) > 200 && ((color >> 8) & 0xFF) < 100;
+    }
+    EXPECT_TRUE(outlined);
+  }
+  EPDF_ReleaseBaseDocument(base);
+}
+
 TEST_F(FPDFAnnotEmbedderTest, DrawingRectIsWhereTheAppearanceIsDrawn) {
   ScopedFPDFDocument doc(FPDF_CreateNewDocument());
   ASSERT_TRUE(doc);

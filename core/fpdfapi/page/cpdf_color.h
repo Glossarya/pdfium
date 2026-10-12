@@ -55,6 +55,11 @@ class CPDF_Color {
   // Should only be called if IsPattern() returns true.
   RetainPtr<CPDF_Pattern> GetPattern() const;
 
+  // EmbedPDF: should only be called if IsPattern() returns true. The colour
+  // an uncoloured pattern paints in: one component for each of its pattern
+  // colour space's base, none for a coloured pattern.
+  pdfium::span<const float> GetPatternComps() const;
+
  protected:
   bool IsPatternInternal() const;
 

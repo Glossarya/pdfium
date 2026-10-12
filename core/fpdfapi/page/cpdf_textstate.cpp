@@ -12,6 +12,7 @@
 
 #include "core/fpdfapi/font/cpdf_font.h"
 #include "core/fpdfapi/page/cpdf_docpagedata.h"
+#include "core/fpdfapi/parser/cpdf_dictionary.h"
 
 CPDF_TextState::CPDF_TextState() = default;
 
@@ -27,6 +28,15 @@ void CPDF_TextState::Emplace() {
 
 RetainPtr<CPDF_Font> CPDF_TextState::GetFont() const {
   return ref_.GetObject()->font_;
+}
+
+RetainPtr<const CPDF_Dictionary> CPDF_TextState::GetFontResources() const {
+  return ref_.GetObject()->font_resources_;
+}
+
+void CPDF_TextState::SetFontResources(
+    RetainPtr<const CPDF_Dictionary> resources) {
+  ref_.GetPrivateCopy()->font_resources_ = std::move(resources);
 }
 
 void CPDF_TextState::SetFont(RetainPtr<CPDF_Font> font) {
@@ -97,6 +107,7 @@ CPDF_TextState::TextData::TextData() = default;
 
 CPDF_TextState::TextData::TextData(const TextData& that)
     : font_(that.font_),
+      font_resources_(that.font_resources_),
       document_(that.document_),
       font_size_(that.font_size_),
       char_space_(that.char_space_),

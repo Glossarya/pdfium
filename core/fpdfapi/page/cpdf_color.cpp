@@ -6,6 +6,7 @@
 
 #include "core/fpdfapi/page/cpdf_color.h"
 
+#include <algorithm>
 #include <optional>
 #include <utility>
 #include <variant>
@@ -154,4 +155,13 @@ RetainPtr<CPDF_Pattern> CPDF_Color::GetPattern() const {
   const auto& pattern_value =
       std::get<std::unique_ptr<PatternValue>>(color_data_);
   return pattern_value->GetPattern();
+}
+
+pdfium::span<const float> CPDF_Color::GetPatternComps() const {
+  DCHECK(IsPattern());
+  const auto& value = std::get<std::unique_ptr<PatternValue>>(color_data_);
+  // A pattern colour space counts its base's components plus the pattern.
+  const size_t count = cs_->ComponentCount();
+  const size_t base_count = count > 0 ? count - 1 : 0;
+  return value->GetComps().first(std::min(base_count, kMaxPatternColorComps));
 }

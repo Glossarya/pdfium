@@ -37,6 +37,23 @@ const CPDF_Dictionary* CPDF_Form::ChooseResourcesDict(
   return pParentResources ? pParentResources : pPageResources;
 }
 
+// static
+RetainPtr<const CPDF_Dictionary> CPDF_Form::ChooseResourcesOfType(
+    const CPDF_Dictionary* resources,
+    const CPDF_Dictionary* page_resources,
+    ByteStringView type) {
+  if (!resources) {
+    return nullptr;
+  }
+  if (RetainPtr<const CPDF_Dictionary> dict = resources->GetDictFor(type)) {
+    return dict;
+  }
+  if (resources == page_resources || !page_resources) {
+    return nullptr;
+  }
+  return page_resources->GetDictFor(type);
+}
+
 CPDF_Form::CPDF_Form(CPDF_Document* doc,
                      RetainPtr<CPDF_Dictionary> pPageResources,
                      RetainPtr<CPDF_Stream> pFormStream)
@@ -230,6 +247,11 @@ bool CPDF_Form::CloneBackingStreamForWrite() {
   if (!doc || !source) {
     return false;
   }
+  // EmbedPDF: a form copied once already draws its own copy; a later write
+  // (redaction, then the Type3 glyphs it took) goes to the same one.
+  if (private_stream_objnum_ && source->GetObjNum() == private_stream_objnum_) {
+    return true;
+  }
 
   RetainPtr<CPDF_Stream> clone = ToStream(source->CloneForHolder(doc));
   if (!clone) {
@@ -268,7 +290,8 @@ bool CPDF_Form::CloneBackingStreamForWrite() {
     clone->GetMutableDict()->SetFor("Resources", std::move(cloned_resources));
   }
 
-  if (doc->AddIndirectObject(clone) == 0) {
+  private_stream_objnum_ = doc->AddIndirectObject(clone);
+  if (private_stream_objnum_ == 0) {
     return false;
   }
   RebindFormStream(std::move(clone), /*reset_parsed_content=*/false);

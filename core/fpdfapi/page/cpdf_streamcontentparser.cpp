@@ -452,7 +452,9 @@ CPDF_StreamContentParser::CPDF_StreamContentParser(
 
   // Initialize `all_ctms_`, as there is a CTM, even if the stream contains no
   // cm operators.
-  all_ctms_[0] = cur_states_->current_transformation_matrix();
+  all_ctms_[0] = cur_states_->current_transformation_matrix() *
+                 mt_content_to_user_;
+  ctm_at_beginning_of_content_ = all_ctms_[0];
 }
 
 CPDF_StreamContentParser::~CPDF_StreamContentParser() {
@@ -671,26 +673,31 @@ void CPDF_StreamContentParser::Handle_BeginMarkedContent_Dictionary() {
   content_marks_stack_.push(std::move(new_marks));
 }
 
-void CPDF_StreamContentParser::Handle_BeginImage() {
-  FX_FILESIZE savePos = syntax_->GetPos();
-  auto dict = document_->New<CPDF_Dictionary>();
+// static
+RetainPtr<CPDF_Stream> CPDF_StreamContentParser::ReadInlineImage(
+    CPDF_StreamParser* syntax,
+    CPDF_Document* document,
+    const std::function<RetainPtr<const CPDF_Object>(const ByteString&)>&
+        find_color_space) {
+  FX_FILESIZE savePos = syntax->GetPos();
+  auto dict = document->New<CPDF_Dictionary>();
   while (true) {
-    CPDF_StreamParser::ElementType type = syntax_->ParseNextElement();
+    CPDF_StreamParser::ElementType type = syntax->ParseNextElement();
     if (type == CPDF_StreamParser::ElementType::kKeyword) {
-      if (syntax_->GetWord() != "ID") {
-        syntax_->SetPos(savePos);
-        return;
+      if (syntax->GetWord() != "ID") {
+        syntax->SetPos(savePos);
+        return nullptr;
       }
     }
     if (type != CPDF_StreamParser::ElementType::kName) {
       break;
     }
-    // Next `syntax_` read below may invalidate `word`. Must save to `key`.
-    ByteStringView word = syntax_->GetWord();
+    // Next `syntax` read below may invalidate `word`. Must save to `key`.
+    ByteStringView word = syntax->GetWord();
     ByteString key(word.Last(word.GetLength() - 1));
-    auto pObj = syntax_->ReadNextObject(false, false, 0);
+    auto pObj = syntax->ReadNextObject(false, false, 0);
     if (pObj && !pObj->IsInline()) {
-      dict->SetNewFor<CPDF_Reference>(key, document_, pObj->GetObjNum());
+      dict->SetNewFor<CPDF_Reference>(key, document, pObj->GetObjNum());
     } else {
       dict->SetFor(key, std::move(pObj));
     }
@@ -702,7 +709,7 @@ void CPDF_StreamContentParser::Handle_BeginImage() {
     if (pCSObj->IsName()) {
       ByteString name = pCSObj->GetString();
       if (name != "DeviceRGB" && name != "DeviceGray" && name != "DeviceCMYK") {
-        pCSObj = FindResourceObj("ColorSpace", name);
+        pCSObj = find_color_space(name);
         if (pCSObj && pCSObj->IsInline()) {
           dict->SetFor("ColorSpace", pCSObj->Clone());
         }
@@ -711,18 +718,27 @@ void CPDF_StreamContentParser::Handle_BeginImage() {
   }
   dict->SetNewFor<CPDF_Name>("Subtype", "Image");
   RetainPtr<CPDF_Stream> pStream =
-      syntax_->ReadInlineStream(document_, std::move(dict), pCSObj.Get());
+      syntax->ReadInlineStream(document, std::move(dict), pCSObj.Get());
   while (true) {
-    CPDF_StreamParser::ElementType type = syntax_->ParseNextElement();
+    CPDF_StreamParser::ElementType type = syntax->ParseNextElement();
     if (type == CPDF_StreamParser::ElementType::kEndOfData) {
-      return;
+      return nullptr;
     }
 
     if (type == CPDF_StreamParser::ElementType::kKeyword &&
-        syntax_->GetWord() == "EI") {
+        syntax->GetWord() == "EI") {
       break;
     }
   }
+  return pStream;
+}
+
+void CPDF_StreamContentParser::Handle_BeginImage() {
+  RetainPtr<CPDF_Stream> pStream = ReadInlineImage(
+      syntax_.get(), document_,
+      [this](const ByteString& name) {
+        return FindResourceObj("ColorSpace", name);
+      });
   CPDF_ImageObject* pObj = AddImageFromStream(std::move(pStream), /*name=*/"");
   // Record the bounding box of this image, so rendering code can draw it
   // properly.
@@ -752,8 +768,7 @@ void CPDF_StreamContentParser::Handle_CurveTo_123() {
 
 void CPDF_StreamContentParser::Handle_ConcatMatrix() {
   cur_states_->prepend_to_current_transformation_matrix(GetMatrix());
-  all_ctms_[GetCurrentStreamIndex()] =
-      cur_states_->current_transformation_matrix();
+  RecordCTMOfCurrentStream();
   OnChangeTextMatrix();
 }
 
@@ -1130,8 +1145,7 @@ void CPDF_StreamContentParser::Handle_RestoreGraphState() {
 
   *cur_states_ = *state_stack_.back();
   state_stack_.pop_back();
-  all_ctms_[GetCurrentStreamIndex()] =
-      cur_states_->current_transformation_matrix();
+  RecordCTMOfCurrentStream();
 }
 
 void CPDF_StreamContentParser::Handle_Rectangle() {
@@ -1279,25 +1293,15 @@ void CPDF_StreamContentParser::Handle_SetFont() {
   RetainPtr<CPDF_Font> font = FindFont(GetString(1));
   if (font) {
     cur_states_->mutable_text_state().SetFont(std::move(font));
+    // EmbedPDF: where it was selected (CPDF_TextState::GetFontResources()).
+    cur_states_->mutable_text_state().SetFontResources(resources_);
   }
 }
 
 RetainPtr<const CPDF_Dictionary> CPDF_StreamContentParser::FindResourceHolder(
     ByteStringView type) {
-  if (!resources_) {
-    return nullptr;
-  }
-
-  RetainPtr<const CPDF_Dictionary> dict = resources_->GetDictFor(type);
-  if (dict) {
-    return dict;
-  }
-
-  if (resources_ == page_resources_ || !page_resources_) {
-    return nullptr;
-  }
-
-  return page_resources_->GetDictFor(type);
+  return CPDF_Form::ChooseResourcesOfType(resources_.Get(),
+                                          page_resources_.Get(), type);
 }
 
 RetainPtr<const CPDF_Object> CPDF_StreamContentParser::FindResourceObj(
@@ -1328,6 +1332,19 @@ RetainPtr<CPDF_Font> CPDF_StreamContentParser::FindFont(
     }
   }
   return font;
+}
+
+void CPDF_StreamContentParser::SetCTMAtBeginningOfContent(
+    const CFX_Matrix& ctm) {
+  cur_states_->set_current_transformation_matrix(ctm);
+  cur_states_->set_parent_matrix(ctm);
+  all_ctms_[0] = ctm * mt_content_to_user_;
+  ctm_at_beginning_of_content_ = all_ctms_[0];
+}
+
+void CPDF_StreamContentParser::RecordCTMOfCurrentStream() {
+  all_ctms_[GetCurrentStreamIndex()] =
+      cur_states_->current_transformation_matrix() * mt_content_to_user_;
 }
 
 CPDF_PageObjectHolder::CTMMap CPDF_StreamContentParser::TakeAllCTMs() {

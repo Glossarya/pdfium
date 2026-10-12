@@ -162,6 +162,9 @@ jobs:
             throw "rc.exe not found in $rcPath"
           }
           $rcPath | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          # build/ pins a Windows SDK the runner may not have; build with the
+          # newest one it does have (patches/embedpdf-runtime/win/build.patch).
+          "EMBEDPDF_WIN_SDK_VERSION=$($sdk.Name)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Build target
         shell: bash
         run: scripts/embedpdf-runtime/build-target.sh "${{ matrix.target }}"

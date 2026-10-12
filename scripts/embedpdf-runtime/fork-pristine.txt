@@ -1,0 +1,5 @@
+# Upstream files that must stay byte-identical to upstream, read by
+# check-fork-tags.py: <path> <reason>, one per line.
+
+core/fpdfdoc/cpdf_generateap.cpp Upstream's appearance generator; ours is CPDF_AppearanceGenerator (rule own-appearance-generator).
+core/fpdfdoc/cpdf_generateap.h Upstream's appearance generator; ours is CPDF_AppearanceGenerator (rule own-appearance-generator).

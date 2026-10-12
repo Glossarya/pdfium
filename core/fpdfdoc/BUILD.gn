@@ -59,6 +59,10 @@ source_set("fpdfdoc") {
     "cpdf_formcontrol.h",
     "cpdf_formfield.cpp",
     "cpdf_formfield.h",
+    # EmbedPDF(own-appearance-generator): ours; upstream's cpdf_generateap.*
+    # stays as upstream wrote it.
+    "cpdf_appearancegenerator.cpp",
+    "cpdf_appearancegenerator.h",
     "cpdf_generateap.cpp",
     "cpdf_generateap.h",
     # EmbedPDF: dimension geometry in default user space.
@@ -137,7 +141,7 @@ pdfium_unittest_source_set("unittests") {
     "cpdf_dest_unittest.cpp",
     "cpdf_filespec_unittest.cpp",
     "cpdf_formfield_unittest.cpp",
-    "cpdf_generateap_unittest.cpp",
+    "cpdf_appearancegenerator_unittest.cpp",
     "cpdf_interactiveform_unittest.cpp",
     "cpdf_metadata_unittest.cpp",
     "cpdf_measure_unittest.cpp",

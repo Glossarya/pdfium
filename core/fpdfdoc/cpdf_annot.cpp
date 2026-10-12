@@ -27,7 +27,7 @@
 #include "core/fpdfapi/parser/fpdf_parser_utility.h"
 #include "core/fpdfapi/render/cpdf_rendercontext.h"
 #include "core/fpdfapi/render/cpdf_renderoptions.h"
-#include "core/fpdfdoc/cpdf_generateap.h"
+#include "core/fpdfdoc/cpdf_appearancegenerator.h"
 #include "core/fxcrt/check.h"
 #include "core/fxge/cfx_fillrenderoptions.h"
 #include "core/fxge/cfx_graphstatedata.h"
@@ -183,8 +183,9 @@ void CPDF_Annot::GenerateAPIfNeeded() {
   if (!ShouldGenerateAP()) {
     return;
   }
-  if (!CPDF_GenerateAP::GenerateAnnotAP(document_, annot_dict_.Get(),
-                                        subtype_)) {
+  // EmbedPDF(own-appearance-generator): our generator, not upstream's.
+  if (!CPDF_AppearanceGenerator::GenerateAnnotAP(document_, annot_dict_.Get(),
+                                                 subtype_)) {
     return;
   }
 
@@ -207,7 +208,7 @@ bool CPDF_Annot::ShouldGenerateAP() const {
 // EmbedPDF(reads-dont-write): a missing appearance is built in memory, not
 // written to the file.
 bool CPDF_Annot::CanGenerateEphemeralAP() const {
-  return CPDF_GenerateAP::CanGenerateEphemeralAnnotAP(subtype_);
+  return CPDF_AppearanceGenerator::CanGenerateEphemeralAnnotAP(subtype_);
 }
 
 RetainPtr<CPDF_Stream> CPDF_Annot::GetOrBuildEphemeralAP(AppearanceMode mode) {
@@ -224,9 +225,9 @@ RetainPtr<CPDF_Stream> CPDF_Annot::GetOrBuildEphemeralAP(AppearanceMode mode) {
     return nullptr;
   }
 
-  std::optional<CPDF_GenerateAP::GeneratedAP> generated =
-      CPDF_GenerateAP::GenerateEphemeralAnnotAP(document_, annot_dict_.Get(),
-                                                subtype_);
+  std::optional<CPDF_AppearanceGenerator::GeneratedAP> generated =
+      CPDF_AppearanceGenerator::GenerateEphemeralAnnotAP(
+          document_, annot_dict_.Get(), subtype_);
   if (!generated.has_value()) {
     return nullptr;
   }
@@ -1094,10 +1095,10 @@ bool CPDF_Annot::DrawAppearance(CPDF_Page* pPage,
   // written here; GetAPForm() builds one in memory.
   if (!CanGenerateEphemeralAP()) {
     // It might happen that by the time this annotation instance was created,
-    // it was flagged as "hidden" (e.g. /F 2), and hence CPDF_GenerateAP decided
-    // to not "generate" its AP.
-    // If for a reason the object is no longer hidden, but still does not have
-    // its "AP" generated, generate it now.
+    // it was flagged as "hidden" (e.g. /F 2), and hence
+    // CPDF_AppearanceGenerator decided to not "generate" its AP. If for a
+    // reason the object is no longer hidden, but still does not have its "AP"
+    // generated, generate it now.
     GenerateAPIfNeeded();
   }
 
@@ -1129,10 +1130,10 @@ bool CPDF_Annot::DrawInContext(CPDF_Page* pPage,
   // written here; GetAPForm() builds one in memory.
   if (!CanGenerateEphemeralAP()) {
     // It might happen that by the time this annotation instance was created,
-    // it was flagged as "hidden" (e.g. /F 2), and hence CPDF_GenerateAP decided
-    // to not "generate" its AP.
-    // If for a reason the object is no longer hidden, but still does not have
-    // its "AP" generated, generate it now.
+    // it was flagged as "hidden" (e.g. /F 2), and hence
+    // CPDF_AppearanceGenerator decided to not "generate" its AP. If for a
+    // reason the object is no longer hidden, but still does not have its "AP"
+    // generated, generate it now.
     GenerateAPIfNeeded();
   }
 

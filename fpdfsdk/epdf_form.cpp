@@ -27,10 +27,10 @@
 #include "core/fpdfapi/parser/fpdf_parser_decode.h"
 #include "core/fpdfdoc/cpdf_aaction.h"
 #include "core/fpdfdoc/cpdf_action.h"
+#include "core/fpdfdoc/cpdf_appearancegenerator.h"
 #include "core/fpdfdoc/cpdf_embed_metadata.h"
 #include "core/fpdfdoc/cpdf_formcontrol.h"
 #include "core/fpdfdoc/cpdf_formfield.h"
-#include "core/fpdfdoc/cpdf_generateap.h"
 #include "core/fpdfdoc/cpdf_interactiveform.h"
 #include "core/fxcrt/bytestring.h"
 #include "core/fxcrt/cfx_memorystream.h"
@@ -628,9 +628,10 @@ void ReportChangedWidgets(const std::vector<uint32_t>& changed_objnums,
   }
 }
 
-CPDF_GenerateAP::FormType ChoiceFormType(uint32_t flags) {
-  return (flags & pdfium::form_flags::kChoiceCombo) ? CPDF_GenerateAP::kComboBox
-                                                    : CPDF_GenerateAP::kListBox;
+CPDF_AppearanceGenerator::FormType ChoiceFormType(uint32_t flags) {
+  return (flags & pdfium::form_flags::kChoiceCombo)
+             ? CPDF_AppearanceGenerator::kComboBox
+             : CPDF_AppearanceGenerator::kListBox;
 }
 
 // ---------------------------------------------------------------------------
@@ -857,7 +858,7 @@ bool RegenerateControlAppearances(
     CPDF_Document* doc,
     const std::vector<TxnControl>& controls,
     const RetainPtr<CPDF_Dictionary>& promoted_field,
-    CPDF_GenerateAP::FormType type,
+    CPDF_AppearanceGenerator::FormType type,
     uint32_t* changed_widget_objnums,
     unsigned long buffer_size,
     unsigned long* out_changed_count) {
@@ -869,7 +870,7 @@ bool RegenerateControlAppearances(
     if (!widget) {
       continue;
     }
-    CPDF_GenerateAP::GenerateFormAP(doc, widget.Get(), type);
+    CPDF_AppearanceGenerator::GenerateFormAP(doc, widget.Get(), type);
     ++total_changed;
     if (control.objnum != 0) {
       changed.push_back(control.objnum);
@@ -990,13 +991,13 @@ bool ApplyFieldAppearanceText(CPDF_Document* doc,
     return false;
   }
   const ByteString field_type = InheritedFieldType(field.Get());
-  CPDF_GenerateAP::FormType appearance_type;
+  CPDF_AppearanceGenerator::FormType appearance_type;
   if (field_type == pdfium::form_fields::kTx) {
-    appearance_type = CPDF_GenerateAP::kTextField;
+    appearance_type = CPDF_AppearanceGenerator::kTextField;
   } else if (field_type == pdfium::form_fields::kCh &&
              (InheritedFieldFlags(field.Get()) &
               pdfium::form_flags::kChoiceCombo)) {
-    appearance_type = CPDF_GenerateAP::kComboBox;
+    appearance_type = CPDF_AppearanceGenerator::kComboBox;
   } else {
     return false;
   }
@@ -1024,7 +1025,7 @@ bool ApplyFieldAppearanceText(CPDF_Document* doc,
   for (const TxnControl& control : controls) {
     RetainPtr<CPDF_Dictionary> widget =
         MutableControlDict(doc, control, promoted_field);
-    if (!widget || !CPDF_GenerateAP::GenerateFormAPWithValueOverride(
+    if (!widget || !CPDF_AppearanceGenerator::GenerateFormAPWithValueOverride(
                        doc, widget.Get(), appearance_type, appearance_text)) {
       return false;
     }
@@ -1859,9 +1860,9 @@ EPDFForm_RedrawFieldWidgets(FPDF_DOCUMENT document,
     return false;
   }
   const ByteString type = InheritedFieldType(field->dict.Get());
-  CPDF_GenerateAP::FormType form_type;
+  CPDF_AppearanceGenerator::FormType form_type;
   if (type == pdfium::form_fields::kTx) {
-    form_type = CPDF_GenerateAP::kTextField;
+    form_type = CPDF_AppearanceGenerator::kTextField;
   } else if (type == pdfium::form_fields::kCh) {
     form_type = ChoiceFormType(InheritedFieldFlags(field->dict.Get()));
   } else {
@@ -2121,22 +2122,23 @@ EPDFForm_Repair(FPDF_DOCUMENT document,
       }
       switch (step.family) {
         case EPDF_FORMFIELD_FAMILY_TEXT:
-          CPDF_GenerateAP::GenerateFormAP(doc, widget.Get(),
-                                          CPDF_GenerateAP::kTextField);
+          CPDF_AppearanceGenerator::GenerateFormAP(
+              doc, widget.Get(), CPDF_AppearanceGenerator::kTextField);
           break;
         case EPDF_FORMFIELD_FAMILY_COMBOBOX:
-          CPDF_GenerateAP::GenerateFormAP(doc, widget.Get(),
-                                          CPDF_GenerateAP::kComboBox);
+          CPDF_AppearanceGenerator::GenerateFormAP(
+              doc, widget.Get(), CPDF_AppearanceGenerator::kComboBox);
           break;
         case EPDF_FORMFIELD_FAMILY_LISTBOX:
-          CPDF_GenerateAP::GenerateFormAP(doc, widget.Get(),
-                                          CPDF_GenerateAP::kListBox);
+          CPDF_AppearanceGenerator::GenerateFormAP(
+              doc, widget.Get(), CPDF_AppearanceGenerator::kListBox);
           break;
         case EPDF_FORMFIELD_FAMILY_CHECKBOX:
-          CPDF_GenerateAP::GenerateCheckboxFormAP(doc, widget.Get());
+          CPDF_AppearanceGenerator::GenerateCheckboxFormAP(doc, widget.Get());
           break;
         case EPDF_FORMFIELD_FAMILY_RADIO:
-          CPDF_GenerateAP::GenerateRadioButtonFormAP(doc, widget.Get());
+          CPDF_AppearanceGenerator::GenerateRadioButtonFormAP(doc,
+                                                              widget.Get());
           break;
         default:
           continue;
@@ -2425,25 +2427,28 @@ void BakeWidgetAppearance(CPDF_Document* doc,
                           const ByteString& on_state) {
   switch (family) {
     case 1:  // push button
-      CPDF_GenerateAP::GenerateFormAP(doc, widget,
-                                      CPDF_GenerateAP::kPushButton);
+      CPDF_AppearanceGenerator::GenerateFormAP(
+          doc, widget, CPDF_AppearanceGenerator::kPushButton);
       break;
     case 2:  // checkbox
-      CPDF_GenerateAP::GenerateCheckboxFormAP(doc, widget);
+      CPDF_AppearanceGenerator::GenerateCheckboxFormAP(doc, widget);
       NormalizeToggleOnState(widget, on_state);
       break;
     case 3:  // radio
-      CPDF_GenerateAP::GenerateRadioButtonFormAP(doc, widget);
+      CPDF_AppearanceGenerator::GenerateRadioButtonFormAP(doc, widget);
       NormalizeToggleOnState(widget, on_state);
       break;
     case 4:
-      CPDF_GenerateAP::GenerateFormAP(doc, widget, CPDF_GenerateAP::kTextField);
+      CPDF_AppearanceGenerator::GenerateFormAP(
+          doc, widget, CPDF_AppearanceGenerator::kTextField);
       break;
     case 5:
-      CPDF_GenerateAP::GenerateFormAP(doc, widget, CPDF_GenerateAP::kComboBox);
+      CPDF_AppearanceGenerator::GenerateFormAP(
+          doc, widget, CPDF_AppearanceGenerator::kComboBox);
       break;
     case 6:
-      CPDF_GenerateAP::GenerateFormAP(doc, widget, CPDF_GenerateAP::kListBox);
+      CPDF_AppearanceGenerator::GenerateFormAP(
+          doc, widget, CPDF_AppearanceGenerator::kListBox);
       break;
     default:
       break;

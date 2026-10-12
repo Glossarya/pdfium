@@ -49,11 +49,11 @@
 #include "core/fpdfapi/parser/fpdf_parser_utility.h"
 #include "core/fpdfdoc/cpdf_annot.h"
 #include "core/fpdfdoc/cpdf_annot_rotation.h"
+#include "core/fpdfdoc/cpdf_appearancegenerator.h"
 #include "core/fpdfdoc/cpdf_color_utils.h"
 #include "core/fpdfdoc/cpdf_embed_metadata.h"
 #include "core/fpdfdoc/cpdf_fontface.h"
 #include "core/fpdfdoc/cpdf_formfield.h"
-#include "core/fpdfdoc/cpdf_generateap.h"
 #include "core/fpdfdoc/cpdf_interactiveform.h"
 #include "core/fpdfdoc/cpdf_richtextjson.h"
 #include "core/fpdfdoc/cpdf_richtextparser.h"
@@ -1276,8 +1276,9 @@ FPDFAnnot_AppendObject(FPDF_ANNOTATION annot, FPDF_PAGEOBJECT obj) {
   RetainPtr<CPDF_Stream> pStream =
       GetMutableAnnotAP(pAnnotDict.Get(), CPDF_Annot::AppearanceMode::kNormal);
   if (!pStream) {
-    CPDF_GenerateAP::GenerateEmptyAP(pAnnot->GetPage()->GetDocument(),
-                                     pAnnotDict.Get());
+    // EmbedPDF(own-appearance-generator): our generator, not upstream's.
+    CPDF_AppearanceGenerator::GenerateEmptyAP(pAnnot->GetPage()->GetDocument(),
+                                              pAnnotDict.Get());
     pStream = GetMutableAnnotAP(pAnnotDict.Get(),
                                 CPDF_Annot::AppearanceMode::kNormal);
     if (!pStream) {
@@ -2467,14 +2468,15 @@ FPDFAnnot_SetFontColor(FPDF_FORMHANDLE handle,
   // EmbedPDF(annot-appearance): draw the appearance again in the new colour.
   // Upstream removed /AP until its generator could update it.
   CPDF_Document* doc = form->GetInteractiveForm()->document();
-  bool updated = CPDF_GenerateAP::GenerateDefaultAppearanceWithColor(
+  // EmbedPDF(own-appearance-generator): our generator, not upstream's.
+  bool updated = CPDF_AppearanceGenerator::GenerateDefaultAppearanceWithColor(
       doc, annot_dict, CFX_Color(R, G, B));
   if (!updated) {
     return false;
   }
 
-  return CPDF_GenerateAP::GenerateAnnotAP(doc, annot_dict.Get(),
-                                          CPDF_Annot::Subtype::FREETEXT);
+  return CPDF_AppearanceGenerator::GenerateAnnotAP(
+      doc, annot_dict.Get(), CPDF_Annot::Subtype::FREETEXT);
 }
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
@@ -3296,7 +3298,8 @@ EPDFAnnot_GenerateAppearance(FPDF_ANNOTATION annot) {
     return false;
   }
 
-  // CPDF_GenerateAP needs the document, which we can get from the page context.
+  // CPDF_AppearanceGenerator needs the document, which we can get from the page
+  // context.
   CPDF_Document* pDoc = pContext->GetPage()->GetDocument();
   if (!pDoc) {
     return false;
@@ -3307,7 +3310,8 @@ EPDFAnnot_GenerateAppearance(FPDF_ANNOTATION annot) {
       pAnnotDict->GetNameFor(pdfium::annotation::kSubtype));
 
   // This is the key: call the internal AP generator.
-  return CPDF_GenerateAP::GenerateAnnotAP(pDoc, pAnnotDict.Get(), subtype);
+  return CPDF_AppearanceGenerator::GenerateAnnotAP(pDoc, pAnnotDict.Get(),
+                                                   subtype);
 }
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
@@ -3337,8 +3341,8 @@ EPDFAnnot_GenerateAppearanceWithBlend(FPDF_ANNOTATION annot,
   // Validate blend enum range if needed (already static_assert aligned).
   auto internal = static_cast<BlendMode>(blend);
 
-  return CPDF_GenerateAP::GenerateAnnotAP(doc, annot_dict.Get(), subtype,
-                                          internal);
+  return CPDF_AppearanceGenerator::GenerateAnnotAP(doc, annot_dict.Get(),
+                                                   subtype, internal);
 }
 
 FPDF_EXPORT FPDF_BLENDMODE FPDF_CALLCONV
@@ -3821,7 +3825,7 @@ EPDFAnnot_SetDefaultAppearance(FPDF_ANNOTATION annot,
   }
 
   auto internal_font = static_cast<CPDF_Annot::StandardFont>(font);
-  return CPDF_GenerateAP::UpdateDefaultAppearance(
+  return CPDF_AppearanceGenerator::UpdateDefaultAppearance(
       doc, annot_dict.Get(), internal_font, font_size, CFX_Color(R, G, B));
 }
 
@@ -3865,7 +3869,7 @@ EPDFAnnot_SetDefaultAppearanceRegisteredFont(FPDF_ANNOTATION annot,
     return false;
   }
 
-  return CPDF_GenerateAP::UpdateDefaultAppearanceRegisteredFont(
+  return CPDF_AppearanceGenerator::UpdateDefaultAppearanceRegisteredFont(
       doc, annot_dict.Get(), font_id, font_size, CFX_Color(R, G, B));
 }
 
@@ -4676,7 +4680,8 @@ static bool RefitPlacedAppearance(FPDF_ANNOTATION annot,
   RetainPtr<CPDF_Stream> ap =
       GetMutableAnnotAP(ad.Get(), CPDF_Annot::AppearanceMode::kNormal);
   if (!ap) {
-    CPDF_GenerateAP::GenerateEmptyAP(ctx->GetPage()->GetDocument(), ad.Get());
+    CPDF_AppearanceGenerator::GenerateEmptyAP(ctx->GetPage()->GetDocument(),
+                                              ad.Get());
     ap = GetMutableAnnotAP(ad.Get(), CPDF_Annot::AppearanceMode::kNormal);
     if (!ap) {
       return false;
@@ -6167,17 +6172,17 @@ EPDFAnnot_GenerateFormFieldAP(FPDF_ANNOTATION annot) {
   }
 
   if (ft == "Tx") {
-    CPDF_GenerateAP::GenerateFormAP(pDoc, pAnnotDict.Get(),
-                                    CPDF_GenerateAP::kTextField);
+    CPDF_AppearanceGenerator::GenerateFormAP(
+        pDoc, pAnnotDict.Get(), CPDF_AppearanceGenerator::kTextField);
     return true;
   }
   if (ft == "Ch") {
     if (ff & (1 << 17)) {  // kCombo
-      CPDF_GenerateAP::GenerateFormAP(pDoc, pAnnotDict.Get(),
-                                      CPDF_GenerateAP::kComboBox);
+      CPDF_AppearanceGenerator::GenerateFormAP(
+          pDoc, pAnnotDict.Get(), CPDF_AppearanceGenerator::kComboBox);
     } else {
-      CPDF_GenerateAP::GenerateFormAP(pDoc, pAnnotDict.Get(),
-                                      CPDF_GenerateAP::kListBox);
+      CPDF_AppearanceGenerator::GenerateFormAP(
+          pDoc, pAnnotDict.Get(), CPDF_AppearanceGenerator::kListBox);
     }
     return true;
   }
@@ -6185,12 +6190,13 @@ EPDFAnnot_GenerateFormFieldAP(FPDF_ANNOTATION annot) {
     const bool is_pushbutton = ff & (1 << 16);
     const bool is_radio = ff & (1 << 15);
     if (is_pushbutton) {
-      CPDF_GenerateAP::GenerateFormAP(pDoc, pAnnotDict.Get(),
-                                      CPDF_GenerateAP::kPushButton);
+      CPDF_AppearanceGenerator::GenerateFormAP(
+          pDoc, pAnnotDict.Get(), CPDF_AppearanceGenerator::kPushButton);
     } else if (is_radio) {
-      CPDF_GenerateAP::GenerateRadioButtonFormAP(pDoc, pAnnotDict.Get());
+      CPDF_AppearanceGenerator::GenerateRadioButtonFormAP(pDoc,
+                                                          pAnnotDict.Get());
     } else {
-      CPDF_GenerateAP::GenerateCheckboxFormAP(pDoc, pAnnotDict.Get());
+      CPDF_AppearanceGenerator::GenerateCheckboxFormAP(pDoc, pAnnotDict.Get());
     }
     return true;
   }

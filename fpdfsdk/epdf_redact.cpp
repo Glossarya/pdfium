@@ -21,7 +21,7 @@
 #include "core/fpdfapi/parser/cpdf_stream.h"
 #include "core/fpdfapi/parser/fpdf_parser_utility.h"
 #include "core/fpdfdoc/cpdf_annot.h"
-#include "core/fpdfdoc/cpdf_generateap.h"
+#include "core/fpdfdoc/cpdf_appearancegenerator.h"
 #include "core/fpdfdoc/cpdf_interactiveform.h"
 #include "core/fxcrt/bytestring.h"
 #include "core/fxcrt/containers/contains.h"
@@ -363,7 +363,7 @@ RetainPtr<const CPDF_Stream> ResolveRedactOverlay(
   if (overlay) {
     return overlay;
   }
-  return CPDF_GenerateAP::BuildRedactOverlayForm(doc, redact_dict);
+  return CPDF_AppearanceGenerator::BuildRedactOverlayForm(doc, redact_dict);
 }
 
 bool ApplySingleRedactionCore(CPDF_Page* page,

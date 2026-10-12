@@ -286,6 +286,24 @@ matrix.
 **Guarded by.** The rotated-bounds and image-matrix tests.
 **When upstream touches this.** Page object fields.
 
+### own-appearance-generator
+**Rule.** Our appearance generator is `CPDF_AppearanceGenerator`
+(`core/fpdfdoc/cpdf_appearancegenerator.{h,cpp}`). None of our code calls upstream's
+`CPDF_GenerateAP`, and upstream's `core/fpdfdoc/cpdf_generateap.{h,cpp}` stay byte-identical to
+upstream, compiled and unused.
+**Why.** We rewrote most of the generator: appearances built in memory, rich text, rotation,
+measurement, redaction overlays, form fields. Mixed into upstream's file, it was the worst conflict
+file. Apart, upstream's file merges cleanly.
+**Where.** `cpdf_appearancegenerator.*` and its unit test; the calls in `cpdf_annot.cpp`,
+`fpdf_annot.cpp` (including upstream's `FPDFAnnot_AppendObject` and `FPDFAnnot_SetFontColor`),
+`epdf_form.cpp`, `epdf_redact.cpp` and the rich text writer.
+**Guarded by.** `check-fork-tags.py` fails when upstream's files differ from upstream
+(`fork-pristine.txt`); `upstream-preview.py` lists new upstream callers of `CPDF_GenerateAP::`, and
+upstream's commits to its generator.
+**When upstream touches this.** A commit to `cpdf_generateap.*`: port it to ours or skip it, with
+the reason in the sync report. A new upstream caller of `CPDF_GenerateAP::`: route it to ours, or
+accept it in the report.
+
 ## Text
 
 ### text-geometry

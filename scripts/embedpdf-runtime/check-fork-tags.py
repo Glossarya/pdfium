@@ -16,6 +16,9 @@ that only change comments or blank lines. Whole files can be exempted in
 scripts/embedpdf-runtime/fork-tags-allowlist.txt, one `<path> <reason>` per
 line. Tests (testing/ and *test* files) and build files aren't checked.
 
+Files in scripts/embedpdf-runtime/fork-pristine.txt must not differ from the
+base at all; a change to one fails like an untagged block.
+
 Statuses:
   tagged        names a rule from the ledger
   unknown-rule  names a rule the ledger doesn't have
@@ -46,6 +49,8 @@ SOURCE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')
 LEDGER = os.path.join(SOURCE_DIR, 'docs', 'embedpdf', 'fork-ledger.md')
 ALLOWLIST = os.path.join(SOURCE_DIR, 'scripts', 'embedpdf-runtime',
                          'fork-tags-allowlist.txt')
+PRISTINE = os.path.join(SOURCE_DIR, 'scripts', 'embedpdf-runtime',
+                        'fork-pristine.txt')
 
 SOURCE_EXTENSIONS = ('.c', '.cc', '.cpp', '.h', '.mm')
 LOOKBACK_LINES = 15
@@ -71,10 +76,10 @@ def read_rules():
     return {m.group(1) for m in map(RULE_HEADING.match, f) if m}
 
 
-def read_allowlist():
+def read_allowlist(path=ALLOWLIST):
   allowed = {}
-  if os.path.exists(ALLOWLIST):
-    with open(ALLOWLIST, encoding='utf-8') as f:
+  if os.path.exists(path):
+    with open(path, encoding='utf-8') as f:
       for line in f:
         line = line.strip()
         if line and not line.startswith('#'):
@@ -192,6 +197,11 @@ def check(base, paths):
   return rules, results
 
 
+def changed_pristine(base):
+  return [path for path in read_allowlist(PRISTINE)
+          if git('diff', '--name-only', base, '--', path).strip()]
+
+
 def default_base():
   # A fetched upstream/main first (see upstream-preview.py), then the mirror.
   for ref in ('upstream/main', 'pdfium/main', 'origin/pdfium/main'):
@@ -237,6 +247,7 @@ def main():
 
   base = git('rev-parse', args.base).strip() if args.base else default_base()
   rules, results = check(base, args.paths)
+  pristine = changed_pristine(base)
   if args.format == 'json':
     json.dump({'base': base, 'rules': sorted(rules), 'blocks': results},
               sys.stdout,
@@ -244,7 +255,12 @@ def main():
     print()
   else:
     print_text(base, rules, results)
+    for path in pristine:
+      print(f'error: {path} must stay identical to upstream '
+            '(fork-pristine.txt)')
 
+  if pristine:
+    sys.exit(1)
   if args.strict and any(r['status'] in FAILING for r in results):
     sys.exit(1)
 

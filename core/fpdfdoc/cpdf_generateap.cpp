@@ -6,27 +6,17 @@
 
 #include "core/fpdfdoc/cpdf_generateap.h"
 
-#include "core/fpdfdoc/cpdf_generateap_dimension.h"
-
 #include <algorithm>
-#include <array>
-#include <cmath>
-#include <optional>
 #include <sstream>
 #include <utility>
-#include <vector>
 
 #include "constants/annotation_common.h"
 #include "constants/appearance.h"
 #include "constants/font_encodings.h"
 #include "constants/form_fields.h"
-#include "constants/form_flags.h"
-#include "constants/transparency.h"
 #include "core/fpdfapi/edit/cpdf_contentstream_write_utils.h"
 #include "core/fpdfapi/font/cpdf_font.h"
 #include "core/fpdfapi/page/cpdf_docpagedata.h"
-#include "core/fpdfapi/page/cpdf_form.h"
-#include "core/fpdfapi/page/cpdf_paintedbounds.h"
 #include "core/fpdfapi/parser/cpdf_array.h"
 #include "core/fpdfapi/parser/cpdf_boolean.h"
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
@@ -39,348 +29,31 @@
 #include "core/fpdfapi/parser/fpdf_parser_decode.h"
 #include "core/fpdfapi/parser/fpdf_parser_utility.h"
 #include "core/fpdfdoc/cpdf_annot.h"
-#include "core/fpdfdoc/cpdf_annotfontmap.h"
-#include "core/fpdfdoc/cpdf_annotfontsubset.h"
-#include "core/fpdfdoc/cpdf_annot_rotation.h"
-#include "core/fpdfdoc/cpdf_cloudy_border.h"
 #include "core/fpdfdoc/cpdf_color_utils.h"
 #include "core/fpdfdoc/cpdf_defaultappearance.h"
-#include "core/fpdfdoc/cpdf_embed_metadata.h"
 #include "core/fpdfdoc/cpdf_formfield.h"
 #include "core/fpdfdoc/cpdf_interactiveform.h"
-#include "core/fpdfdoc/cpdf_richtext.h"
-#include "core/fpdfdoc/cpdf_richtextlayout.h"
-#include "core/fpdfdoc/cpdf_richtextparser.h"
 #include "core/fpdfdoc/cpvt_fontmap.h"
 #include "core/fpdfdoc/cpvt_variabletext.h"
 #include "core/fpdfdoc/cpvt_word.h"
 #include "core/fxcrt/fx_string_wrappers.h"
-#include "core/fxcrt/utf16.h"
-#include "core/fxcrt/fx_system.h"
 #include "core/fxcrt/notreached.h"
-#include "core/fxge/cfx_fontregistry.h"
 #include "core/fxge/cfx_renderdevice.h"
 
 namespace {
 
 constexpr char kGSDictName[] = "GS";
 
-// ISO 32000-1 Table 166: a dashed border that names no /D dashes 3 on,
-// 3 off.
-constexpr float kDefaultDash = 3;
+struct CPVT_Dash {
+  CPVT_Dash(int32_t dash, int32_t gap, int32_t phase)
+      : dash(dash), gap(gap), phase(phase) {}
 
-enum class PaintOperation { kStroke, kFill };
-
-constexpr float kArrowAngle = FXSYS_PI / 6.0f;
-constexpr float kArrowLenFactor = 9.0f;
-constexpr float kButtLenFactor = 6.0f;
-constexpr float kSlashLenFactor = 18.0f;
-
-// Return a unit‑length copy of `v`.  If the vector has zero length, fall back
-// to the X axis so that later maths cannot explode.
-static CFX_PointF UnitVector(const CFX_PointF& v) {
-  float len = std::hypot(v.x, v.y);
-  if (len <= 0.0f) {
-    return CFX_PointF(1.0f, 0.0f);
-  }
-  return CFX_PointF(v.x / len, v.y / len);
-}
-
-struct MarkupQuad {
-  CFX_PointF upper_start;
-  CFX_PointF upper_end;
-  CFX_PointF lower_start;
-  CFX_PointF lower_end;
+  int32_t dash;
+  int32_t gap;
+  int32_t phase;
 };
 
-constexpr float kMarkupQuadTolerance = 1e-4f;
-
-float DotProduct(const CFX_PointF& lhs, const CFX_PointF& rhs) {
-  return lhs.x * rhs.x + lhs.y * rhs.y;
-}
-
-float CrossProduct(const CFX_PointF& lhs, const CFX_PointF& rhs) {
-  return lhs.x * rhs.y - lhs.y * rhs.x;
-}
-
-float VectorLength(const CFX_PointF& vector) {
-  return std::hypot(vector.x, vector.y);
-}
-
-bool IsFinitePoint(const CFX_PointF& point) {
-  return std::isfinite(point.x) && std::isfinite(point.y);
-}
-
-std::optional<MarkupQuad> ReadMarkupQuad(const CPDF_Array* array,
-                                         size_t index) {
-  const size_t offset = index * 8;
-  MarkupQuad quad = {
-      {array->GetFloatAt(offset), array->GetFloatAt(offset + 1)},
-      {array->GetFloatAt(offset + 2), array->GetFloatAt(offset + 3)},
-      {array->GetFloatAt(offset + 4), array->GetFloatAt(offset + 5)},
-      {array->GetFloatAt(offset + 6), array->GetFloatAt(offset + 7)}};
-  if (!IsFinitePoint(quad.upper_start) || !IsFinitePoint(quad.upper_end) ||
-      !IsFinitePoint(quad.lower_start) || !IsFinitePoint(quad.lower_end)) {
-    return std::nullopt;
-  }
-
-  const CFX_PointF upper_edge = quad.upper_end - quad.upper_start;
-  const CFX_PointF lower_edge = quad.lower_end - quad.lower_start;
-  const CFX_PointF start_edge = quad.lower_start - quad.upper_start;
-  const CFX_PointF end_edge = quad.lower_end - quad.upper_end;
-  const float upper_length = VectorLength(upper_edge);
-  const float lower_length = VectorLength(lower_edge);
-  const float start_length = VectorLength(start_edge);
-  const float end_length = VectorLength(end_edge);
-  if (!std::isfinite(upper_length) || !std::isfinite(lower_length) ||
-      !std::isfinite(start_length) || !std::isfinite(end_length) ||
-      upper_length <= kMarkupQuadTolerance ||
-      lower_length <= kMarkupQuadTolerance ||
-      start_length <= kMarkupQuadTolerance ||
-      end_length <= kMarkupQuadTolerance) {
-    return std::nullopt;
-  }
-
-  // The PDF text-markup order is upper-start, upper-end, lower-start,
-  // lower-end. Reject crossed and reversed producer data before interpreting
-  // those pairs as a local frame.
-  const float horizontal_alignment = DotProduct(upper_edge, lower_edge);
-  const float vertical_alignment = DotProduct(start_edge, end_edge);
-  if (!std::isfinite(horizontal_alignment) ||
-      !std::isfinite(vertical_alignment) || horizontal_alignment <= 0.0f ||
-      vertical_alignment <= 0.0f) {
-    return std::nullopt;
-  }
-  const float start_area = CrossProduct(upper_edge, start_edge);
-  const float end_area = CrossProduct(lower_edge, end_edge);
-  if (!std::isfinite(start_area) || !std::isfinite(end_area) ||
-      std::signbit(start_area) != std::signbit(end_area) ||
-      std::abs(start_area) <=
-          kMarkupQuadTolerance * upper_length * start_length ||
-      std::abs(end_area) <= kMarkupQuadTolerance * lower_length * end_length) {
-    return std::nullopt;
-  }
-  return quad;
-}
-
-bool IsAxisAlignedZigZag(const MarkupQuad& quad) {
-  const float scale =
-      std::max({1.0f, VectorLength(quad.upper_end - quad.upper_start),
-                VectorLength(quad.lower_end - quad.lower_start),
-                VectorLength(quad.lower_start - quad.upper_start),
-                VectorLength(quad.lower_end - quad.upper_end)});
-  const float tolerance = kMarkupQuadTolerance * scale;
-  return std::abs(quad.upper_start.y - quad.upper_end.y) <= tolerance &&
-         std::abs(quad.lower_start.y - quad.lower_end.y) <= tolerance &&
-         std::abs(quad.upper_start.x - quad.lower_start.x) <= tolerance &&
-         std::abs(quad.upper_end.x - quad.lower_end.x) <= tolerance;
-}
-
-CFX_PointF Midpoint(const CFX_PointF& first, const CFX_PointF& second) {
-  return 0.5f * (first + second);
-}
-
-CFX_PointF LowerToUpperUnit(const MarkupQuad& quad) {
-  return UnitVector((quad.upper_start - quad.lower_start) +
-                    (quad.upper_end - quad.lower_end));
-}
-
-void EmitOrientedSquiggle(fxcrt::ostringstream& stream,
-                          const MarkupQuad& quad,
-                          float delta) {
-  const CFX_PointF lower_edge = quad.lower_end - quad.lower_start;
-  const float length = VectorLength(lower_edge);
-  const CFX_PointF along = UnitVector(lower_edge);
-  const CFX_PointF toward_upper = LowerToUpperUnit(quad);
-  WritePoint(stream, quad.lower_start + delta * toward_upper) << " m ";
-
-  float distance = delta;
-  bool is_upwards = false;
-  while (distance < length) {
-    CFX_PointF point = quad.lower_start + distance * along;
-    if (is_upwards) {
-      point += delta * toward_upper;
-    }
-    WritePoint(stream, point) << " l ";
-    distance += delta;
-    is_upwards = !is_upwards;
-  }
-
-  const float remainder = length - (distance - delta);
-  const float height = is_upwards ? remainder : delta - remainder;
-  WritePoint(stream, quad.lower_end + height * toward_upper) << " l S\n";
-}
-
-// Read one token from a /LE array and return it as a ByteString, accepting
-// both Name and String objects (some generators are sloppy).
-static ByteString ReadLineEndingToken(const CPDF_Array* le, size_t idx) {
-  if (!le || idx >= le->size()) {
-    return ByteString();
-  }
-
-  RetainPtr<const CPDF_Object> obj = le->GetDirectObjectAt(idx);
-  if (!obj) {
-    return ByteString();
-  }
-
-  if (const CPDF_Name* n = obj->AsName()) {
-    return n->GetString();
-  }
-
-  if (const CPDF_String* s = obj->AsString()) {
-    return s->GetString();
-  }
-
-  return ByteString();  // unsupported type
-}
-
-// Produce “q … Q” wrapper that translates + rotates local path so that:
-///   • the **tip** of the ending sits at `pos`
-///   • the **x‑axis** of the local coord points along the segment direction
-template <typename F>
-void EmitEndingWithAngle(fxcrt::ostringstream& out,
-                         const CFX_PointF& pos,
-                         float final_angle_rad,
-                         const F& emitter) {
-  const float cos_a = cos(final_angle_rad);
-  const float sin_a = sin(final_angle_rad);
-
-  // WriteMatrix, never raw `<<`: an axis-aligned segment has cos ≈ ±4.4e-8
-  // and default ostream float formatting would emit it in scientific
-  // notation — not legal PDF number syntax (Acrobat rejects the file).
-  out << "q ";
-  WriteMatrix(out, CFX_Matrix(cos_a, sin_a, -sin_a, cos_a, pos.x, pos.y))
-      << " cm\n";
-  emitter();
-  out << "Q\n";
-}
-
-enum class ArrowStyle { kOpen, kClosed };
-
-static void EmitArrowPath(fxcrt::ostringstream& out,
-                          float stroke_w,
-                          ArrowStyle style,
-                          bool do_fill) {
-  const float len = kArrowLenFactor * stroke_w;
-  const float a = kArrowAngle;  // 30°
-  const float x = -len * std::cos(a);
-  const float y = len * std::sin(a);
-
-  if (style == ArrowStyle::kOpen) {
-    // OpenArrow / ROpenArrow
-    out << x << " " << y << " m 0 0 l " << x << " " << -y << " l S\n";
-    return;
-  }
-
-  // ClosedArrow / RClosedArrow
-  out << "0 0 m " << x << " " << y << " l " << x << " " << -y << " l "
-      << (do_fill ? "b\n"      // fill + stroke
-                  : "h S\n");  // just close and stroke (no fill)
-}
-
-void EmitCirclePath(fxcrt::ostringstream& out, float stroke_w, bool filled) {
-  const float r = (stroke_w * 5.0f) / 2.0f;
-  // This is a standard approximation for drawing a circle with Bezier curves.
-  constexpr float kL = 0.5523f;
-  const float d = kL * r;
-
-  out << r << " 0 m " << r << " " << d << " " << d << " " << r << " 0 " << r
-      << " c " << -d << " " << r << " " << -r << " " << d << " " << -r
-      << " 0 c " << -r << " " << -d << " " << -d << " " << -r << " 0 " << -r
-      << " c " << d << " " << -r << " " << r << " " << -d << " " << r << " 0 c "
-      << (filled ? "B\n" : "S\n");
-}
-
-void EmitSquarePath(fxcrt::ostringstream& out, float stroke_w, bool filled) {
-  const float h = (stroke_w * 6.0f) / 2.0f;
-  out << -h << " " << -h << " m " << h << " " << -h << " l " << h << " " << h
-      << " l " << -h << " " << h << " l h " << (filled ? "B\n" : "S\n");
-}
-
-void EmitDiamondPath(fxcrt::ostringstream& out, float stroke_w, bool filled) {
-  const float h = (stroke_w * 6.0f) / 2.0f;
-  out << "0 " << -h << " m " << h << " 0 l "
-      << "0 " << h << " l " << -h << " 0 l h " << (filled ? "B\n" : "S\n");
-}
-
-void EmitButtOrSlashPath(fxcrt::ostringstream& out,
-                         float stroke_w,
-                         float len_factor) {
-  const float l = (stroke_w * len_factor) / 2.0f;
-  out << -l << " 0 m " << l << " 0 l S\n";
-}
-
-ByteString BlendModeToPDFName(BlendMode bm) {
-  switch (bm) {
-    case BlendMode::kNormal:
-      return ByteString(pdfium::transparency::kNormal);
-    case BlendMode::kMultiply:
-      return ByteString(pdfium::transparency::kMultiply);
-    case BlendMode::kScreen:
-      return ByteString(pdfium::transparency::kScreen);
-    case BlendMode::kOverlay:
-      return ByteString(pdfium::transparency::kOverlay);
-    case BlendMode::kDarken:
-      return ByteString(pdfium::transparency::kDarken);
-    case BlendMode::kLighten:
-      return ByteString(pdfium::transparency::kLighten);
-    case BlendMode::kColorDodge:
-      return ByteString(pdfium::transparency::kColorDodge);
-    case BlendMode::kColorBurn:
-      return ByteString(pdfium::transparency::kColorBurn);
-    case BlendMode::kHardLight:
-      return ByteString(pdfium::transparency::kHardLight);
-    case BlendMode::kSoftLight:
-      return ByteString(pdfium::transparency::kSoftLight);
-    case BlendMode::kDifference:
-      return ByteString(pdfium::transparency::kDifference);
-    case BlendMode::kExclusion:
-      return ByteString(pdfium::transparency::kExclusion);
-    case BlendMode::kHue:
-      return ByteString(pdfium::transparency::kHue);
-    case BlendMode::kSaturation:
-      return ByteString(pdfium::transparency::kSaturation);
-    case BlendMode::kColor:
-      return ByteString(pdfium::transparency::kColor);
-    case BlendMode::kLuminosity:
-      return ByteString(pdfium::transparency::kLuminosity);
-  }
-  return ByteString(pdfium::transparency::kNormal);
-}
-
-static BlendMode DefaultBlendModeFor(CPDF_Annot::Subtype subtype) {
-  switch (subtype) {
-    case CPDF_Annot::Subtype::HIGHLIGHT:
-      return BlendMode::kMultiply;
-    default:
-      return BlendMode::kNormal;
-  }
-}
-
-bool SupportsEphemeralAnnotAP(CPDF_Annot::Subtype subtype) {
-  switch (subtype) {
-    case CPDF_Annot::Subtype::CARET:
-    case CPDF_Annot::Subtype::CIRCLE:
-    case CPDF_Annot::Subtype::FILEATTACHMENT:
-    case CPDF_Annot::Subtype::FREETEXT:
-    case CPDF_Annot::Subtype::HIGHLIGHT:
-    case CPDF_Annot::Subtype::INK:
-    case CPDF_Annot::Subtype::LINE:
-    case CPDF_Annot::Subtype::LINK:
-    case CPDF_Annot::Subtype::POLYGON:
-    case CPDF_Annot::Subtype::POLYLINE:
-    case CPDF_Annot::Subtype::REDACT:
-    case CPDF_Annot::Subtype::SQUARE:
-    case CPDF_Annot::Subtype::SQUIGGLY:
-    case CPDF_Annot::Subtype::STRIKEOUT:
-    case CPDF_Annot::Subtype::TEXT:
-    case CPDF_Annot::Subtype::UNDERLINE:
-    case CPDF_Annot::Subtype::WIDGET:
-      return true;
-    default:
-      return false;
-  }
-}
+enum class PaintOperation { kStroke, kFill };
 
 ByteString GetPDFWordString(IPVT_FontMap* font_map,
                             int32_t font_index,
@@ -405,12 +78,9 @@ ByteString GetPDFWordString(IPVT_FontMap* font_map,
   }
 
   ByteString word_string;
-  // EmbedPDF: route unicode-to-charcode mapping through IPVT_FontMap so
-  // CPDF_AnnotFontMap can use registered fallback fonts and subset-local glyph
-  // ids when generating FreeText appearance streams.
-  int32_t char_code = font_map->CharCodeFromUnicode(font_index, word);
-  if (char_code >= 0) {
-    pdf_font->AppendChar(&word_string, static_cast<uint32_t>(char_code));
+  uint32_t char_code = pdf_font->CharCodeFromUnicode(word);
+  if (char_code != CPDF_Font::kInvalidCharCode) {
+    pdf_font->AppendChar(&word_string, char_code);
   }
   return word_string;
 }
@@ -428,21 +98,6 @@ ByteString StringFromFontNameAndSize(const ByteString& font_name,
   if (font_name.GetLength() > 0 && font_size > 0) {
     font_stream << "/" << font_name << " ";
     WriteFloat(font_stream, font_size) << " Tf\n";
-  }
-  return ByteString(font_stream);
-}
-
-// EmbedPDF: the font part of a /DA string, "/Helv 0 Tf".
-// StringFromFontNameAndSize is for content streams, where a size of 0 would
-// draw invisible text, so it writes nothing for it. In /DA a size of 0 means
-// auto-size (ISO 32000, variable text), and the font must still be named:
-// without it nothing can draw the text. Empty when there is no font name.
-ByteString DefaultAppearanceFontPart(const ByteString& font_name,
-                                     float font_size) {
-  fxcrt::ostringstream font_stream;
-  if (font_name.GetLength() > 0 && font_size >= 0) {
-    font_stream << "/" << font_name << " ";
-    WriteFloat(font_stream, font_size) << " Tf";
   }
   return ByteString(font_stream);
 }
@@ -465,39 +120,12 @@ void SetVtFontSize(float font_size, CPVT_VariableText& vt) {
   }
 }
 
-// A dash array's values, at most ten, as the dash operator takes them.
-std::vector<float> DashValues(const CPDF_Array* dash_array) {
-  std::vector<float> values;
-  if (!dash_array) {
-    return values;
-  }
-  const size_t count = std::min<size_t>(dash_array->size(), 10);
-  for (size_t i = 0; i < count; ++i) {
-    values.push_back(dash_array->GetFloatAt(i));
-  }
-  return values;
-}
-
-// The dash operator for |values|; empty when there are none.
-ByteString DashOperator(const std::vector<float>& values) {
-  if (values.empty()) {
-    return ByteString();
-  }
-  fxcrt::ostringstream dash_stream;
-  dash_stream << "[";
-  for (float value : values) {
-    WriteFloat(dash_stream, value) << " ";
-  }
-  dash_stream << "] 0 d\n";
-  return ByteString(dash_stream);
-}
-
 // ISO 32000-1:2008 spec, table 166.
 // ISO 32000-2:2020 spec, table 168.
 struct BorderStyleInfo {
   float width = 1;
   BorderStyle style = BorderStyle::kSolid;
-  std::vector<float> dash_pattern{kDefaultDash};
+  CPVT_Dash dash_pattern{3, 0, 0};
 };
 
 BorderStyleInfo GetBorderStyleInfo(const CPDF_Dictionary* border_style_dict) {
@@ -534,10 +162,11 @@ BorderStyleInfo GetBorderStyleInfo(const CPDF_Dictionary* border_style_dict) {
     }
   }
 
-  std::vector<float> dash =
-      DashValues(border_style_dict->GetArrayFor("D").Get());
-  if (!dash.empty()) {
-    border_style_info.dash_pattern = std::move(dash);
+  RetainPtr<const CPDF_Array> dash_array = border_style_dict->GetArrayFor("D");
+  if (dash_array) {
+    border_style_info.dash_pattern =
+        CPVT_Dash(dash_array->GetIntegerAt(0), dash_array->GetIntegerAt(1),
+                  dash_array->GetIntegerAt(2));
   }
 
   return border_style_info;
@@ -549,9 +178,6 @@ struct AppearanceCharacteristics {
   int rotation = 0;  // In degrees.
   CFX_Color border_color;
   CFX_Color background_color;
-  // /CA, the normal caption. A check box or radio button keeps one
-  // ZapfDingbats character there, naming the symbol it shows when on.
-  WideString caption;
 };
 
 AppearanceCharacteristics GetAppearanceCharacteristics(
@@ -576,8 +202,6 @@ AppearanceCharacteristics GetAppearanceCharacteristics(
     appearance_characteristics.background_color =
         fpdfdoc::CFXColorFromArray(*background_color_array);
   }
-  appearance_characteristics.caption =
-      mk_dict->GetUnicodeTextFor(pdfium::appearance::kCA);
   return appearance_characteristics;
 }
 
@@ -626,62 +250,6 @@ AnnotationDimensionsAndColor GetAnnotationDimensionsAndColor(
       .border_color = appearance_characteristics.border_color,
       .background_color = appearance_characteristics.background_color,
   };
-}
-
-constexpr char kEmbedMetadataVerticalAlignmentKey[] = "VerticalAlignment";
-
-int GetEmbedMetadataIntegerFor(const CPDF_Dictionary* annot_dict,
-                               ByteStringView key) {
-  RetainPtr<const CPDF_Dictionary> metadata =
-      fpdfdoc::GetEmbedMetadata(annot_dict);
-  return metadata ? metadata->GetIntegerFor(key) : 0;
-}
-
-// /RD as its four numbers, in rectangle order (left, bottom, right, top), as
-// Acrobat writes it and PDFium reads it.
-CFX_FloatRect GetRectDifferences(const CPDF_Dictionary* annot_dict) {
-  RetainPtr<const CPDF_Array> rd = annot_dict->GetArrayFor("RD");
-  if (!rd || rd->size() < 4) {
-    return CFX_FloatRect();
-  }
-  return CFX_FloatRect(rd->GetFloatAt(0), rd->GetFloatAt(1), rd->GetFloatAt(2),
-                       rd->GetFloatAt(3));
-}
-
-// Where a box kind (square, circle, free text, caret) is drawn: its shape's
-// box, and the turn that puts it on the page.
-struct ShapeRotationInfo {
-  CFX_FloatRect bbox;  // The shape's own box, before any turn, in page space.
-  CFX_Matrix matrix;   // Turns the box about its middle; identity when upright.
-  bool is_rotated;     // Whether the box is turned.
-};
-
-ShapeRotationInfo GetShapeRotationInfo(const CPDF_Dictionary* annot_dict) {
-  ShapeRotationInfo info;
-  info.is_rotated = false;
-  info.matrix = CFX_Matrix();
-  // Upright, the shape is /Rect less /RD: /Rect also holds what the drawing
-  // adds around it (a cloudy border's bumps, a callout's line).
-  CFX_FloatRect rect = annot_dict->GetRectFor(pdfium::annotation::kRect);
-  rect.Normalize();
-  const CFX_FloatRect rd = GetRectDifferences(annot_dict);
-  const CFX_FloatRect shape(rect.left + rd.left, rect.bottom + rd.bottom,
-                            rect.right - rd.right, rect.top - rd.top);
-  info.bbox = shape.left <= shape.right && shape.bottom <= shape.top ? shape
-                                                                     : rect;
-
-  // The engine records the turn the annotation reads before it draws it.
-  const std::optional<fpdfdoc::AnnotRotation> rotation =
-      fpdfdoc::GetRecordedAnnotRotation(annot_dict);
-  if (!rotation) {
-    return info;
-  }
-  info.is_rotated = true;
-  info.bbox = rotation->box;
-  // Rotate about the centre of the unrotated box.
-  info.matrix = fpdfdoc::TurnAbout(fpdfdoc::BoxCenter(rotation->box),
-                                   rotation->degrees);
-  return info;
 }
 
 struct DefaultAppearanceInfo {
@@ -880,10 +448,10 @@ ByteString GenerateBorderAP(const CFX_FloatRect& rect,
       ByteString color_string =
           GenerateColorAP(border_color, PaintOperation::kStroke);
       if (color_string.GetLength() > 0) {
+        const auto& dash = border_style_info.dash_pattern;
         app_stream << color_string;
-        WriteFloat(app_stream, width) << " w\n"
-                                      << DashOperator(
-                                             border_style_info.dash_pattern);
+        WriteFloat(app_stream, width) << " w [" << dash.dash << " " << dash.gap
+                                      << "] " << dash.phase << " d\n";
         WritePoint(app_stream, {left + half_width, bottom + half_width})
             << " m\n";
         WritePoint(app_stream, {left + half_width, top - half_width}) << " l\n";
@@ -964,10 +532,8 @@ ByteString GetColorStringWithDefault(const CPDF_Array* color_array,
 
 float GetBorderWidth(const CPDF_Dictionary* dict) {
   RetainPtr<const CPDF_Dictionary> border_style_dict = dict->GetDictFor("BS");
-  if (border_style_dict) {
-    return border_style_dict->KeyExist("W")
-               ? border_style_dict->GetFloatFor("W")
-               : 1.0f;
+  if (border_style_dict && border_style_dict->KeyExist("W")) {
+    return border_style_dict->GetFloatFor("W");
   }
 
   auto border_array = dict->GetArrayFor(pdfium::annotation::kBorder);
@@ -975,42 +541,41 @@ float GetBorderWidth(const CPDF_Dictionary* dict) {
     return border_array->GetFloatAt(2);
   }
 
-  return 1.0f;
+  return 1;
 }
 
-inline CPDF_Annot::VerticalAlignment GetVerticalAlign(
-    const CPDF_Dictionary* annot_dict) {
-  const int v = GetEmbedMetadataIntegerFor(annot_dict,
-                                           kEmbedMetadataVerticalAlignmentKey);
-  if (v < static_cast<int>(CPDF_Annot::VerticalAlignment::kTop) ||
-      v > static_cast<int>(CPDF_Annot::VerticalAlignment::kBottom)) {
-    return CPDF_Annot::VerticalAlignment::kTop;  // fallback
-  }
-  return static_cast<CPDF_Annot::VerticalAlignment>(v);
-}
-
-// The dash operator a border draws with: a dashed /BS draws its /D, or the
-// default dash when it names none; a /Border draws its own dash array.
-ByteString GetDashPatternString(const CPDF_Dictionary* dict) {
+RetainPtr<const CPDF_Array> GetDashArray(const CPDF_Dictionary* dict) {
   RetainPtr<const CPDF_Dictionary> border_style_dict = dict->GetDictFor("BS");
-  if (border_style_dict) {
-    if (border_style_dict->GetByteStringFor("S") != "D") {
-      return ByteString();
-    }
-    std::vector<float> dash =
-        DashValues(border_style_dict->GetArrayFor("D").Get());
-    if (dash.empty()) {
-      dash.push_back(kDefaultDash);
-    }
-    return DashOperator(dash);
+  if (border_style_dict && border_style_dict->GetByteStringFor("S") == "D") {
+    return border_style_dict->GetArrayFor("D");
   }
 
   RetainPtr<const CPDF_Array> border_array =
       dict->GetArrayFor(pdfium::annotation::kBorder);
   if (border_array && border_array->size() == 4) {
-    return DashOperator(DashValues(border_array->GetArrayAt(3).Get()));
+    return border_array->GetArrayAt(3);
   }
-  return ByteString();
+
+  return nullptr;
+}
+
+ByteString GetDashPatternString(const CPDF_Dictionary* dict) {
+  RetainPtr<const CPDF_Array> dash_array = GetDashArray(dict);
+  if (!dash_array || dash_array->IsEmpty()) {
+    return ByteString();
+  }
+
+  // Support maximum of ten elements in the dash array.
+  size_t dash_arrayCount = std::min<size_t>(dash_array->size(), 10);
+  fxcrt::ostringstream dash_stream;
+
+  dash_stream << "[";
+  for (size_t i = 0; i < dash_arrayCount; ++i) {
+    WriteFloat(dash_stream, dash_array->GetFloatAt(i)) << " ";
+  }
+  dash_stream << "] 0 d\n";
+
+  return ByteString(dash_stream);
 }
 
 ByteString GetPopupContentsString(CPDF_Document* doc,
@@ -1056,26 +621,6 @@ RetainPtr<CPDF_Dictionary> GenerateFallbackFontDict(CPDF_Document* doc) {
   return font_dict;
 }
 
-RetainPtr<CPDF_Dictionary> GenerateDirectFallbackFontDict() {
-  auto font_dict = pdfium::MakeRetain<CPDF_Dictionary>();
-  font_dict->SetNewFor<CPDF_Name>("Type", "Font");
-  font_dict->SetNewFor<CPDF_Name>("Subtype", "Type1");
-  font_dict->SetNewFor<CPDF_Name>("BaseFont", CFX_Font::kDefaultAnsiFontName);
-  font_dict->SetNewFor<CPDF_Name>("Encoding",
-                                  pdfium::font_encodings::kWinAnsiEncoding);
-  return font_dict;
-}
-
-RetainPtr<CPDF_Dictionary> GenerateEphemeralDefaultAcroFormDict() {
-  auto acroform_dict = pdfium::MakeRetain<CPDF_Dictionary>();
-  acroform_dict->SetNewFor<CPDF_String>("DA", "/Helv 12 Tf 0 g");
-
-  auto dr_dict = acroform_dict->SetNewFor<CPDF_Dictionary>("DR");
-  auto font_dict = dr_dict->SetNewFor<CPDF_Dictionary>("Font");
-  font_dict->SetFor("Helv", GenerateDirectFallbackFontDict());
-  return acroform_dict;
-}
-
 RetainPtr<CPDF_Dictionary> GetFontFromDrFontDictOrGenerateFallback(
     CPDF_Document* doc,
     CPDF_Dictionary* dr_font_dict,
@@ -1092,80 +637,6 @@ RetainPtr<CPDF_Dictionary> GetFontFromDrFontDictOrGenerateFallback(
   return new_font_dict;
 }
 
-// EmbedPDF (A1): how a /DA font name resolves against /DR.
-//  - present in /DR: that dictionary, plus the registered font it stands for
-//    when it is one of ours (family first, session hint second);
-//  - absent but spelled like a reserved registered-font alias: the registered
-//    font alone. The real /DR entry is installed by CPDF_AnnotFontMap once
-//    the appearance is generated and the glyph set is known;
-//  - otherwise the Helvetica fallback, as before.
-struct DaFontResolution {
-  RetainPtr<CPDF_Dictionary> font_dict;
-  CFX_FontRegistry::FontId registered_font_id =
-      CFX_FontRegistry::kInvalidFontId;
-};
-
-DaFontResolution ResolveDaFontForPersistentTarget(CPDF_Document* doc,
-                                                  CPDF_Dictionary* dr_font_dict,
-                                                  const ByteString& font_name) {
-  DaFontResolution result;
-  result.font_dict = dr_font_dict->GetMutableDictFor(font_name.AsStringView());
-  if (result.font_dict) {
-    result.registered_font_id =
-        CPDF_AnnotFontSubset::ResolveRegisteredFont(result.font_dict.Get())
-            .value_or(CFX_FontRegistry::kInvalidFontId);
-    return result;
-  }
-  if (std::optional<CFX_FontRegistry::FontId> font_id =
-          CPDF_AnnotFontMap::RegisteredFontIdFromAlias(doc, font_name)) {
-    result.registered_font_id = *font_id;
-    return result;
-  }
-  // EmbedPDF: the fallback is a write, so it goes into /DR/Font as the
-  // document opens it for writing - a layer transaction copies the catalog's
-  // chain up first. |dr_font_dict| may be a read-path view of a committed
-  // version; writing into it would land outside the transaction.
-  RetainPtr<CPDF_Dictionary> root = doc->GetMutableRoot();
-  RetainPtr<CPDF_Dictionary> acroform =
-      root ? root->GetMutableDictFor("AcroForm") : nullptr;
-  if (!acroform) {
-    return result;
-  }
-  RetainPtr<CPDF_Dictionary> writable_dr_font_dict =
-      acroform->GetOrCreateDictFor("DR")->GetOrCreateDictFor("Font");
-  result.font_dict = GetFontFromDrFontDictOrGenerateFallback(
-      doc, writable_dr_font_dict.Get(), font_name);
-  return result;
-}
-
-DaFontResolution ResolveDaFontForEphemeralTarget(
-    const CPDF_Document* doc,
-    const CPDF_Dictionary* dr_font_dict,
-    const ByteString& font_name) {
-  DaFontResolution result;
-  RetainPtr<const CPDF_Dictionary> font_dict =
-      dr_font_dict ? dr_font_dict->GetDictFor(font_name.AsStringView())
-                   : nullptr;
-  if (font_dict) {
-    // The font loader still takes a mutable dictionary handle. Ephemeral AP
-    // generation treats this as a read-only boundary and never writes
-    // through it.
-    result.font_dict =
-        pdfium::WrapRetain(const_cast<CPDF_Dictionary*>(font_dict.Get()));
-    result.registered_font_id =
-        CPDF_AnnotFontSubset::ResolveRegisteredFont(font_dict.Get())
-            .value_or(CFX_FontRegistry::kInvalidFontId);
-    return result;
-  }
-  if (std::optional<CFX_FontRegistry::FontId> font_id =
-          CPDF_AnnotFontMap::RegisteredFontIdFromAlias(doc, font_name)) {
-    result.registered_font_id = *font_id;
-    return result;
-  }
-  result.font_dict = GenerateDirectFallbackFontDict();
-  return result;
-}
-
 RetainPtr<CPDF_Dictionary> GenerateResourceFontDict(
     CPDF_Document* doc,
     const ByteString& font_name,
@@ -1176,84 +647,6 @@ RetainPtr<CPDF_Dictionary> GenerateResourceFontDict(
   return resource_font_dict;
 }
 
-RetainPtr<CPDF_Dictionary> GenerateResourceFontDict(
-    CPDF_Document* doc,
-    const ByteString& font_name,
-    const CPDF_Dictionary* font_dict) {
-  auto resource_font_dict = doc->New<CPDF_Dictionary>();
-  const uint32_t font_obj_num = font_dict->GetObjNum();
-  if (font_obj_num != 0) {
-    resource_font_dict->SetNewFor<CPDF_Reference>(font_name, doc, font_obj_num);
-  } else {
-    resource_font_dict->SetFor(font_name, font_dict->Clone());
-  }
-  return resource_font_dict;
-}
-
-// Returns a PDF-name-safe alias for |base_font_name|, guaranteed unique inside
-// /AcroForm/DR/Font.  Re-uses any existing alias that already maps to the same
-// BaseFont, otherwise creates a lean “standard-14” stub (or a fallback font
-// dict) and registers it.
-//
-// The returned ByteString is always non-empty when the operation succeeds.
-// On failure (e.g. |doc| == nullptr, empty |base_font_name|, OOM) an empty
-// string is returned and the caller should abort the appearance generation.
-//
-// NOTE: This helper does *not* embed a font program – viewers provide the
-// standard 14 fonts out of the box.  For non-standard faces we fall back to
-// GenerateFallbackFontDict(), which produces a minimal Type1 replacement.
-//
-ByteString EnsureFontInAcroFormDR(CPDF_Document* doc,
-                                  CPDF_Dictionary* acroform_dict,
-                                  const ByteString& base_font_name) {
-  if (!doc || !acroform_dict || base_font_name.IsEmpty()) {
-    return ByteString();
-  }
-
-  // /DR /Font
-  RetainPtr<CPDF_Dictionary> dr_dict = acroform_dict->GetOrCreateDictFor("DR");
-  RetainPtr<CPDF_Dictionary> font_res = dr_dict->GetOrCreateDictFor("Font");
-
-  // Is that font already present?
-  {
-    CPDF_DictionaryLocker locker(font_res);
-    for (const auto& kv : locker) {
-      const CPDF_Reference* ref =
-          kv.second ? kv.second->AsReference() : nullptr;
-      if (!ref) {
-        continue;
-      }
-
-      RetainPtr<CPDF_Object> obj =
-          doc->GetOrParseIndirectObject(ref->GetRefObjNum());
-      const CPDF_Dictionary* dict = obj ? obj->AsDictionary() : nullptr;
-      if (dict && dict->GetNameFor("BaseFont") == base_font_name) {
-        return kv.first;
-      }
-    }
-  }
-
-  const ByteString base_key =
-      ByteString::Format("FXF_%s", PDF_NameEncode(base_font_name).c_str());
-  ByteString resource_key = base_key;
-  // The first free FXF_<name>_<n>, counted per call: a function-local static
-  // counter was shared by every thread and made names depend on earlier
-  // documents (rule thread-confined-globals).
-  for (int suffix = 1; font_res->KeyExist(resource_key.AsStringView());
-       ++suffix) {
-    resource_key = ByteString::Format("%s_%d", base_key.c_str(), suffix);
-  }
-
-  // Build a minimal Type1 font dictionary
-  RetainPtr<CPDF_Dictionary> new_font_dict = GenerateFallbackFontDict(doc);
-  new_font_dict->SetNewFor<CPDF_Name>("BaseFont", base_font_name);
-
-  // Register and return the key
-  font_res->SetNewFor<CPDF_Reference>(resource_key, doc,
-                                      new_font_dict->GetObjNum());
-  return resource_key;
-}
-
 ByteString GetPaintOperatorString(bool is_stroke_rect, bool is_fill_rect) {
   if (is_stroke_rect) {
     return is_fill_rect ? "b" : "s";
@@ -1261,233 +654,17 @@ ByteString GetPaintOperatorString(bool is_stroke_rect, bool is_fill_rect) {
   return is_fill_rect ? "f" : "n";
 }
 
-struct CloudyBorderInfo {
-  bool is_cloudy = false;
-  float intensity = 0;
-};
-
-CloudyBorderInfo GetCloudyBorderInfo(const CPDF_Dictionary* annot_dict) {
-  CloudyBorderInfo info;
-  RetainPtr<const CPDF_Dictionary> be = annot_dict->GetDictFor("BE");
-  if (!be || be->GetNameFor("S") != "C") {
-    return info;
-  }
-  info.is_cloudy = true;
-  info.intensity = be->KeyExist("I") ? be->GetFloatFor("I") : 1.0f;
-  return info;
-}
-
-CPDF_Annot::LineEnding ReadCalloutLineEnding(
-    const CPDF_Dictionary* annot_dict) {
-  // Per spec (Table 174), FreeText /LE is a single Name.
-  ByteString name = annot_dict->GetNameFor("LE");
-  if (!name.IsEmpty()) {
-    return CPDF_Annot::StringToLineEnding(name);
-  }
-  // Tolerance fallback: some writers store LE as an array.
-  if (RetainPtr<const CPDF_Array> le = annot_dict->GetArrayFor("LE"); le) {
-    if (le->size() >= 1) {
-      return CPDF_Annot::StringToLineEnding(ReadLineEndingToken(le.Get(), 0));
-    }
-  }
-  return CPDF_Annot::LineEnding::kNone;
-}
-
-// The square the note and file icons are designed in. An icon is drawn in
-// it, then scaled onto its annotation's /Rect.
-constexpr CFX_FloatRect kIconDesign(0, 0, 20, 20);
-
-// The matrix that puts the icon's design square onto `rect`, each axis on its
-// own: a rect that isn't square stretches the icon, as it does in every PDF
-// app. WriteMatrix keeps every number in PDF's number syntax.
-ByteString IconDesignOnto(CFX_FloatRect rect) {
-  rect.Normalize();
-  fxcrt::ostringstream out;
-  WriteMatrix(out, CFX_Matrix(rect.Width() / kIconDesign.Width(), 0, 0,
-                              rect.Height() / kIconDesign.Height(), rect.left,
-                              rect.bottom))
-      << " cm\n";
-  return ByteString(out);
-}
-
-void AppendEllipsePath(fxcrt::ostringstream& app_stream,
-                       const CFX_FloatRect& bounds);
-
-// Appends the glyph of a note icon other than Comment, drawn in the icon's
-// 20x20 design square: the fill and stroke colours are already set.
-void AppendNoteGlyph(fxcrt::ostringstream& app_stream,
-                     const CFX_FloatRect& rect,
-                     CPDF_Annot::Icon icon,
-                     const CFX_Color& stroke_color,
-                     float half_width) {
-  CFX_FloatRect box = rect;
-  box.Deflate(half_width, half_width);
-  auto at = [&](float x, float y) {
-    return CFX_PointF(box.left + x / 20 * box.Width(),
-                      box.bottom + y / 20 * box.Height());
-  };
-  auto move = [&](float x, float y) {
-    WritePoint(app_stream, at(x, y)) << " m\n";
-  };
-  auto line = [&](float x, float y) {
-    WritePoint(app_stream, at(x, y)) << " l\n";
-  };
-  auto curve = [&](float x1, float y1, float x2, float y2, float x3,
-                   float y3) {
-    WritePoint(app_stream, at(x1, y1)) << " ";
-    WritePoint(app_stream, at(x2, y2)) << " ";
-    WritePoint(app_stream, at(x3, y3)) << " c\n";
-  };
-  auto rectangle = [&](float x1, float y1, float x2, float y2) {
-    move(x1, y1);
-    line(x2, y1);
-    line(x2, y2);
-    line(x1, y2);
-    app_stream << "h\n";
-  };
-  auto ellipse = [&](float x1, float y1, float x2, float y2) {
-    const CFX_PointF low = at(x1, y1);
-    const CFX_PointF high = at(x2, y2);
-    AppendEllipsePath(app_stream, CFX_FloatRect(low.x, low.y, high.x, high.y));
-  };
-
-  switch (icon) {
-    case CPDF_Annot::Icon::kText_Note: {
-      // A page with its top right corner folded over, and three lines.
-      move(3.5f, 1);
-      line(3.5f, 19);
-      line(12.5f, 19);
-      line(16.5f, 15);
-      line(16.5f, 1);
-      app_stream << "h\nB\n";
-      move(12.5f, 19);
-      line(12.5f, 15);
-      line(16.5f, 15);
-      for (float y : {12.0f, 8.5f, 5.0f}) {
-        move(6, y);
-        line(14, y);
-      }
-      app_stream << "S\n";
-      break;
-    }
-    case CPDF_Annot::Icon::kText_Help: {
-      // A disc with a question mark in the contrast colour.
-      ellipse(1, 1, 19, 19);
-      app_stream << "B\n1 J\n1 j\n";
-      WriteFloat(app_stream, 1.8f) << " w\n";
-      move(7.2f, 12.8f);
-      curve(7.2f, 15.2f, 8.6f, 16.2f, 10.2f, 16.2f);
-      curve(11.9f, 16.2f, 13, 15.1f, 13, 13.6f);
-      curve(13, 11.6f, 10.2f, 11.3f, 10.2f, 9);
-      line(10.2f, 7.8f);
-      app_stream << "S\n";
-      app_stream << GenerateColorAP(stroke_color, PaintOperation::kFill);
-      ellipse(9, 4, 11.4f, 6.4f);
-      app_stream << "f\n";
-      break;
-    }
-    case CPDF_Annot::Icon::kText_Key: {
-      // Its ring (even-odd punches the hole), shaft and two teeth.
-      ellipse(1.5f, 8.5f, 10.5f, 17.5f);
-      ellipse(4.2f, 11.2f, 7.8f, 14.8f);
-      rectangle(10.5f, 11.8f, 18.5f, 14.2f);
-      rectangle(13.5f, 8.8f, 15, 11.8f);
-      rectangle(16.5f, 9.8f, 18.5f, 11.8f);
-      app_stream << "B*\n";
-      break;
-    }
-    case CPDF_Annot::Icon::kText_NewParagraph: {
-      // A triangle pointing up over a line: a new paragraph starts here.
-      move(3, 8);
-      line(17, 8);
-      line(10, 18);
-      app_stream << "h\n";
-      rectangle(3, 2, 17, 5);
-      app_stream << "B*\n";
-      break;
-    }
-    case CPDF_Annot::Icon::kText_Paragraph: {
-      // The pilcrow as one outline: two stems and the bowl on the left.
-      move(15.5f, 18);
-      line(15.5f, 2);
-      line(13.7f, 2);
-      line(13.7f, 16.2f);
-      line(11.8f, 16.2f);
-      line(11.8f, 2);
-      line(10, 2);
-      line(10, 9.6f);
-      curve(6.6f, 9.6f, 4, 11.4f, 4, 13.8f);
-      curve(4, 16.2f, 6.6f, 18, 10, 18);
-      app_stream << "h\nB\n";
-      break;
-    }
-    case CPDF_Annot::Icon::kText_Insert: {
-      // A caret.
-      move(2.5f, 3);
-      line(10, 17);
-      line(17.5f, 3);
-      line(14.3f, 3);
-      line(10, 11.2f);
-      line(5.7f, 3);
-      app_stream << "h\nB\n";
-      break;
-    }
-    default:
-      NOTREACHED();
-  }
-}
-
-ByteString GenerateTextSymbolAP(const CFX_FloatRect& rect,
-                                const CPDF_Dictionary& annot_dict) {
+ByteString GenerateTextSymbolAP(const CFX_FloatRect& rect) {
   fxcrt::ostringstream app_stream;
-
-  // Read fill color from /C array; default to yellow.
-  CFX_Color fill_color(CFX_Color::Type::kRGB, 1, 1, 0);
-  RetainPtr<const CPDF_Array> color_array =
-      annot_dict.GetArrayFor(pdfium::annotation::kC);
-  if (color_array) {
-    fill_color = fpdfdoc::CFXColorFromArray(*color_array);
-  }
-
-  // Compute luminance-based contrast stroke (matches JS
-  // getContrastStrokeColor).
-  float luminance = 0.299f * fill_color.fColor1 + 0.587f * fill_color.fColor2 +
-                    0.114f * fill_color.fColor3;
-  CFX_Color stroke_color = luminance < 0.45f
-                               ? CFX_Color(CFX_Color::Type::kRGB, 1, 1, 1)
-                               : CFX_Color(CFX_Color::Type::kRGB, 0, 0, 0);
-
-  // /Name picks the glyph. Absent or foreign names mean Note, the
-  // ISO 32000 default icon for text annotations.
-  CPDF_Annot::Icon icon =
-      CPDF_Annot::StringToIcon(annot_dict.GetNameFor("Name"));
-  switch (icon) {
-    case CPDF_Annot::Icon::kText_Comment:
-    case CPDF_Annot::Icon::kText_Key:
-    case CPDF_Annot::Icon::kText_Help:
-    case CPDF_Annot::Icon::kText_NewParagraph:
-    case CPDF_Annot::Icon::kText_Paragraph:
-    case CPDF_Annot::Icon::kText_Insert:
-      break;
-    default:
-      icon = CPDF_Annot::Icon::kText_Note;
-      break;
-  }
-
-  app_stream << GenerateColorAP(fill_color, PaintOperation::kFill);
-  app_stream << GenerateColorAP(stroke_color, PaintOperation::kStroke);
+  app_stream << GenerateColorAP(CFX_Color(CFX_Color::Type::kRGB, 1, 1, 0),
+                                PaintOperation::kFill);
+  app_stream << GenerateColorAP(CFX_Color(CFX_Color::Type::kRGB, 0, 0, 0),
+                                PaintOperation::kStroke);
 
   static constexpr int kBorderWidth = 1;
   app_stream << kBorderWidth << " w\n";
 
   static constexpr float kHalfWidth = kBorderWidth / 2.0f;
-
-  if (icon != CPDF_Annot::Icon::kText_Comment) {
-    AppendNoteGlyph(app_stream, rect, icon, stroke_color, kHalfWidth);
-    return ByteString(app_stream);
-  }
-
-  // Comment: a speech balloon with three lines of text.
   static constexpr int kTipDelta = 4;
 
   CFX_FloatRect outer_rect1 = rect;
@@ -1527,153 +704,6 @@ ByteString GenerateTextSymbolAP(const CFX_FloatRect& rect,
   return ByteString(app_stream);
 }
 
-// Appends a closed ellipse path inscribed in |bounds| (same four-bezier
-// construction as GenerateCircleAP).
-void AppendEllipsePath(fxcrt::ostringstream& app_stream,
-                       const CFX_FloatRect& bounds) {
-  const float middle_x = (bounds.left + bounds.right) / 2;
-  const float middle_y = (bounds.top + bounds.bottom) / 2;
-
-  static constexpr float kL = 0.5523f;
-  const float delta_x = kL * bounds.Width() / 2.0f;
-  const float delta_y = kL * bounds.Height() / 2.0f;
-
-  app_stream << middle_x << " " << bounds.top << " m\n";
-  app_stream << middle_x + delta_x << " " << bounds.top << " " << bounds.right
-             << " " << middle_y + delta_y << " " << bounds.right << " "
-             << middle_y << " c\n";
-  app_stream << bounds.right << " " << middle_y - delta_y << " "
-             << middle_x + delta_x << " " << bounds.bottom << " " << middle_x
-             << " " << bounds.bottom << " c\n";
-  app_stream << middle_x - delta_x << " " << bounds.bottom << " "
-             << bounds.left << " " << middle_y - delta_y << " " << bounds.left
-             << " " << middle_y << " c\n";
-  app_stream << bounds.left << " " << middle_y + delta_y << " "
-             << middle_x - delta_x << " " << bounds.top << " " << middle_x
-             << " " << bounds.top << " c\nh\n";
-}
-
-ByteString GenerateFileAttachmentSymbolAP(const CFX_FloatRect& rect,
-                                          const CPDF_Dictionary& annot_dict) {
-  fxcrt::ostringstream app_stream;
-
-  // Read fill color from /C array; default to yellow (the note-icon
-  // default in GenerateTextSymbolAP).
-  CFX_Color fill_color(CFX_Color::Type::kRGB, 1, 1, 0);
-  RetainPtr<const CPDF_Array> color_array =
-      annot_dict.GetArrayFor(pdfium::annotation::kC);
-  if (color_array) {
-    fill_color = fpdfdoc::CFXColorFromArray(*color_array);
-  }
-
-  // Same luminance-based contrast stroke as GenerateTextSymbolAP.
-  float luminance = 0.299f * fill_color.fColor1 + 0.587f * fill_color.fColor2 +
-                    0.114f * fill_color.fColor3;
-  CFX_Color stroke_color = luminance < 0.45f
-                               ? CFX_Color(CFX_Color::Type::kRGB, 1, 1, 1)
-                               : CFX_Color(CFX_Color::Type::kRGB, 0, 0, 0);
-
-  // /Name picks the glyph. Absent or foreign names mean PushPin, the
-  // ISO 32000 default icon for file attachment annotations.
-  CPDF_Annot::Icon icon =
-      CPDF_Annot::StringToIcon(annot_dict.GetNameFor("Name"));
-  if (icon != CPDF_Annot::Icon::kFile_Graph &&
-      icon != CPDF_Annot::Icon::kFile_Paperclip &&
-      icon != CPDF_Annot::Icon::kFile_Tag) {
-    icon = CPDF_Annot::Icon::kFile_PushPin;
-  }
-
-  static constexpr int kBorderWidth = 1;
-  static constexpr float kHalfWidth = kBorderWidth / 2.0f;
-  CFX_FloatRect box = rect;
-  box.Deflate(kHalfWidth, kHalfWidth);
-  const float w = box.Width();
-  const float h = box.Height();
-  // Glyph coordinates below are fractions of the icon box.
-  auto px = [&](float fx) { return box.left + fx * w; };
-  auto py = [&](float fy) { return box.bottom + fy * h; };
-
-  if (icon == CPDF_Annot::Icon::kFile_Paperclip) {
-    // A paperclip is a wire, not a closed region, so /C colours the
-    // stroked wire itself; a wider contrast pass underneath is the wire
-    // counterpart of the note icon's contrast border.
-    fxcrt::ostringstream path;
-    WritePoint(path, {px(0.32f), py(0.28f)}) << " m\n";
-    WritePoint(path, {px(0.32f), py(0.72f)}) << " l\n";
-    path << px(0.32f) << " " << py(0.85f) << " " << px(0.68f) << " "
-         << py(0.85f) << " " << px(0.68f) << " " << py(0.72f) << " c\n";
-    WritePoint(path, {px(0.68f), py(0.20f)}) << " l\n";
-    path << px(0.68f) << " " << py(0.10f) << " " << px(0.50f) << " "
-         << py(0.10f) << " " << px(0.50f) << " " << py(0.20f) << " c\n";
-    WritePoint(path, {px(0.50f), py(0.65f)}) << " l\n";
-    path << px(0.50f) << " " << py(0.72f) << " " << px(0.41f) << " "
-         << py(0.72f) << " " << px(0.41f) << " " << py(0.65f) << " c\n";
-    WritePoint(path, {px(0.41f), py(0.30f)}) << " l\n";
-    const ByteString wire(path);
-
-    app_stream << "1 J\n1 j\n";
-    app_stream << GenerateColorAP(stroke_color, PaintOperation::kStroke);
-    WriteFloat(app_stream, 2.6f) << " w\n" << wire << "S\n";
-    app_stream << GenerateColorAP(fill_color, PaintOperation::kStroke);
-    WriteFloat(app_stream, 1.4f) << " w\n" << wire << "S\n";
-    return ByteString(app_stream);
-  }
-
-  app_stream << GenerateColorAP(fill_color, PaintOperation::kFill);
-  app_stream << GenerateColorAP(stroke_color, PaintOperation::kStroke);
-  app_stream << kBorderWidth << " w\n";
-
-  switch (icon) {
-    case CPDF_Annot::Icon::kFile_PushPin: {
-      // Round head, collar, and a tapering needle. Painted with the
-      // nonzero rule (`B`) so touching subpaths merge instead of
-      // punching even-odd holes.
-      AppendEllipsePath(app_stream, CFX_FloatRect(px(0.33f), py(0.53f),
-                                                  px(0.67f), py(0.87f)));
-      app_stream << px(0.37f) << " " << py(0.46f) << " " << px(0.63f) - px(0.37f)
-                 << " " << py(0.525f) - py(0.46f) << " re\n";
-      WritePoint(app_stream, {px(0.47f), py(0.455f)}) << " m\n";
-      WritePoint(app_stream, {px(0.53f), py(0.455f)}) << " l\n";
-      WritePoint(app_stream, {px(0.50f), py(0.10f)}) << " l\nh\n";
-      app_stream << "B\n";
-      break;
-    }
-    case CPDF_Annot::Icon::kFile_Graph: {
-      // Even-odd turns the outer+inner rectangles into a frame ring; the
-      // three bars sit inside the ring on its bottom edge.
-      app_stream << px(0.10f) << " " << py(0.10f) << " " << px(0.90f) - px(0.10f)
-                 << " " << py(0.90f) - py(0.10f) << " re\n";
-      app_stream << px(0.16f) << " " << py(0.16f) << " " << px(0.84f) - px(0.16f)
-                 << " " << py(0.84f) - py(0.16f) << " re\n";
-      app_stream << px(0.22f) << " " << py(0.16f) << " " << px(0.36f) - px(0.22f)
-                 << " " << py(0.40f) - py(0.16f) << " re\n";
-      app_stream << px(0.43f) << " " << py(0.16f) << " " << px(0.57f) - px(0.43f)
-                 << " " << py(0.56f) - py(0.16f) << " re\n";
-      app_stream << px(0.64f) << " " << py(0.16f) << " " << px(0.78f) - px(0.64f)
-                 << " " << py(0.76f) - py(0.16f) << " re\n";
-      app_stream << "B*\n";
-      break;
-    }
-    case CPDF_Annot::Icon::kFile_Tag: {
-      // Label pentagon pointing left; even-odd punches the eyelet hole.
-      WritePoint(app_stream, {px(0.10f), py(0.50f)}) << " m\n";
-      WritePoint(app_stream, {px(0.34f), py(0.80f)}) << " l\n";
-      WritePoint(app_stream, {px(0.90f), py(0.80f)}) << " l\n";
-      WritePoint(app_stream, {px(0.90f), py(0.20f)}) << " l\n";
-      WritePoint(app_stream, {px(0.34f), py(0.20f)}) << " l\nh\n";
-      AppendEllipsePath(app_stream, CFX_FloatRect(px(0.305f), py(0.445f),
-                                                  px(0.415f), py(0.555f)));
-      app_stream << "B*\n";
-      break;
-    }
-    default: {
-      NOTREACHED();
-    }
-  }
-
-  return ByteString(app_stream);
-}
-
 RetainPtr<CPDF_Dictionary> GenerateExtGStateDict(
     const CPDF_Dictionary& annot_dict,
     const ByteString& blend_mode) {
@@ -1707,338 +737,38 @@ RetainPtr<CPDF_Dictionary> GenerateResourcesDict(
   return resources_dict;
 }
 
-struct APGenerationTarget {
-  CPDF_Document* const doc;
-  CPDF_Dictionary* const persistent_annot_dict;
-  std::unique_ptr<CPDF_AnnotFontMap> ephemeral_fonts;
-  RetainPtr<CPDF_Stream> normal_stream;
-
-  bool IsPersistent() const { return !!persistent_annot_dict; }
-};
-
-RetainPtr<CPDF_Dictionary> BuildAPStreamDict(
-    const CPDF_Dictionary* annot_dict,
-    RetainPtr<CPDF_Dictionary> resource_dict,
-    bool is_text_markup_annotation,
-    const CFX_Matrix& matrix,
-    const CFX_FloatRect& bbox_override) {
-  auto stream_dict = pdfium::MakeRetain<CPDF_Dictionary>();
-  stream_dict->SetNewFor<CPDF_Number>("FormType", 1);
-  stream_dict->SetNewFor<CPDF_Name>("Type", "XObject");
-  stream_dict->SetNewFor<CPDF_Name>("Subtype", "Form");
-  stream_dict->SetMatrixFor("Matrix", matrix);
-
-  CFX_FloatRect rect = !bbox_override.IsEmpty() ? bbox_override
-                       : is_text_markup_annotation
-                           ? CPDF_Annot::BoundingRectFromQuadPoints(annot_dict)
-                           : annot_dict->GetRectFor(pdfium::annotation::kRect);
-  stream_dict->SetRectFor("BBox", rect);
-  stream_dict->SetFor("Resources", std::move(resource_dict));
-  return stream_dict;
-}
-
-bool GenerateAPDict(APGenerationTarget* target,
-                    const CPDF_Dictionary* annot_dict,
-                    fxcrt::ostringstream* app_stream,
-                    RetainPtr<CPDF_Dictionary> resource_dict,
-                    bool is_text_markup_annotation,
-                    const CFX_Matrix& matrix,
-                    const CFX_FloatRect& bbox_override) {
-  RetainPtr<CPDF_Dictionary> stream_dict =
-      BuildAPStreamDict(annot_dict, std::move(resource_dict),
-                        is_text_markup_annotation, matrix, bbox_override);
-
-  target->normal_stream =
-      target->IsPersistent()
-          ? target->doc->NewIndirect<CPDF_Stream>(std::move(stream_dict))
-          : pdfium::MakeRetain<CPDF_Stream>(std::move(stream_dict));
-  target->normal_stream->SetDataFromStringstream(app_stream);
-
-  if (!target->IsPersistent()) {
-    return true;
-  }
-
-  RetainPtr<CPDF_Dictionary> ap_dict =
-      target->persistent_annot_dict->GetOrCreateDictFor(
-          pdfium::annotation::kAP);
-  ap_dict->SetNewFor<CPDF_Reference>("N", target->doc,
-                                     target->normal_stream->GetObjNum());
-  return true;
-}
-
-bool GenerateAndSetAPDict(APGenerationTarget* target,
-                          const CPDF_Dictionary* annot_dict,
-                          fxcrt::ostringstream* app_stream,
-                          RetainPtr<CPDF_Dictionary> resource_dict,
-                          bool is_text_markup_annotation) {
-  return GenerateAPDict(target, annot_dict, app_stream,
-                        std::move(resource_dict), is_text_markup_annotation,
-                        CFX_Matrix(), CFX_FloatRect());
-}
-
-// The box around what `content` paints in its own space, as a form with
-// `resources` draws it: parsed without a /Matrix and without the /BBox clip.
-CFX_FloatRect MeasurePaintedBox(CPDF_Document* doc,
-                                fxcrt::ostringstream* content,
-                                RetainPtr<CPDF_Dictionary> resources) {
-  auto stream =
-      pdfium::MakeRetain<CPDF_Stream>(pdfium::MakeRetain<CPDF_Dictionary>());
-  stream->SetDataFromStringstream(content);
-  CPDF_Form form(doc, std::move(resources), std::move(stream));
-  form.ParseContent();
-  return GetPaintedBounds(form);
-}
-
-// Points: how far a measured edge may sit past the shape it's drawn about and
-// still be that edge, as a border drawn inside the shape is.
-constexpr float kMeasureNoise = 1e-3f;
-
-// An appearance drawn about `footprint` in the form's space (a box kind's
-// shape, or a line's points) and put on the page by `matrix`. The form's
-// /BBox is the box around the footprint and all the drawing paints (a
-// border's bumps, a line's width and endings, a caption). A persistent
-// annotation's /Rect is where `matrix` puts that box, which places the
-// appearance at scale 1. Returns the /BBox, or nothing when the stream isn't
-// set.
-std::optional<CFX_FloatRect> GenerateAndSetFramedAPDict(
-    APGenerationTarget* target,
-    const CPDF_Dictionary* annot_dict,
-    fxcrt::ostringstream* app_stream,
-    RetainPtr<CPDF_Dictionary> resource_dict,
-    const CFX_Matrix& matrix,
-    const CFX_FloatRect& footprint) {
-  CFX_FloatRect shape = footprint;
-  shape.Normalize();
-  CFX_FloatRect frame = shape;
-  const CFX_FloatRect painted =
-      MeasurePaintedBox(target->doc, app_stream, resource_dict);
-  if (!painted.IsEmpty()) {
-    if (painted.left < shape.left - kMeasureNoise) {
-      frame.left = painted.left;
-    }
-    if (painted.bottom < shape.bottom - kMeasureNoise) {
-      frame.bottom = painted.bottom;
-    }
-    if (painted.right > shape.right + kMeasureNoise) {
-      frame.right = painted.right;
-    }
-    if (painted.top > shape.top + kMeasureNoise) {
-      frame.top = painted.top;
-    }
-  }
-  if (!GenerateAPDict(target, annot_dict, app_stream, std::move(resource_dict),
-                      /*is_text_markup_annotation=*/false, matrix, frame)) {
-    return std::nullopt;
-  }
-  if (target->IsPersistent()) {
-    CFX_FloatRect rect = matrix.TransformRect(frame);
-    rect.Normalize();
-    target->persistent_annot_dict->SetRectFor(pdfium::annotation::kRect, rect);
-  }
-  return frame;
-}
-
-// A box kind's appearance (`GenerateAndSetFramedAPDict`), with /RD: how far
-// /Rect reaches past the upright box around the shape, in rectangle order as
-// Acrobat writes it; none when the drawing stays inside the shape.
-bool GenerateAndSetBoxAPDict(APGenerationTarget* target,
-                             const CPDF_Dictionary* annot_dict,
-                             fxcrt::ostringstream* app_stream,
-                             RetainPtr<CPDF_Dictionary> resource_dict,
-                             const CFX_Matrix& matrix,
-                             const CFX_FloatRect& footprint) {
-  const std::optional<CFX_FloatRect> frame =
-      GenerateAndSetFramedAPDict(target, annot_dict, app_stream,
-                                 std::move(resource_dict), matrix, footprint);
-  if (!frame.has_value()) {
-    return false;
-  }
-  if (!target->IsPersistent()) {
-    return true;
-  }
-  CFX_FloatRect shape = footprint;
-  shape.Normalize();
-  CFX_FloatRect rect = matrix.TransformRect(frame.value());
-  rect.Normalize();
-  CFX_FloatRect upright = matrix.TransformRect(shape);
-  upright.Normalize();
-  CPDF_Dictionary* dict = target->persistent_annot_dict;
-  const float differences[] = {upright.left - rect.left,
-                               upright.bottom - rect.bottom,
-                               rect.right - upright.right,
-                               rect.top - upright.top};
-  if (std::all_of(std::begin(differences), std::end(differences),
-                  [](float difference) { return difference == 0; })) {
-    dict->RemoveFor("RD");
-    return true;
-  }
-  RetainPtr<CPDF_Array> rd = dict->SetNewFor<CPDF_Array>("RD");
-  for (float difference : differences) {
-    rd->AppendNew<CPDF_Number>(difference);
-  }
-  return true;
-}
-
-// The box around `points`; empty when there are none.
-CFX_FloatRect BoundsOfPoints(pdfium::span<const CFX_PointF> points) {
-  if (points.empty()) {
-    return CFX_FloatRect();
-  }
-  CFX_FloatRect bounds(points.front().x, points.front().y, points.front().x,
-                       points.front().y);
-  for (const CFX_PointF& point : points) {
-    bounds.UpdateRect(point);
-  }
-  return bounds;
-}
-
-// A line, polyline, polygon or ink appearance: framed about its points, with
-// no /RD (a point kind has none).
-bool GenerateAndSetPointsAPDict(APGenerationTarget* target,
-                                const CPDF_Dictionary* annot_dict,
-                                fxcrt::ostringstream* app_stream,
-                                RetainPtr<CPDF_Dictionary> resource_dict,
-                                pdfium::span<const CFX_PointF> points) {
-  return GenerateAndSetFramedAPDict(target, annot_dict, app_stream,
-                                    std::move(resource_dict), CFX_Matrix(),
-                                    BoundsOfPoints(points))
-      .has_value();
-}
-
-bool GenerateAndSetAPDict(CPDF_Document* doc,
+void GenerateAndSetAPDict(CPDF_Document* doc,
                           CPDF_Dictionary* annot_dict,
                           fxcrt::ostringstream* app_stream,
                           RetainPtr<CPDF_Dictionary> resource_dict,
                           bool is_text_markup_annotation) {
-  APGenerationTarget target{doc, annot_dict};
-  return GenerateAndSetAPDict(&target, annot_dict, app_stream,
-                              std::move(resource_dict),
-                              is_text_markup_annotation);
-}
+  auto stream_dict = pdfium::MakeRetain<CPDF_Dictionary>();
+  stream_dict->SetNewFor<CPDF_Number>("FormType", 1);
+  stream_dict->SetNewFor<CPDF_Name>("Type", "XObject");
+  stream_dict->SetNewFor<CPDF_Name>("Subtype", "Form");
+  stream_dict->SetMatrixFor("Matrix", CFX_Matrix());
 
-// This helper encapsulates all logic for drawing the start and end caps.
-void GenerateLineEndings(fxcrt::ostringstream& ap,
-                         const std::vector<CFX_PointF>& points,
-                         const CPDF_Dictionary* annot_dict,
-                         bool reverse_arrows = false) {
-  if (points.size() < 2) {
-    return;
-  }
+  CFX_FloatRect rect = is_text_markup_annotation
+                           ? CPDF_Annot::BoundingRectFromQuadPoints(annot_dict)
+                           : annot_dict->GetRectFor(pdfium::annotation::kRect);
+  stream_dict->SetRectFor("BBox", rect);
+  stream_dict->SetFor("Resources", std::move(resource_dict));
 
-  // Get ending styles from the /LE array
-  CPDF_Annot::LineEnding start_ending = CPDF_Annot::LineEnding::kNone;
-  CPDF_Annot::LineEnding end_ending = CPDF_Annot::LineEnding::kNone;
+  auto normal_stream = doc->NewIndirect<CPDF_Stream>(std::move(stream_dict));
+  normal_stream->SetDataFromStringstream(app_stream);
 
-  if (RetainPtr<const CPDF_Array> le = annot_dict->GetArrayFor("LE"); le) {
-    if (le->size() >= 1) {
-      start_ending =
-          CPDF_Annot::StringToLineEnding(ReadLineEndingToken(le.Get(), 0));
-    }
-    if (le->size() >= 2) {
-      end_ending =
-          CPDF_Annot::StringToLineEnding(ReadLineEndingToken(le.Get(), 1));
-    }
-  }
-
-  if (start_ending == CPDF_Annot::LineEnding::kNone &&
-      end_ending == CPDF_Annot::LineEnding::kNone) {
-    return;
-  }
-
-  // Get styles needed for drawing the endings
-  const float border_w = GetBorderWidth(annot_dict);
-  RetainPtr<const CPDF_Array> interior_color = annot_dict->GetArrayFor("IC");
-  const bool has_fill = interior_color && !interior_color->IsEmpty();
-
-  // Lambda to emit a single ending with the correct transformation
-  auto emit_one = [&](const CPDF_Annot::LineEnding ending,
-                      const CFX_PointF& tip, const CFX_PointF& unit_dir) {
-    if (ending == CPDF_Annot::LineEnding::kNone ||
-        ending == CPDF_Annot::LineEnding::kUnknown) {
-      return;
-    }
-
-    const float line_angle = atan2(unit_dir.y, unit_dir.x);
-    float final_angle = line_angle;
-
-    switch (ending) {
-      case CPDF_Annot::LineEnding::kButt:
-        final_angle += FXSYS_PI / 2.0f;
-        break;
-      case CPDF_Annot::LineEnding::kSlash:
-        final_angle -= FXSYS_PI / 1.5f;
-        break;
-      case CPDF_Annot::LineEnding::kRClosedArrow:
-      case CPDF_Annot::LineEnding::kROpenArrow:
-        final_angle += FXSYS_PI;
-        break;
-      default:
-        break;
-    }
-
-    if (reverse_arrows && (ending == CPDF_Annot::LineEnding::kOpenArrow ||
-                           ending == CPDF_Annot::LineEnding::kClosedArrow ||
-                           ending == CPDF_Annot::LineEnding::kROpenArrow ||
-                           ending == CPDF_Annot::LineEnding::kRClosedArrow)) {
-      final_angle += FXSYS_PI;
-    }
-
-    EmitEndingWithAngle(ap, tip, final_angle, [&]() {
-      switch (ending) {
-        case CPDF_Annot::LineEnding::kClosedArrow:
-        case CPDF_Annot::LineEnding::kRClosedArrow:
-          EmitArrowPath(ap, border_w, ArrowStyle::kClosed, has_fill);
-          break;
-        case CPDF_Annot::LineEnding::kOpenArrow:
-        case CPDF_Annot::LineEnding::kROpenArrow:
-          EmitArrowPath(ap, border_w, ArrowStyle::kOpen, /*do_fill=*/false);
-          break;
-        case CPDF_Annot::LineEnding::kCircle:
-          EmitCirclePath(ap, border_w, has_fill);
-          break;
-        case CPDF_Annot::LineEnding::kSquare:
-          EmitSquarePath(ap, border_w, has_fill);
-          break;
-        case CPDF_Annot::LineEnding::kDiamond:
-          EmitDiamondPath(ap, border_w, has_fill);
-          break;
-        case CPDF_Annot::LineEnding::kButt:
-          EmitButtOrSlashPath(ap, border_w, kButtLenFactor);
-          break;
-        case CPDF_Annot::LineEnding::kSlash:
-          EmitButtOrSlashPath(ap, border_w, kSlashLenFactor);
-          break;
-        default:
-          break;
-      }
-    });
-  };
-
-  // Calculate directions and emit the start and end caps
-  CFX_PointF start_tip = points.front();
-  CFX_PointF end_tip = points.back();
-
-  // The direction for the start ending is reversed from the first segment.
-  CFX_PointF first_segment_dir = UnitVector(points[1] - points[0]);
-  CFX_PointF start_dir_rev = {-first_segment_dir.x, -first_segment_dir.y};
-
-  // The direction for the end ending is forward along the last segment.
-  CFX_PointF end_dir = UnitVector(points.back() - points[points.size() - 2]);
-
-  emit_one(start_ending, start_tip, start_dir_rev);
-  emit_one(end_ending, end_tip, end_dir);
+  RetainPtr<CPDF_Dictionary> ap_dict =
+      annot_dict->GetOrCreateDictFor(pdfium::annotation::kAP);
+  ap_dict->SetNewFor<CPDF_Reference>("N", doc, normal_stream->GetObjNum());
 }
 
 ByteString GenerateTextFieldAP(const CPDF_Dictionary* annot_dict,
                                const CFX_FloatRect& body_rect,
                                float font_size,
-                               CPVT_VariableText& vt,
-                               const WideString* value_override) {
+                               CPVT_VariableText& vt) {
   RetainPtr<const CPDF_Object> v_field =
       CPDF_FormField::GetFieldAttrForDict(annot_dict, pdfium::form_fields::kV);
-  WideString value = value_override
-                         ? *value_override
-                         : (v_field ? v_field->GetUnicodeText() : WideString());
+  WideString value = v_field ? v_field->GetUnicodeText() : WideString();
   RetainPtr<const CPDF_Object> q_field =
       CPDF_FormField::GetFieldAttrForDict(annot_dict, "Q");
   const int32_t align = q_field ? q_field->GetInteger() : 0;
@@ -2085,15 +815,12 @@ ByteString GenerateComboBoxAP(const CPDF_Dictionary* annot_dict,
                               const CFX_FloatRect& body_rect,
                               const CFX_Color& text_color,
                               float font_size,
-                              CPVT_VariableText::Provider& provider,
-                              const WideString* value_override) {
+                              CPVT_VariableText::Provider& provider) {
   fxcrt::ostringstream body_stream;
 
   RetainPtr<const CPDF_Object> v_field =
       CPDF_FormField::GetFieldAttrForDict(annot_dict, pdfium::form_fields::kV);
-  WideString value = value_override
-                         ? *value_override
-                         : (v_field ? v_field->GetUnicodeText() : WideString());
+  WideString value = v_field ? v_field->GetUnicodeText() : WideString();
   CPVT_VariableText vt(&provider);
   CFX_FloatRect button_rect = body_rect;
   button_rect.left = button_rect.right - 13;
@@ -2101,7 +828,6 @@ ByteString GenerateComboBoxAP(const CPDF_Dictionary* annot_dict,
   CFX_FloatRect edit_rect = body_rect;
   edit_rect.right = button_rect.left;
   edit_rect.Normalize();
-  edit_rect.Deflate(4.0f, 0);
   vt.SetPlateRect(edit_rect);
   SetVtFontSize(font_size, vt);
 
@@ -2121,7 +847,23 @@ ByteString GenerateComboBoxAP(const CPDF_Dictionary* annot_dict,
                 << "ET\n"
                 << "Q\nEMC\n";
   }
-  if (!button_rect.IsEmpty()) {
+  ByteString button =
+      GenerateColorAP(CFX_Color(CFX_Color::Type::kRGB, 220.0f / 255.0f,
+                                220.0f / 255.0f, 220.0f / 255.0f),
+                      PaintOperation::kFill);
+  if (button.GetLength() > 0 && !button_rect.IsEmpty()) {
+    body_stream << "q\n" << button;
+    WriteRect(body_stream, button_rect) << " re f\n";
+    body_stream << "Q\n";
+    static const BorderStyleInfo kButtonBorderStyleInfo{
+        .width = 2, .style = BorderStyle::kBeveled, .dash_pattern{3, 0, 0}};
+    ByteString button_border =
+        GenerateBorderAP(button_rect, kButtonBorderStyleInfo,
+                         CFX_Color(CFX_Color::Type::kGray, 0));
+    if (button_border.GetLength() > 0) {
+      body_stream << "q\n" << button_border << "Q\n";
+    }
+
     CFX_PointF center((button_rect.left + button_rect.right) / 2,
                       (button_rect.top + button_rect.bottom) / 2);
     if (FXSYS_IsFloatBigger(button_rect.Width(), 6) &&
@@ -2131,7 +873,7 @@ ByteString GenerateComboBoxAP(const CPDF_Dictionary* annot_dict,
       WritePoint(body_stream, {center.x + 3, center.y + 1.5f}) << " l\n";
       WritePoint(body_stream, {center.x, center.y - 1.5f}) << " l\n";
       WritePoint(body_stream, {center.x - 3, center.y + 1.5f}) << " l f\n";
-      body_stream << "Q\n";
+      body_stream << button << "Q\n";
     }
   }
   return ByteString(body_stream);
@@ -2218,9 +960,7 @@ ByteString GenerateListBoxAP(const CPDF_Dictionary* annot_dict,
   return ByteString(body_stream);
 }
 
-bool GenerateCircleAP(APGenerationTarget* target,
-                      CPDF_Dictionary* annot_dict,
-                      const ByteString& blend_name) {
+bool GenerateCircleAP(CPDF_Document* doc, CPDF_Dictionary* annot_dict) {
   fxcrt::ostringstream app_stream;
   app_stream << "/" << kGSDictName << " gs ";
 
@@ -2235,818 +975,165 @@ bool GenerateCircleAP(APGenerationTarget* target,
 
   float border_width = GetBorderWidth(annot_dict);
   bool is_stroke_rect = border_width > 0;
-  CloudyBorderInfo cloudy_info = GetCloudyBorderInfo(annot_dict);
 
   if (is_stroke_rect) {
     app_stream << border_width << " w ";
-    if (cloudy_info.is_cloudy) {
-      app_stream << "1 j ";
-    } else {
-      app_stream << GetDashPatternString(annot_dict);
-    }
+    app_stream << GetDashPatternString(annot_dict);
   }
 
-  const ShapeRotationInfo rot_info = GetShapeRotationInfo(annot_dict);
-  CFX_FloatRect draw_rect = rot_info.bbox;
-  draw_rect.Normalize();
+  CFX_FloatRect rect = annot_dict->GetRectFor(pdfium::annotation::kRect);
+  rect.Normalize();
 
-  if (cloudy_info.is_cloudy) {
-    GenerateCloudyEllipsePath(app_stream, draw_rect, cloudy_info.intensity,
-                              border_width);
-  } else {
-    if (is_stroke_rect) {
-      draw_rect.Deflate(border_width / 2, border_width / 2);
-    }
-
-    const float middle_x = (draw_rect.left + draw_rect.right) / 2;
-    const float middle_y = (draw_rect.top + draw_rect.bottom) / 2;
-
-    static constexpr float kL = 0.5523f;
-    const float delta_x = kL * draw_rect.Width() / 2.0;
-    const float delta_y = kL * draw_rect.Height() / 2.0;
-
-    app_stream << middle_x << " " << draw_rect.top << " m\n";
-    app_stream << middle_x + delta_x << " " << draw_rect.top << " "
-               << draw_rect.right << " " << middle_y + delta_y << " "
-               << draw_rect.right << " " << middle_y << " c\n";
-    app_stream << draw_rect.right << " " << middle_y - delta_y << " "
-               << middle_x + delta_x << " " << draw_rect.bottom << " "
-               << middle_x << " " << draw_rect.bottom << " c\n";
-    app_stream << middle_x - delta_x << " " << draw_rect.bottom << " "
-               << draw_rect.left << " " << middle_y - delta_y << " "
-               << draw_rect.left << " " << middle_y << " c\n";
-    app_stream << draw_rect.left << " " << middle_y + delta_y << " "
-               << middle_x - delta_x << " " << draw_rect.top << " " << middle_x
-               << " " << draw_rect.top << " c\n";
+  if (is_stroke_rect) {
+    // Deflating rect because stroking a path entails painting all points
+    // whose perpendicular distance from the path in user space is less than
+    // or equal to half the line width.
+    rect.Deflate(border_width / 2, border_width / 2);
   }
+
+  const float middle_x = (rect.left + rect.right) / 2;
+  const float middle_y = (rect.top + rect.bottom) / 2;
+
+  // `kL` is precalculated approximate value of 4 * tan((3.14 / 2) / 4) / 3,
+  // where `kL` * radius is a good approximation of control points for
+  // arc with 90 degrees.
+  static constexpr float kL = 0.5523f;
+  const float delta_x = kL * rect.Width() / 2.0;
+  const float delta_y = kL * rect.Height() / 2.0;
+
+  // Starting point
+  app_stream << middle_x << " " << rect.top << " m\n";
+  // First Bezier Curve
+  app_stream << middle_x + delta_x << " " << rect.top << " " << rect.right
+             << " " << middle_y + delta_y << " " << rect.right << " "
+             << middle_y << " c\n";
+  // Second Bezier Curve
+  app_stream << rect.right << " " << middle_y - delta_y << " "
+             << middle_x + delta_x << " " << rect.bottom << " " << middle_x
+             << " " << rect.bottom << " c\n";
+  // Third Bezier Curve
+  app_stream << middle_x - delta_x << " " << rect.bottom << " " << rect.left
+             << " " << middle_y - delta_y << " " << rect.left << " " << middle_y
+             << " c\n";
+  // Fourth Bezier Curve
+  app_stream << rect.left << " " << middle_y + delta_y << " "
+             << middle_x - delta_x << " " << rect.top << " " << middle_x << " "
+             << rect.top << " c\n";
 
   bool is_fill_rect = interior_color && !interior_color->IsEmpty();
   app_stream << GetPaintOperatorString(is_stroke_rect, is_fill_rect) << "\n";
 
-  auto gs_dict = GenerateExtGStateDict(*annot_dict, blend_name);
-  auto resources_dict =
-      GenerateResourcesDict(target->doc, std::move(gs_dict), nullptr);
-  return GenerateAndSetBoxAPDict(target, annot_dict, &app_stream,
-                                 std::move(resources_dict), rot_info.matrix,
-                                 rot_info.bbox);
+  auto gs_dict = GenerateExtGStateDict(*annot_dict, "Normal");
+  auto resources_dict = GenerateResourcesDict(doc, std::move(gs_dict), nullptr);
+  GenerateAndSetAPDict(doc, annot_dict, &app_stream, std::move(resources_dict),
+                       false /*IsTextMarkupAnnotation*/);
+  return true;
 }
 
-// ---- Rich text FreeText (Phase D)
-// ---------------------------------------------
-
-// The callout leader, arrow and text box, up to and including the box
-// outline; shared by the CPVT and the rich text bodies. The text box comes
-// back for the caller to fill.
-struct CalloutEnvelope {
-  CFX_FloatRect text_box;
-  float border_w = 1;
-  ShapeRotationInfo box_rot;
-};
-
-CalloutEnvelope AppendCalloutEnvelope(fxcrt::ostringstream& appearance_stream,
-                                      const CPDF_Dictionary* annot_dict,
-                                      const CPDF_Array* cl,
-                                      const CFX_Color& da_color) {
-  // (a) Read CL points.
-  CFX_PointF tip(cl->GetFloatAt(0), cl->GetFloatAt(1));
-  const bool has_knee = (cl->size() == 6);
-  CFX_PointF knee(cl->GetFloatAt(2), cl->GetFloatAt(3));
-  CFX_PointF conn =
-      has_knee ? CFX_PointF(cl->GetFloatAt(4), cl->GetFloatAt(5)) : knee;
-
-  // (b) The text box: /Rect less /RD, or our keys' box when turned. For a
-  // callout the /EMBD_Metadata pair turns the TEXT BOX only, about its
-  // middle. The /CL leader stays page-space, so the rotation is baked INLINE
-  // (a `q cm … Q` around the box + text below), never as the form /Matrix.
-  const ShapeRotationInfo box_rot = GetShapeRotationInfo(annot_dict);
-  const CFX_FloatRect text_box = box_rot.bbox;
-
-  // (c) Border width and colors.
-  const float border_w = GetBorderWidth(annot_dict);
-
-  // (d) Set fill (from /C, default transparent), stroke (from DA), and line
-  // width. When /C is absent we emit nothing for the fill and pick a
-  // stroke-only paint operator below, so the text box doesn't fall back to
-  // PDF's default black fill. Mirrors GenerateCircleAP / GenerateSquareAP.
-  auto color_array = annot_dict->GetArrayFor(pdfium::annotation::kC);
-  appearance_stream << GetColorStringWithDefault(
-      color_array.Get(), CFX_Color(CFX_Color::Type::kTransparent),
-      PaintOperation::kFill);
-  appearance_stream << GenerateColorAP(da_color, PaintOperation::kStroke);
-  if (border_w > 0) {
-    appearance_stream << border_w << " w\n";
-  }
-
-  // (e) Draw callout polyline.
-  // Extend conn along the incoming segment direction by half the border
-  // width so the line slides under the text box rect's stroke area,
-  // eliminating the angular gap at the connection point.
-  const float half_bw = border_w / 2.0f;
-  CFX_PointF last_start = has_knee ? knee : tip;
-  CFX_PointF line_dir = UnitVector(conn - last_start);
-  CFX_PointF adjusted_conn(conn.x + line_dir.x * half_bw,
-                           conn.y + line_dir.y * half_bw);
-
-  appearance_stream << tip.x << " " << tip.y << " m\n";
-  if (has_knee) {
-    appearance_stream << knee.x << " " << knee.y << " l\n";
-  }
-  appearance_stream << adjusted_conn.x << " " << adjusted_conn.y << " l S\n";
-
-  // (f) Draw line ending at tip.
-  CPDF_Annot::LineEnding le = ReadCalloutLineEnding(annot_dict);
-  if (le != CPDF_Annot::LineEnding::kNone &&
-      le != CPDF_Annot::LineEnding::kUnknown) {
-    CFX_PointF dir = UnitVector(knee - tip);
-    CFX_PointF dir_rev = {-dir.x, -dir.y};
-    float angle = atan2(dir_rev.y, dir_rev.x);
-
-    switch (le) {
-      case CPDF_Annot::LineEnding::kRClosedArrow:
-      case CPDF_Annot::LineEnding::kROpenArrow:
-        angle += FXSYS_PI;
-        break;
-      case CPDF_Annot::LineEnding::kButt:
-        angle += FXSYS_PI / 2.0f;
-        break;
-      case CPDF_Annot::LineEnding::kSlash:
-        angle -= FXSYS_PI / 1.5f;
-        break;
-      default:
-        break;
-    }
-
-    EmitEndingWithAngle(appearance_stream, tip, angle, [&]() {
-      switch (le) {
-        case CPDF_Annot::LineEnding::kOpenArrow:
-        case CPDF_Annot::LineEnding::kROpenArrow:
-          EmitArrowPath(appearance_stream, border_w, ArrowStyle::kOpen,
-                        /*do_fill=*/false);
-          break;
-        case CPDF_Annot::LineEnding::kClosedArrow:
-        case CPDF_Annot::LineEnding::kRClosedArrow:
-          EmitArrowPath(appearance_stream, border_w, ArrowStyle::kClosed,
-                        /*do_fill=*/false);
-          break;
-        case CPDF_Annot::LineEnding::kCircle:
-          EmitCirclePath(appearance_stream, border_w, /*do_fill=*/false);
-          break;
-        case CPDF_Annot::LineEnding::kSquare:
-          EmitSquarePath(appearance_stream, border_w, /*do_fill=*/false);
-          break;
-        case CPDF_Annot::LineEnding::kDiamond:
-          EmitDiamondPath(appearance_stream, border_w, /*do_fill=*/false);
-          break;
-        case CPDF_Annot::LineEnding::kButt:
-          EmitButtOrSlashPath(appearance_stream, border_w, kButtLenFactor);
-          break;
-        case CPDF_Annot::LineEnding::kSlash:
-          EmitButtOrSlashPath(appearance_stream, border_w, kSlashLenFactor);
-          break;
-        default:
-          break;
-      }
-    });
-  }
-
-  // (g) Draw text box rectangle. Pick the paint operator dynamically so a
-  // missing /C means "no fill" (stroke-only) rather than falling back to
-  // PDF's default black fill. Mirrors GenerateCircleAP / GenerateSquareAP.
-  // An upright-tilted box (see (b')) authors in the logical box frame and
-  // spins it about its centre via an inline `cm` — box + text only; the
-  // leader/arrow above already drew in page space. WriteMatrix, never raw
-  // `<<`: default ostream float formatting uses scientific notation for tiny
-  // magnitudes (cos of a right angle ≈ -4.4e-8), which is not legal PDF
-  // number syntax — Acrobat rejects the whole file as corrupt.
-  if (box_rot.is_rotated) {
-    appearance_stream << "q ";
-    WriteMatrix(appearance_stream, box_rot.matrix) << " cm\n";
-  }
-  const bool is_fill_rect = color_array != nullptr;
-  const bool is_stroke_rect = border_w > 0;
-  CFX_FloatRect text_box_stroke = text_box;
-  text_box_stroke.Deflate(half_bw, half_bw);
-  WriteRect(appearance_stream, text_box_stroke)
-      << " re " << GetPaintOperatorString(is_stroke_rect, is_fill_rect) << "\n";
-  return {text_box, border_w, box_rot};
-}
-
-// Acrobat's text PLATE — where the text lays out, clips and scrolls — is the
-// box deflated by TWICE the border width on every side: the ink band and an
-// equal breathing band, so the text never touches the stroke. Measured from
-// Acrobat 26 appearance streams at 1–12 pt on plain boxes and 1–7 pt on
-// callouts (plan `2026-09-15-free-text-plate-inset.md`); no /RD is involved,
-// the inset is derived at appearance time. One formula for every branch —
-// rich and CPVT, plain box and callout — and the TypeScript `textPlateInset`
-// mirrors it so the live editor sits exactly where the baked text lands.
-// Acrobat's thinnest border is 1 pt; a width of 0 is ours alone and gives no
-// inset (the plate is the box) rather than an invented minimum.
-float FreeTextPlateInset(float border_width) {
-  return 2.0f * std::max(border_width, 0.0f);
-}
-
-// The plate of a box. A border that swallows the box leaves an EMPTY plate
-// (zero width and/or height at the box centre): the envelope still paints,
-// the text has nowhere to go. Never an inverted rect.
-CFX_FloatRect FreeTextPlate(const CFX_FloatRect& box, float border_width) {
-  CFX_FloatRect plate = box;
-  plate.Normalize();
-  const float inset = FreeTextPlateInset(border_width);
-  if (plate.Width() > 2 * inset && plate.Height() > 2 * inset) {
-    plate.Deflate(inset, inset);
-    return plate;
-  }
-  const float width = std::max(0.0f, plate.Width() - 2 * inset);
-  const float height = std::max(0.0f, plate.Height() - 2 * inset);
-  const float cx = (plate.left + plate.right) / 2;
-  const float cy = (plate.bottom + plate.top) / 2;
-  return CFX_FloatRect(cx - width / 2, cy - height / 2, cx + width / 2,
-                       cy + height / 2);
-}
-
-// Numbers with three decimals, trailing zeros trimmed: what Acrobat writes
-// ("128.982", "-26.4", "11.88"), and enough for the 0.05 pt parity.
-ByteString RichNumber(float value) {
-  if (std::fabs(value) < 0.0005f) {
-    return "0";
-  }
-  ByteString text = ByteString::Format("%.3f", value);
-  if (text.Contains('.')) {
-    while (text.Back() == '0') {
-      text = text.First(text.GetLength() - 1);
-    }
-    if (text.Back() == '.') {
-      text = text.First(text.GetLength() - 1);
-    }
-  }
-  return text;
-}
-
-fxcrt::ostringstream& RichNum(fxcrt::ostringstream& s, float value) {
-  s << RichNumber(value);
-  return s;
-}
-
-ByteString RichColorOperator(FX_ARGB argb, bool fill) {
-  return RichNumber(FXARGB_R(argb) / 255.0f) + " " +
-         RichNumber(FXARGB_G(argb) / 255.0f) + " " +
-         RichNumber(FXARGB_B(argb) / 255.0f) + (fill ? " rg\n" : " RG\n");
-}
-
-// The scalar whose first code unit is at |index|: on a 16-bit wchar_t
-// platform a supplementary character is a surrogate pair, and its glyph's
-// ToUnicode entry needs the character, not the high half.
-uint32_t ScalarAt(const WideString& text, size_t index) {
-  if (index >= text.GetLength()) {
-    return 0;
-  }
-  const uint32_t unit = static_cast<uint32_t>(text[index]);
-  if constexpr (sizeof(wchar_t) == 2) {
-    if (pdfium::IsHighSurrogate(unit) && index + 1 < text.GetLength()) {
-      const uint32_t low = static_cast<uint32_t>(text[index + 1]);
-      if (pdfium::IsLowSurrogate(low)) {
-        return pdfium::SurrogatePair(static_cast<char16_t>(unit),
-                                     static_cast<char16_t>(low))
-            .ToCodePoint();
-      }
-    }
-  }
-  return unit;
-}
-
-ByteString HexUtf16(const WideString& text) {
-  ByteString hex("<FEFF");
-  for (wchar_t wch : text) {
-    uint32_t code = static_cast<uint32_t>(wch);
-    if (code > 0xFFFF) {
-      code -= 0x10000;
-      hex += ByteString::Format("%04X%04X", 0xD800 + (code >> 10),
-                                0xDC00 + (code & 0x3FF));
-    } else {
-      hex += ByteString::Format("%04X", code);
-    }
-  }
-  hex += ">";
-  return hex;
-}
-
-// A stroked decoration segment, drawn after ET the way Acrobat does.
-struct DecorationSegment {
-  float x0 = 0;
-  float x1 = 0;
-  float y = 0;
-  float thickness = 0;
-  FX_ARGB color = 0xFF000000;
-};
-
-// The text body of a rich FreeText appearance (C note §5): one Tj per
-// word, relative Td per word, state operators only when they change,
-// ActualText around runs whose glyphs do not spell their text.
-void EmitRichTextBody(fxcrt::ostringstream& s,
-                      const CPDF_RichTextLayout::Result& layout,
-                      CPDF_AnnotFontMap& map,
-                      const CFX_FloatRect& area) {
-  using GlyphRun = CPDF_RichTextLayout::GlyphRun;
-  using ShapedGlyph = CPDF_RichTextLayout::ShapedGlyph;
-
-  s << "BT\n";
-  int cur_entry = -1;
-  float cur_size = -1;
-  std::optional<FX_ARGB> cur_color;
-  float cur_tc = 0;
-  float cur_ts = 0;
-  float cur_tz = 100;
-  CFX_PointF origin(0, 0);  // the last Td, in the form's space
-  std::vector<DecorationSegment> decorations;
-
-  for (const CPDF_RichTextLayout::Line& line : layout.lines) {
-    const float baseline = area.top - line.baseline_y;
-    for (const GlyphRun& run : line.runs) {
-      if (run.glyphs.empty()) {
-        continue;
-      }
-      const CPDF_AnnotFontMap::RichFace face = map.GetRichFace(run.font_entry);
-      const bool simple = face.pdf_font != nullptr;
-      const float size = run.style.size;
-      const float scale = run.style.horz_scale > 0 ? run.style.horz_scale : 1;
-
-      if (run.font_entry != cur_entry || size != cur_size) {
-        s << "/" << map.GetPDFFontAlias(run.font_entry) << " ";
-        RichNum(s, size) << " Tf\n";
-        cur_entry = run.font_entry;
-        cur_size = size;
-      }
-      if (!cur_color.has_value() || *cur_color != run.style.color) {
-        s << RichColorOperator(run.style.color, /*fill=*/true);
-        cur_color = run.style.color;
-      }
-      if (run.style.letter_spacing != cur_tc) {
-        RichNum(s, run.style.letter_spacing) << " Tc\n";
-        cur_tc = run.style.letter_spacing;
-      }
-      if (run.rise != cur_ts) {
-        RichNum(s, run.rise) << " Ts\n";
-        cur_ts = run.rise;
-      }
-      if (scale * 100 != cur_tz) {
-        RichNum(s, scale * 100) << " Tz\n";
-        cur_tz = scale * 100;
-      }
-
-      // Charcodes first: a code that already stands for another scalar
-      // makes the run's text unrecoverable from ToUnicode (C note §1.4).
-      std::vector<uint16_t> codes;
-      codes.reserve(run.glyphs.size());
-      bool actual_text = run.needs_actual_text;
-      for (const ShapedGlyph& glyph : run.glyphs) {
-        const uint32_t unicode = ScalarAt(run.text, glyph.cluster);
-        bool shared = false;
-        codes.push_back(
-            map.EncodeRichGlyph(run.font_entry, glyph.gid, unicode, &shared));
-        actual_text = actual_text || shared;
-      }
-      if (actual_text) {
-        s << "/Span <</ActualText " << HexUtf16(run.text) << ">> BDC\n";
-      }
-
-      auto is_space = [&](const ShapedGlyph& glyph) {
-        return glyph.cluster < run.text.GetLength() &&
-               (run.text[glyph.cluster] == L' ' ||
-                run.text[glyph.cluster] == 0x00A0);
-      };
-      auto nominal_advance = [&](const ShapedGlyph& glyph, uint16_t code) {
-        const int width =
-            simple
-                ? (code ? face.pdf_font->GetCharWidthF(code) : 0)
-                : (face.program ? face.program->GetGlyphWidth(glyph.gid) : 0);
-        return (width * size / 1000.0f + run.style.letter_spacing) * scale;
-      };
-
-      // Words: a space ends the word it follows, as in Acrobat's streams.
-      // Run positions are relative to the text area's left edge.
-      const float run_left = area.left + run.x;
-      float x = run_left;
-      size_t i = 0;
-      const size_t count = run.glyphs.size();
-      while (i < count) {
-        size_t j = i;
-        while (j < count) {
-          const bool space = is_space(run.glyphs[j]);
-          ++j;
-          if (space) {
-            break;
-          }
-        }
-        // Marks with a vertical offset get their own Td.
-        size_t k = i;
-        while (k < j) {
-          size_t m = k;
-          const bool lifted = run.glyphs[m].y_offset != 0;
-          if (lifted) {
-            m = k + 1;
-          } else {
-            while (m < j && run.glyphs[m].y_offset == 0) {
-              ++m;
-            }
-          }
-          // Pen to the start of this piece, relative to the previous Td.
-          const float piece_x = x + (lifted ? run.glyphs[k].x_offset : 0);
-          const float piece_y =
-              baseline + (lifted ? run.glyphs[k].y_offset : 0);
-          RichNum(s, piece_x - origin.x) << " ";
-          RichNum(s, piece_y - origin.y) << " Td\n";
-          origin = CFX_PointF(piece_x, piece_y);
-
-          // Glyph string with TJ adjustments where the shaped advance or a
-          // horizontal offset departs from the font's width.
-          std::vector<std::pair<float, ByteString>>
-              pieces;  // adj before, string
-          float pending = 0;
-          ByteString bytes;
-          const float unit = 1000.0f / (size * scale);
-          for (size_t g = k; g < m; ++g) {
-            const ShapedGlyph& glyph = run.glyphs[g];
-            const float x_off = lifted ? 0 : glyph.x_offset;
-            if (x_off != 0) {
-              if (!bytes.IsEmpty()) {
-                pieces.emplace_back(pending, bytes);
-                bytes.clear();
-                pending = 0;
-              }
-              pending += -x_off * unit;
-            }
-            if (simple) {
-              bytes += static_cast<char>(codes[g] & 0xFF);
-            } else {
-              bytes += static_cast<char>(codes[g] >> 8);
-              bytes += static_cast<char>(codes[g] & 0xFF);
-            }
-            const float delta =
-                glyph.x_advance - nominal_advance(glyph, codes[g]);
-            const float after = (x_off - delta) * unit;
-            if (std::fabs(after) > 0.5f) {
-              pieces.emplace_back(pending, bytes);
-              bytes.clear();
-              pending = after;
-            }
-          }
-          if (!bytes.IsEmpty() || pending != 0) {
-            pieces.emplace_back(pending, bytes);
-          }
-          const bool needs_tj =
-              pieces.size() > 1 ||
-              (!pieces.empty() && std::fabs(pieces.front().first) > 0.5f);
-          auto encode = [&](const ByteString& raw) {
-            return simple ? PDF_EncodeString(raw.AsStringView())
-                          : PDF_HexEncodeString(raw.AsStringView());
-          };
-          if (!needs_tj) {
-            if (!pieces.empty() && !pieces.front().second.IsEmpty()) {
-              s << encode(pieces.front().second) << " Tj\n";
-            }
-          } else {
-            s << "[";
-            for (const auto& [adjust, raw] : pieces) {
-              if (std::fabs(adjust) > 0.5f) {
-                RichNum(s, adjust) << " ";
-              }
-              if (!raw.IsEmpty()) {
-                s << encode(raw) << " ";
-              }
-            }
-            s << "] TJ\n";
-          }
-          for (size_t g = k; g < m; ++g) {
-            x += run.glyphs[g].x_advance;
-          }
-          k = m;
-        }
-        i = j;
-      }
-      if (actual_text) {
-        s << "EMC\n";
-      }
-
-      // Decorations (plan §4.5): underline 0.44 · descent below the
-      // baseline, 0.16 · descent thick; line-through 0.39 · ascent above,
-      // 0.04 · ascent thick; `word` skips the spaces.
-      const uint8_t decoration = run.style.decoration;
-      if (decoration) {
-        const float run_baseline = baseline + run.rise;
-        const float descent = face.descent * size;
-        const float ascent = face.ascent * size;
-        if (decoration & CPDF_RichTextStyle::kUnderline) {
-          decorations.push_back({run_left, run_left + run.width,
-                                 run_baseline - 0.44f * descent,
-                                 0.16f * descent, run.style.color});
-        }
-        if (decoration & CPDF_RichTextStyle::kWordUnderline) {
-          float wx = run_left;
-          float word_start = run_left;
-          bool in_word = false;
-          for (const ShapedGlyph& glyph : run.glyphs) {
-            if (is_space(glyph)) {
-              if (in_word) {
-                decorations.push_back({word_start, wx,
-                                       run_baseline - 0.44f * descent,
-                                       0.16f * descent, run.style.color});
-                in_word = false;
-              }
-            } else if (!in_word) {
-              word_start = wx;
-              in_word = true;
-            }
-            wx += glyph.x_advance;
-          }
-          if (in_word) {
-            decorations.push_back({word_start, wx,
-                                   run_baseline - 0.44f * descent,
-                                   0.16f * descent, run.style.color});
-          }
-        }
-        if (decoration & CPDF_RichTextStyle::kLineThrough) {
-          decorations.push_back({run_left, run_left + run.width,
-                                 run_baseline + 0.39f * ascent, 0.04f * ascent,
-                                 run.style.color});
-        }
-      }
-    }
-  }
-  s << "ET\n";
-  std::optional<FX_ARGB> stroke_color;
-  for (const DecorationSegment& segment : decorations) {
-    if (segment.x1 - segment.x0 <= 0) {
-      continue;
-    }
-    if (!stroke_color.has_value() || *stroke_color != segment.color) {
-      s << RichColorOperator(segment.color, /*fill=*/false);
-      stroke_color = segment.color;
-    }
-    RichNum(s, segment.thickness) << " w\n";
-    RichNum(s, segment.x0) << " ";
-    RichNum(s, segment.y) << " m\n";
-    RichNum(s, segment.x1) << " ";
-    RichNum(s, segment.y) << " l S\n";
-  }
-}
-
-struct RichFreeTextInputs {
-  const CPDF_RichTextDocument* document = nullptr;
-  CFX_Color da_color;
-  RetainPtr<CPDF_Font> default_font;  // the /DA font as found in /DR
-  ByteString font_name;               // its alias
-  CFX_FontRegistry::FontId registered_font_id =
-      CFX_FontRegistry::kInvalidFontId;
-  bool persistent = true;
-  bool author_default_appearance = false;  // writer: body face -> /DA
-};
-
-std::unique_ptr<CPDF_GenerateAP::PreparedRichFreeTextAP>
-PrepareRichFreeTextAPInternal(CPDF_Document* doc,
-                              const CPDF_Dictionary* annot_dict,
-                              const ByteString& blend_name,
-                              RichFreeTextInputs in) {
-  if (!doc || !annot_dict || !in.document) {
-    return nullptr;
-  }
-  auto prepared = std::make_unique<CPDF_GenerateAP::PreparedRichFreeTextAP>();
-  prepared->fonts = std::make_unique<CPDF_AnnotFontMap>(
-      doc, std::move(in.default_font), in.font_name,
-      /*allow_registered_fallbacks=*/true, in.registered_font_id,
-      /*install_dr_entry=*/in.persistent,
-      CPDF_AnnotFontMap::Owner::kAnnotation);
-  CPDF_AnnotFontMap& map = *prepared->fonts;
-  if (!in.author_default_appearance &&
-      in.document->source == CPDF_RichTextDocument::Source::kContents &&
-      map.HasDefaultFont() && !map.DefaultFontIsStandard()) {
-    // Regenerating a PLAIN box: the parser derived the body face from the
-    // /DA font, so that entry IS the body face and the layout keeps naming
-    // the /DA alias — the contract every reader of a plain box, and CPVT
-    // before us, relied on. A standard-14 /DA font resolves by family to
-    // the Acrobat-parity face instead; an /RC body names its own family.
-    const CPDF_RichTextStyle& body = in.document->body;
-    map.PinRichFace(body.family, body.weight, body.italic,
-                    map.GetDefaultAppearanceEntry() >= 0
-                        ? map.GetDefaultAppearanceEntry()
-                        : 0);
-  }
-
-  fxcrt::ostringstream stream;
-  stream << "/" << kGSDictName << " gs ";
-
-  const ByteString intent = annot_dict->GetNameFor("IT");
-  RetainPtr<const CPDF_Array> cl = annot_dict->GetArrayFor("CL");
-  const bool is_callout =
-      intent == "FreeTextCallout" && cl && (cl->size() == 4 || cl->size() == 6);
-  CFX_FloatRect box;
-  CFX_FloatRect text_area;
-  bool inline_rotation = false;
-  if (is_callout) {
-    const CalloutEnvelope envelope =
-        AppendCalloutEnvelope(stream, annot_dict, cl.Get(), in.da_color);
-    box = envelope.text_box;
-    text_area = FreeTextPlate(box, envelope.border_w);
-    inline_rotation = envelope.box_rot.is_rotated;
-    // The leader is drawn on the page as it is: the form stays upright, and
-    // the shape it's drawn about is where the turned text box reaches.
-    prepared->footprint =
-        inline_rotation ? envelope.box_rot.matrix.TransformRect(box) : box;
-  } else {
-    const BorderStyleInfo border_style_info =
-        GetBorderStyleInfo(annot_dict->GetDictFor("BS"));
-    const ShapeRotationInfo rot_info = GetShapeRotationInfo(annot_dict);
-    const CFX_FloatRect rect = rot_info.bbox;
-    const float half_border_width = border_style_info.width / 2.0f;
-    CFX_FloatRect background_rect = rect;
-    background_rect.Deflate(half_border_width, half_border_width);
-    auto color_array = annot_dict->GetArrayFor(pdfium::annotation::kC);
-    if (color_array) {
-      CFX_Color color = fpdfdoc::CFXColorFromArray(*color_array);
-      stream << "q\n" << GenerateColorAP(color, PaintOperation::kFill);
-      WriteRect(stream, background_rect) << " re f\nQ\n";
-    }
-    const ByteString border_stream =
-        GenerateBorderAP(rect, border_style_info, in.da_color);
-    if (border_stream.GetLength() > 0) {
-      stream << "q\n" << border_stream << "Q\n";
-    }
-    box = rect;
-    text_area = FreeTextPlate(box, border_style_info.width);
-    prepared->matrix = rot_info.matrix;
-    prepared->footprint = rot_info.bbox;
-  }
-  // An empty BOX is invalid input (nothing to draw at all); a valid box whose
-  // border swallowed its plate still paints its envelope above — the text
-  // has nowhere to go and lays out nothing. A /Rect authored upside down
-  // (top below bottom) is a normal box, as it always was for CPVT.
-  box.Normalize();
-  if (box.Width() <= 0 || box.Height() <= 0) {
-    return nullptr;
-  }
-  std::optional<CPDF_RichTextLayout::Result> arranged;
-  if (text_area.Width() > 0 && text_area.Height() > 0) {
-    CPDF_RichTextLayout::Options options;
-    options.typographic_features = doc->GetTypographicFeaturesEnabled();
-    CPDF_RichTextLayout layout(&map, options);
-    arranged =
-        layout.Arrange(*in.document, text_area, GetVerticalAlign(annot_dict));
-    prepared->body_size = arranged->body_size;
-    prepared->degraded = arranged->degraded;
-    prepared->auto_size_fell_back = arranged->auto_size_fell_back;
-  }
-  if (in.author_default_appearance) {
-    // The /DA font is the body's face as the layout resolved it over the
-    // body's own text (cached by request), so /DA and the appearance never
-    // disagree when coverage substitutes; with no plate to lay out, the
-    // request resolves here without text. Aliases are settled before the
-    // content names them.
-    const CPDF_RichTextStyle& body = in.document->body;
-    const int body_entry =
-        map.ResolveRichFace(body.family, body.weight, body.italic);
-    if (body_entry < 0) {
-      return nullptr;
-    }
-    prepared->da_alias = map.ChooseDefaultAppearanceAlias(body_entry);
-    if (prepared->da_alias.IsEmpty()) {
-      return nullptr;
-    }
-    map.SetDefaultAppearanceEntry(body_entry, prepared->da_alias);
-  }
-  if (arranged.has_value()) {
-    stream << "/Tx BMC\nq\n";
-    WriteRect(stream, text_area) << " re W n\n";
-    EmitRichTextBody(stream, *arranged, map, text_area);
-    stream << "Q\nEMC\n";
-  }
-  if (inline_rotation) {
-    stream << "Q\n";  // closes the inline box rotation of the callout
-  }
-
-  prepared->resources = map.PrepareFontResources();
-  if (!prepared->resources.has_value()) {
-    return nullptr;
-  }
-  prepared->graphics_state = GenerateExtGStateDict(*annot_dict, blend_name);
-  prepared->content = ByteString(stream);
-  return prepared;
-}
-
-bool PublishRichFreeTextAPToTarget(
-    APGenerationTarget* target,
-    const CPDF_Dictionary* annot_dict,
-    std::unique_ptr<CPDF_GenerateAP::PreparedRichFreeTextAP> prepared) {
-  if (!prepared || !prepared->fonts || !prepared->resources.has_value()) {
-    return false;
-  }
-  RetainPtr<CPDF_Dictionary> font_dict =
-      prepared->fonts->PublishFontResources(std::move(*prepared->resources));
-  if (!font_dict) {
-    return false;
-  }
-  auto resources_dict = GenerateResourcesDict(
-      target->doc, std::move(prepared->graphics_state), std::move(font_dict));
-  fxcrt::ostringstream stream;
-  stream.write(prepared->content.c_str(), prepared->content.GetLength());
-  return GenerateAndSetBoxAPDict(target, annot_dict, &stream,
-                                 std::move(resources_dict), prepared->matrix,
-                                 prepared->footprint);
-}
-
-// The generator's rich path: the annotation's own /RC (or /Contents) laid
-// out by the rich engine; Prepare and Publish back to back.
-bool GenerateRichFreeTextAP(APGenerationTarget* target,
-                            const CPDF_Dictionary* annot_dict,
-                            const ByteString& blend_name,
-                            const DaFontResolution& da_font,
-                            RetainPtr<CPDF_Font> default_font,
-                            const ByteString& font_name,
-                            const DefaultAppearanceInfo& da_info) {
-  CPDF_Document* doc = target->doc;
-  const CPDF_Dictionary* root = doc->GetRoot();
-  RetainPtr<const CPDF_Dictionary> acroform =
-      root ? root->GetDictFor("AcroForm") : nullptr;
-  const CPDF_RichTextDocument document =
-      CPDF_RichTextParser::FromAnnotation(annot_dict, acroform.Get(), doc);
-  RichFreeTextInputs in;
-  in.document = &document;
-  in.da_color = da_info.text_color;
-  in.default_font = std::move(default_font);
-  in.font_name = font_name;
-  in.registered_font_id = da_font.registered_font_id;
-  in.persistent = target->IsPersistent();
-  std::unique_ptr<CPDF_GenerateAP::PreparedRichFreeTextAP> prepared =
-      PrepareRichFreeTextAPInternal(doc, annot_dict, blend_name, std::move(in));
-  if (!prepared) {
-    return false;
-  }
-  return PublishRichFreeTextAPToTarget(target, annot_dict, std::move(prepared));
-}
-
-bool GenerateFreeTextAP(APGenerationTarget* target,
-                        CPDF_Dictionary* annot_dict,
-                        const ByteString& blend_name) {
-  CPDF_Document* const doc = target->doc;
-  const CPDF_Dictionary* root_dict = doc->GetRoot();
+bool GenerateFreeTextAP(CPDF_Document* doc, CPDF_Dictionary* annot_dict) {
+  RetainPtr<CPDF_Dictionary> root_dict = doc->GetMutableRoot();
   if (!root_dict) {
     return false;
   }
 
-  RetainPtr<const CPDF_Dictionary> form_dict =
-      root_dict->GetDictFor("AcroForm");
-  RetainPtr<CPDF_Dictionary> ephemeral_form_dict;
+  RetainPtr<CPDF_Dictionary> form_dict =
+      root_dict->GetMutableDictFor("AcroForm");
   if (!form_dict) {
-    if (!target->IsPersistent()) {
-      ephemeral_form_dict = GenerateEphemeralDefaultAcroFormDict();
-      form_dict = ephemeral_form_dict;
-    } else {
-      form_dict = CPDF_InteractiveForm::InitAcroFormDict(doc);
-      CHECK(form_dict);
-    }
+    form_dict = CPDF_InteractiveForm::InitAcroFormDict(doc);
+    CHECK(form_dict);
   }
 
   std::optional<DefaultAppearanceInfo> default_appearance_info =
-      GetDefaultAppearanceInfo(annot_dict, form_dict.Get());
+      GetDefaultAppearanceInfo(annot_dict, form_dict);
   if (!default_appearance_info.has_value()) {
     return false;
   }
 
-  RetainPtr<const CPDF_Dictionary> dr_dict = form_dict->GetDictFor("DR");
+  RetainPtr<CPDF_Dictionary> dr_dict = form_dict->GetMutableDictFor("DR");
   if (!dr_dict) {
     return false;
   }
 
-  RetainPtr<const CPDF_Dictionary> dr_font_dict = dr_dict->GetDictFor("Font");
+  RetainPtr<CPDF_Dictionary> dr_font_dict = dr_dict->GetMutableDictFor("Font");
   if (!ValidateFontResourceDict(dr_font_dict.Get())) {
     return false;
   }
 
   const ByteString& font_name = default_appearance_info.value().font_name;
-  const DaFontResolution da_font =
-      target->IsPersistent()
-          ? ResolveDaFontForPersistentTarget(
-                doc, const_cast<CPDF_Dictionary*>(dr_font_dict.Get()),
-                font_name)
-          : ResolveDaFontForEphemeralTarget(doc, dr_font_dict.Get(), font_name);
+  RetainPtr<CPDF_Dictionary> font_dict =
+      GetFontFromDrFontDictOrGenerateFallback(doc, dr_font_dict, font_name);
   auto* doc_page_data = CPDF_DocPageData::FromDocument(doc);
-  RetainPtr<CPDF_Font> default_font =
-      da_font.font_dict ? doc_page_data->GetFont(da_font.font_dict) : nullptr;
-  if (!default_font &&
-      da_font.registered_font_id == CFX_FontRegistry::kInvalidFontId) {
+  RetainPtr<CPDF_Font> default_font = doc_page_data->GetFont(font_dict);
+  if (!default_font) {
     return false;
   }
 
-  // EmbedPDF (Phase D, D4): every FreeText lays out through
-  // CPDF_RichTextLayout — a box with /RC from its rich document, a plain box
-  // from the document the parser synthesises out of /Contents, /DA and /Q.
-  // One engine, one line model, one plate; the CPVT path is gone.
-  return GenerateRichFreeTextAP(target, annot_dict, blend_name, da_font,
-                                std::move(default_font), font_name,
-                                default_appearance_info.value());
+  fxcrt::ostringstream appearance_stream;
+  appearance_stream << "/" << kGSDictName << " gs ";
+
+  const BorderStyleInfo border_style_info =
+      GetBorderStyleInfo(annot_dict->GetDictFor("BS"));
+  CFX_FloatRect rect = annot_dict->GetRectFor(pdfium::annotation::kRect);
+  const float half_border_width = border_style_info.width / 2.0f;
+  CFX_FloatRect background_rect = rect;
+  background_rect.Deflate(half_border_width, half_border_width);
+  CFX_FloatRect body_rect = background_rect;
+  body_rect.Deflate(half_border_width, half_border_width);
+
+  auto color_array = annot_dict->GetArrayFor(pdfium::annotation::kC);
+  if (color_array) {
+    CFX_Color color = fpdfdoc::CFXColorFromArray(*color_array);
+    appearance_stream << "q\n" << GenerateColorAP(color, PaintOperation::kFill);
+    WriteRect(appearance_stream, background_rect) << " re f\nQ\n";
+  }
+
+  const CFX_Color& text_color = default_appearance_info.value().text_color;
+  const ByteString border_stream =
+      GenerateBorderAP(rect, border_style_info, text_color);
+  if (border_stream.GetLength() > 0) {
+    appearance_stream << "q\n" << border_stream << "Q\n";
+  }
+
+  CPVT_FontMap map(doc, nullptr, std::move(default_font), font_name);
+  CPVT_VariableText::Provider provider(&map);
+  CPVT_VariableText vt(&provider);
+
+  vt.SetPlateRect(body_rect);
+  vt.SetAlignment(annot_dict->GetIntegerFor("Q"));
+  SetVtFontSize(default_appearance_info.value().font_size, vt);
+
+  vt.Initialize();
+  vt.SetText(annot_dict->GetUnicodeTextFor(pdfium::annotation::kContents));
+  vt.RearrangeAll();
+  const CFX_FloatRect content_rect = vt.GetContentRect();
+  CFX_PointF offset(0.0f, (content_rect.Height() - body_rect.Height()) / 2.0f);
+  const ByteString body =
+      GenerateEditAP(vt.GetProvider()->GetFontMap(), vt.GetIterator(), offset,
+                     /*continuous=*/true, /*sub_word=*/0);
+  if (body.GetLength() > 0) {
+    appearance_stream << "/Tx BMC\n" << "q\n";
+    if (content_rect.Width() > body_rect.Width() ||
+        content_rect.Height() > body_rect.Height()) {
+      WriteRect(appearance_stream, body_rect) << " re\nW\nn\n";
+    }
+    appearance_stream << "BT\n"
+                      << GenerateColorAP(text_color, PaintOperation::kFill)
+                      << body << "ET\n"
+                      << "Q\nEMC\n";
+  }
+
+  auto graphics_state_dict = GenerateExtGStateDict(*annot_dict, "Normal");
+  auto resource_font_dict =
+      GenerateResourceFontDict(doc, font_name, font_dict->GetObjNum());
+  auto resource_dict = GenerateResourcesDict(
+      doc, std::move(graphics_state_dict), std::move(resource_font_dict));
+  GenerateAndSetAPDict(doc, annot_dict, &appearance_stream,
+                       std::move(resource_dict),
+                       /*is_text_markup_annotation=*/false);
+  return true;
 }
 
-bool GenerateHighlightAP(APGenerationTarget* target,
-                         CPDF_Dictionary* annot_dict,
-                         const ByteString& blend_name) {
+bool GenerateHighlightAP(CPDF_Document* doc, CPDF_Dictionary* annot_dict) {
   fxcrt::ostringstream app_stream;
   app_stream << "/" << kGSDictName << " gs ";
 
@@ -3060,16 +1147,6 @@ bool GenerateHighlightAP(APGenerationTarget* target,
     const size_t quad_point_count =
         CPDF_Annot::QuadPointCount(quad_points_array.Get());
     for (size_t i = 0; i < quad_point_count; ++i) {
-      const std::optional<MarkupQuad> quad =
-          ReadMarkupQuad(quad_points_array.Get(), i);
-      if (quad && !IsAxisAlignedZigZag(*quad)) {
-        WritePoint(app_stream, quad->upper_start) << " m ";
-        WritePoint(app_stream, quad->upper_end) << " l ";
-        WritePoint(app_stream, quad->lower_end) << " l ";
-        WritePoint(app_stream, quad->lower_start) << " l h f\n";
-        continue;
-      }
-
       CFX_FloatRect rect = CPDF_Annot::RectFromQuadPoints(annot_dict, i);
       rect.Normalize();
 
@@ -3079,412 +1156,15 @@ bool GenerateHighlightAP(APGenerationTarget* target,
     }
   }
 
-  auto gs_dict = GenerateExtGStateDict(*annot_dict, blend_name);
-  auto resources_dict =
-      GenerateResourcesDict(target->doc, std::move(gs_dict), nullptr);
-  GenerateAndSetAPDict(target, annot_dict, &app_stream,
-                       std::move(resources_dict),
+  auto gs_dict = GenerateExtGStateDict(*annot_dict, "Multiply");
+  auto resources_dict = GenerateResourcesDict(doc, std::move(gs_dict), nullptr);
+  GenerateAndSetAPDict(doc, annot_dict, &app_stream, std::move(resources_dict),
                        true /*IsTextMarkupAnnotation*/);
 
   return true;
 }
 
-// EmbedPDF: measurement captions are plain /Contents. Neither the scale nor
-// /RC participates in deriving or painting their value here.
-struct DimensionCaption {
-  ByteString text_ops;
-  RetainPtr<CPDF_Dictionary> fonts;
-  float width = 0;
-  float height = 0;
-};
-
-std::optional<DimensionCaption> PrepareDimensionCaption(
-    APGenerationTarget* target,
-    const CPDF_Dictionary* annot) {
-  DimensionCaption result;
-  const WideString text = annot->GetUnicodeTextFor("Contents");
-  if (text.IsEmpty()) {
-    return result;
-  }
-  CPDF_DefaultAppearance da(annot->GetByteStringFor("DA"));
-  auto font_info = da.GetFont();
-  const ByteString alias = font_info ? font_info->name : ByteString("Helv");
-  float size = font_info ? font_info->size : 9.0f;
-  if (!std::isfinite(size) || size <= 0) {
-    size = 9;
-  }
-  // Resolve from the existing AP first (Acrobat keeps its caption fonts here),
-  // then /DR. Both are read-only; captions never create an AcroForm.
-  auto ap = annot->GetDictFor("AP");
-  auto normal = ap ? ap->GetStreamFor("N") : nullptr;
-  auto resources =
-      normal ? normal->GetDict()->GetDictFor("Resources") : nullptr;
-  auto font_dict = resources ? resources->GetDictFor("Font") : nullptr;
-  if (!font_dict || !font_dict->KeyExist(alias.AsStringView())) {
-    const auto* root = target->doc->GetRoot();
-    auto form = root ? root->GetDictFor("AcroForm") : nullptr;
-    auto dr = form ? form->GetDictFor("DR") : nullptr;
-    font_dict = dr ? dr->GetDictFor("Font") : nullptr;
-  }
-  const DaFontResolution resolved =
-      ResolveDaFontForEphemeralTarget(target->doc, font_dict.Get(), alias);
-  auto* page_data = CPDF_DocPageData::FromDocument(target->doc);
-  auto font =
-      resolved.font_dict ? page_data->GetFont(resolved.font_dict) : nullptr;
-  auto owned_fonts = std::make_unique<CPDF_AnnotFontMap>(
-      target->doc, std::move(font), alias,
-      /*allow_registered_fallbacks=*/true, resolved.registered_font_id,
-      /*install_dr_entry=*/false);
-  CPDF_AnnotFontMap& fonts = *owned_fonts;
-  if (!fonts.HasDefaultFont()) {
-    return std::nullopt;
-  }
-  CPDF_RichTextDocument document;
-  document.source = CPDF_RichTextDocument::Source::kContents;
-  document.body.family = L"Helvetica";
-  document.body.size = size;
-  document.body.color =
-      da.GetColorARGB().has_value() ? da.GetColorARGB()->argb : 0xFF000000;
-  // Keep the actual /DA font/encoding, including Acrobat's Differences table.
-  fonts.PinRichFace(document.body.family, 400, false, 0);
-  CPDF_RichTextParagraph paragraph;
-  paragraph.runs.push_back({text, {}});
-  // A line caption's box is one font size high, matching the live dimension
-  // layout. Shape captions keep their existing rich-text line metrics.
-  if (annot->GetNameFor("Subtype") == "Line") {
-    paragraph.props.line_height = size;
-  }
-  document.paragraphs.push_back(std::move(paragraph));
-  CPDF_RichTextLayout layout(&fonts, {});
-  auto arranged = layout.Arrange(document, {0, 0, 1000000, 1000000},
-                                 CPDF_Annot::VerticalAlignment::kTop);
-  for (const auto& line : arranged.lines) {
-    result.width = std::max(result.width, line.width);
-  }
-  result.height = arranged.content_height;
-  if (!std::isfinite(result.width) || !std::isfinite(result.height)) {
-    return std::nullopt;
-  }
-  fxcrt::ostringstream text_stream;
-  EmitRichTextBody(text_stream, arranged, fonts,
-                   {-result.width / 2, -result.height / 2, result.width / 2,
-                    result.height / 2});
-  result.text_ops = ByteString(text_stream);
-  if (target->IsPersistent()) {
-    result.fonts = fonts.CreateFontResourceDict();
-  } else {
-    result.fonts = fonts.CreateEphemeralFontResourceDict();
-    target->ephemeral_fonts = std::move(owned_fonts);
-  }
-  if (!result.fonts) {
-    return std::nullopt;
-  }
-  return result;
-}
-
-void AppendDimensionCaption(fxcrt::ostringstream& ap,
-                            const DimensionCaption& text,
-                            const pdfium::dimension::CaptionLayout& layout) {
-  if (text.text_ops.IsEmpty()) {
-    return;
-  }
-  ap << "q ";
-  WriteMatrix(ap, layout.matrix) << " cm\n";
-  ap << text.text_ops << "Q\n";
-}
-
-bool ShapeCaptionEnabled(const CPDF_Dictionary* annot) {
-  auto metadata = annot->GetDictFor("EMBD_Metadata");
-  return metadata && metadata->GetBooleanFor("MeasurementCaption", false);
-}
-
-bool FinishShapeDimensionAP(APGenerationTarget* target,
-                            CPDF_Dictionary* annot,
-                            const ByteString& blend_name,
-                            pdfium::span<const CFX_PointF> points,
-                            bool closed,
-                            fxcrt::ostringstream* ap) {
-  auto caption = PrepareDimensionCaption(target, annot);
-  if (!caption) {
-    return false;
-  }
-  auto center = pdfium::dimension::ShapeCaptionCenter(annot, points, closed,
-                                                      caption->height);
-  auto layout = pdfium::dimension::LayoutShapeCaption(
-      annot, center, caption->width, caption->height);
-  AppendDimensionCaption(*ap, *caption, layout);
-  auto resources = GenerateResourcesDict(
-      target->doc, GenerateExtGStateDict(*annot, blend_name),
-      std::move(caption->fonts));
-  return GenerateAndSetPointsAPDict(target, annot, ap, std::move(resources),
-                                    points);
-}
-
-bool GenerateDimensionLineAP(APGenerationTarget* target,
-                             CPDF_Dictionary* annot,
-                             const ByteString& blend_name,
-                             const std::vector<CFX_PointF>& points) {
-  const float border = GetBorderWidth(annot);
-  const float ll = annot->GetFloatFor("LL");
-  const float lle = annot->GetFloatFor("LLE");
-  const float llo = annot->GetFloatFor("LLO");
-  if (!IsFinitePoint(points[0]) || !IsFinitePoint(points[1]) ||
-      !std::isfinite(ll) || !std::isfinite(lle) || !std::isfinite(llo) ||
-      lle < 0 || llo < 0) {
-    return false;
-  }
-  auto line =
-      pdfium::dimension::LayoutLine(points[0], points[1], ll, lle, llo, border);
-  DimensionCaption caption;
-  pdfium::dimension::CaptionLayout label;
-  if (annot->GetBooleanFor("Cap", false)) {
-    auto prepared = PrepareDimensionCaption(target, annot);
-    if (!prepared) {
-      return false;
-    }
-    caption = std::move(*prepared);
-    if (!caption.text_ops.IsEmpty()) {
-      label = pdfium::dimension::LayoutLineCaption(annot, line, caption.width,
-                                                   caption.height, border);
-    }
-  }
-  fxcrt::ostringstream ap;
-  ap << "/" << kGSDictName << " gs\n";
-  auto color = annot->GetArrayFor("C");
-  auto interior = annot->GetArrayFor("IC");
-  ap << GetColorStringWithDefault(color.Get(),
-                                  CFX_Color(CFX_Color::Type::kRGB, 0, 0, 0),
-                                  PaintOperation::kStroke);
-  if (interior && !interior->IsEmpty()) {
-    ap << GetColorStringWithDefault(interior.Get(), {}, PaintOperation::kFill);
-  }
-  auto segment = [&](CFX_PointF from, CFX_PointF to) {
-    WritePoint(ap, from) << " m ";
-    WritePoint(ap, to) << " l S\n";
-  };
-  if (border > 0) {
-    WriteFloat(ap, border) << " w " << GetDashPatternString(annot);
-    if (label.outside_arrows) {
-      const float stub = 20 * border;
-      segment(line.start - stub * line.along, line.start);
-      segment(line.end, line.end + stub * line.along);
-    } else if (label.gap_end > label.gap_start) {
-      if (label.gap_start > 0) {
-        segment(line.start, line.start + label.gap_start * line.along);
-      }
-      if (label.gap_end < line.length) {
-        segment(line.start + label.gap_end * line.along, line.end);
-      }
-    } else {
-      segment(line.start, line.end);
-    }
-    for (const auto& leader : line.leaders) {
-      segment(leader.from, leader.to);
-    }
-    for (const auto& connector : label.connector) {
-      segment(connector.from, connector.to);
-    }
-    GenerateLineEndings(ap, {line.start, line.end}, annot,
-                        label.outside_arrows);
-  }
-  AppendDimensionCaption(ap, caption, label);
-  auto resources = GenerateResourcesDict(
-      target->doc, GenerateExtGStateDict(*annot, blend_name),
-      std::move(caption.fonts));
-  return GenerateAndSetPointsAPDict(target, annot, &ap, std::move(resources),
-                                    points);
-}
-
-bool GeneratePolygonAP(APGenerationTarget* target,
-                       CPDF_Dictionary* annot_dict,
-                       const ByteString& blend_name) {
-  RetainPtr<const CPDF_Array> verts =
-      annot_dict->GetArrayFor(pdfium::annotation::kVertices);
-  // A polygon needs ≥ 3 points  (= 6 floats).
-  if (!verts || verts->size() < 6) {
-    return false;
-  }
-
-  fxcrt::ostringstream app;
-  app << "/" << kGSDictName << " gs ";
-
-  RetainPtr<const CPDF_Array> interior_color = annot_dict->GetArrayFor("IC");
-  app << GetColorStringWithDefault(interior_color.Get(),
-                                   CFX_Color(CFX_Color::Type::kTransparent),
-                                   PaintOperation::kFill);
-
-  app << GetColorStringWithDefault(
-      annot_dict->GetArrayFor(pdfium::annotation::kC).Get(),
-      CFX_Color(CFX_Color::Type::kRGB, 0, 0, 0), PaintOperation::kStroke);
-
-  const float border_w = GetBorderWidth(annot_dict);
-  const bool do_stroke = border_w > 0;
-  CloudyBorderInfo cloudy_info = GetCloudyBorderInfo(annot_dict);
-
-  if (do_stroke) {
-    app << border_w << " w ";
-    if (cloudy_info.is_cloudy) {
-      app << "1 j ";
-    } else {
-      app << GetDashPatternString(annot_dict);
-    }
-  }
-
-  if (cloudy_info.is_cloudy) {
-    std::vector<CFX_PointF> points;
-    for (size_t i = 0; i + 1 < verts->size(); i += 2) {
-      points.push_back({verts->GetFloatAt(i), verts->GetFloatAt(i + 1)});
-    }
-    GenerateCloudyPolygonPath(app, points, cloudy_info.intensity, border_w);
-  } else {
-    app << verts->GetFloatAt(0) << " " << verts->GetFloatAt(1) << " m ";
-    for (size_t i = 2; i + 1 < verts->size(); i += 2) {
-      app << verts->GetFloatAt(i) << " " << verts->GetFloatAt(i + 1) << " l ";
-    }
-    app << "h ";
-  }
-
-  const bool do_fill = interior_color && !interior_color->IsEmpty();
-  app << GetPaintOperatorString(do_stroke, do_fill) << "\n";
-
-  if (ShapeCaptionEnabled(annot_dict)) {
-    std::vector<CFX_PointF> points;
-    for (size_t i = 0; i + 1 < verts->size(); i += 2) {
-      CFX_PointF point(verts->GetFloatAt(i), verts->GetFloatAt(i + 1));
-      if (!IsFinitePoint(point)) {
-        return false;
-      }
-      points.push_back(point);
-    }
-    return FinishShapeDimensionAP(target, annot_dict, blend_name, points, true,
-                                  &app);
-  }
-
-  std::vector<CFX_PointF> points;
-  for (size_t i = 0; i + 1 < verts->size(); i += 2) {
-    points.push_back({verts->GetFloatAt(i), verts->GetFloatAt(i + 1)});
-  }
-  auto gs_dict = GenerateExtGStateDict(*annot_dict, blend_name);
-  auto res_dict =
-      GenerateResourcesDict(target->doc, std::move(gs_dict), nullptr);
-  return GenerateAndSetPointsAPDict(target, annot_dict, &app,
-                                    std::move(res_dict), points);
-}
-
-bool GenerateLineAP(APGenerationTarget* target,
-                    CPDF_Dictionary* annot_dict,
-                    const ByteString& blend_name) {
-  RetainPtr<const CPDF_Array> L =
-      annot_dict->GetArrayFor(pdfium::annotation::kL);
-  if (!L || L->size() < 4) {
-    return false;
-  }
-
-  std::vector<CFX_PointF> points;
-  points.push_back({L->GetFloatAt(0), L->GetFloatAt(1)});
-  points.push_back({L->GetFloatAt(2), L->GetFloatAt(3)});
-
-  if (annot_dict->GetBooleanFor("Cap", false) || annot_dict->KeyExist("LL") ||
-      annot_dict->KeyExist("LLE") || annot_dict->KeyExist("LLO")) {
-    return GenerateDimensionLineAP(target, annot_dict, blend_name, points);
-  }
-
-  fxcrt::ostringstream ap;
-  ap << "/" << kGSDictName << " gs\n";
-
-  // Set colors and border styles.
-  RetainPtr<const CPDF_Array> interior_color = annot_dict->GetArrayFor("IC");
-  if (interior_color && !interior_color->IsEmpty()) {
-    ap << GetColorStringWithDefault(interior_color.Get(), {},
-                                    PaintOperation::kFill);
-  }
-  ap << GetColorStringWithDefault(
-      annot_dict->GetArrayFor(pdfium::annotation::kC).Get(),
-      CFX_Color(CFX_Color::Type::kRGB, 0, 0, 0), PaintOperation::kStroke);
-
-  const float border_w = GetBorderWidth(annot_dict);
-  if (border_w > 0) {
-    ap << border_w << " w " << GetDashPatternString(annot_dict);
-  }
-
-  // Draw the main line segment.
-  ap << points[0].x << " " << points[0].y << " m " << points[1].x << " "
-     << points[1].y << " l S\n";
-
-  // Draw the endings.
-  GenerateLineEndings(ap, points, annot_dict);
-
-  // Finalize and set the Appearance Stream.
-  auto gs_dict = GenerateExtGStateDict(*annot_dict, blend_name);
-  auto res_dict =
-      GenerateResourcesDict(target->doc, std::move(gs_dict), nullptr);
-  return GenerateAndSetPointsAPDict(target, annot_dict, &ap,
-                                    std::move(res_dict), points);
-}
-
-bool GeneratePolyLineAP(APGenerationTarget* target,
-                        CPDF_Dictionary* annot_dict,
-                        const ByteString& blend_name) {
-  RetainPtr<const CPDF_Array> verts =
-      annot_dict->GetArrayFor(pdfium::annotation::kVertices);
-  if (!verts || verts->size() < 4) {
-    return false;
-  }
-
-  std::vector<CFX_PointF> points;
-  for (size_t i = 0; i + 1 < verts->size(); i += 2) {
-    points.push_back({verts->GetFloatAt(i), verts->GetFloatAt(i + 1)});
-  }
-
-  fxcrt::ostringstream ap;
-  ap << "/" << kGSDictName << " gs\n";
-
-  // Set colors and border styles.
-  RetainPtr<const CPDF_Array> interior_color = annot_dict->GetArrayFor("IC");
-  if (interior_color && !interior_color->IsEmpty()) {
-    ap << GetColorStringWithDefault(interior_color.Get(), {},
-                                    PaintOperation::kFill);
-  }
-  ap << GetColorStringWithDefault(
-      annot_dict->GetArrayFor(pdfium::annotation::kC).Get(),
-      CFX_Color(CFX_Color::Type::kRGB, 0, 0, 0), PaintOperation::kStroke);
-
-  const float border_w = GetBorderWidth(annot_dict);
-  if (border_w > 0) {
-    ap << border_w << " w " << GetDashPatternString(annot_dict);
-  }
-
-  // Draw the main polyline path.
-  ap << points[0].x << " " << points[0].y << " m ";
-  for (size_t i = 1; i < points.size(); ++i) {
-    ap << points[i].x << " " << points[i].y << " l ";
-  }
-  ap << "S\n";
-
-  // Draw the endings.
-  GenerateLineEndings(ap, points, annot_dict);
-
-  // Finalize and set the Appearance Stream.
-  if (ShapeCaptionEnabled(annot_dict)) {
-    for (const auto& point : points) {
-      if (!IsFinitePoint(point)) {
-        return false;
-      }
-    }
-    return FinishShapeDimensionAP(target, annot_dict, blend_name, points, false,
-                                  &ap);
-  }
-
-  auto gs_dict = GenerateExtGStateDict(*annot_dict, blend_name);
-  auto res_dict =
-      GenerateResourcesDict(target->doc, std::move(gs_dict), nullptr);
-  return GenerateAndSetPointsAPDict(target, annot_dict, &ap,
-                                    std::move(res_dict), points);
-}
-
-bool GenerateInkAP(APGenerationTarget* target,
-                   CPDF_Dictionary* annot_dict,
-                   const ByteString& blend_name) {
+bool GenerateInkAP(CPDF_Document* doc, CPDF_Dictionary* annot_dict) {
   RetainPtr<const CPDF_Array> ink_list = annot_dict->GetArrayFor("InkList");
   if (!ink_list || ink_list->IsEmpty()) {
     return false;
@@ -3503,91 +1183,58 @@ bool GenerateInkAP(APGenerationTarget* target,
       CFX_Color(CFX_Color::Type::kRGB, 0, 0, 0), PaintOperation::kStroke);
 
   app_stream << border_width << " w ";
-
-  app_stream << "1 J ";  // Rounded Line Caps
-  app_stream << "1 j ";  // Rounded Line Joins (for the corners in the middle)
-
   app_stream << GetDashPatternString(annot_dict);
 
-  std::vector<CFX_PointF> points;
+  // Set inflated rect as a new rect because paths near the border with large
+  // width should not be clipped to the original rect.
+  CFX_FloatRect rect = annot_dict->GetRectFor(pdfium::annotation::kRect);
+  rect.Inflate(border_width / 2, border_width / 2);
+  annot_dict->SetRectFor(pdfium::annotation::kRect, rect);
+
   for (size_t i = 0; i < ink_list->size(); i++) {
     RetainPtr<const CPDF_Array> coordinates_array = ink_list->GetArrayAt(i);
-    // An ink stroke needs at least one point to start.
     if (!coordinates_array || coordinates_array->size() < 2) {
       continue;
     }
 
-    const float x0 = coordinates_array->GetFloatAt(0);
-    const float y0 = coordinates_array->GetFloatAt(1);
-    app_stream << x0 << " " << y0 << " m ";
-    points.push_back({x0, y0});
+    app_stream << coordinates_array->GetFloatAt(0) << " "
+               << coordinates_array->GetFloatAt(1) << " m ";
 
-    // Start loop at the second point (index 2) ---
-    // The 'm' command already moves to the first point.
-    for (size_t j = 2; j < coordinates_array->size(); j += 2) {
-      const float x = coordinates_array->GetFloatAt(j);
-      const float y = coordinates_array->GetFloatAt(j + 1);
-      app_stream << x << " " << y << " l ";
-      points.push_back({x, y});
+    for (size_t j = 0; j < coordinates_array->size() - 1; j += 2) {
+      app_stream << coordinates_array->GetFloatAt(j) << " "
+                 << coordinates_array->GetFloatAt(j + 1) << " l ";
     }
 
     app_stream << "S\n";
   }
 
-  if (points.empty()) {
-    return false;
-  }
-  // /Rect is what the strokes paint, measured on every redraw: it shrinks
-  // with a thinner line as it grows with a wider one.
-  auto gs_dict = GenerateExtGStateDict(*annot_dict, blend_name);
-  auto resources_dict =
-      GenerateResourcesDict(target->doc, std::move(gs_dict), nullptr);
-  return GenerateAndSetPointsAPDict(target, annot_dict, &app_stream,
-                                    std::move(resources_dict), points);
-}
-
-bool GenerateTextAP(APGenerationTarget* target,
-                    CPDF_Dictionary* annot_dict,
-                    const ByteString& blend_name) {
-  fxcrt::ostringstream app_stream;
-  app_stream << "/" << kGSDictName << " gs ";
-
-  // The note icon fills /Rect, as every PDF app draws an appearance onto
-  // its /Rect: a bigger rect is a bigger icon.
-  app_stream << IconDesignOnto(annot_dict->GetRectFor(pdfium::annotation::kRect));
-  app_stream << GenerateTextSymbolAP(kIconDesign, *annot_dict);
-
-  auto gs_dict = GenerateExtGStateDict(*annot_dict, blend_name);
-  auto resources_dict =
-      GenerateResourcesDict(target->doc, std::move(gs_dict), nullptr);
-  GenerateAndSetAPDict(target, annot_dict, &app_stream,
-                       std::move(resources_dict),
+  auto gs_dict = GenerateExtGStateDict(*annot_dict, "Normal");
+  auto resources_dict = GenerateResourcesDict(doc, std::move(gs_dict), nullptr);
+  GenerateAndSetAPDict(doc, annot_dict, &app_stream, std::move(resources_dict),
                        false /*IsTextMarkupAnnotation*/);
   return true;
 }
 
-bool GenerateFileAttachmentAP(APGenerationTarget* target,
-                              CPDF_Dictionary* annot_dict,
-                              const ByteString& blend_name) {
+bool GenerateTextAP(CPDF_Document* doc, CPDF_Dictionary* annot_dict) {
   fxcrt::ostringstream app_stream;
   app_stream << "/" << kGSDictName << " gs ";
 
-  // Like the note icon, the file icon fills /Rect.
-  app_stream << IconDesignOnto(annot_dict->GetRectFor(pdfium::annotation::kRect));
-  app_stream << GenerateFileAttachmentSymbolAP(kIconDesign, *annot_dict);
+  CFX_FloatRect rect = annot_dict->GetRectFor(pdfium::annotation::kRect);
+  const float note_length = 20;
+  CFX_FloatRect note_rect(rect.left, rect.bottom, rect.left + note_length,
+                          rect.bottom + note_length);
+  annot_dict->SetRectFor(pdfium::annotation::kRect, note_rect);
 
-  auto gs_dict = GenerateExtGStateDict(*annot_dict, blend_name);
-  auto resources_dict =
-      GenerateResourcesDict(target->doc, std::move(gs_dict), nullptr);
-  GenerateAndSetAPDict(target, annot_dict, &app_stream,
-                       std::move(resources_dict),
+  app_stream << GenerateTextSymbolAP(note_rect);
+
+  auto gs_dict = GenerateExtGStateDict(*annot_dict, "Normal");
+  auto resources_dict = GenerateResourcesDict(doc, std::move(gs_dict), nullptr);
+  GenerateAndSetAPDict(doc, annot_dict, &app_stream, std::move(resources_dict),
                        false /*IsTextMarkupAnnotation*/);
   return true;
 }
 
-bool GenerateUnderlineAP(APGenerationTarget* target,
-                         CPDF_Dictionary* annot_dict,
-                         const ByteString& blend_name) {
+bool GenerateUnderlineAP(CPDF_Document* doc, CPDF_Dictionary* annot_dict) {
   fxcrt::ostringstream app_stream;
   app_stream << "/" << kGSDictName << " gs ";
 
@@ -3603,16 +1250,6 @@ bool GenerateUnderlineAP(APGenerationTarget* target,
     const size_t quad_point_count =
         CPDF_Annot::QuadPointCount(quad_points_array.Get());
     for (size_t i = 0; i < quad_point_count; ++i) {
-      const std::optional<MarkupQuad> quad =
-          ReadMarkupQuad(quad_points_array.Get(), i);
-      if (quad && !IsAxisAlignedZigZag(*quad)) {
-        const CFX_PointF inset = LowerToUpperUnit(*quad);
-        WritePoint(app_stream, quad->lower_start + kLineWidth * inset) << " m ";
-        WritePoint(app_stream, quad->lower_end + kLineWidth * inset)
-            << " l S\n";
-        continue;
-      }
-
       CFX_FloatRect rect = CPDF_Annot::RectFromQuadPoints(annot_dict, i);
       rect.Normalize();
       app_stream << rect.left << " " << rect.bottom + kLineWidth << " m "
@@ -3620,18 +1257,14 @@ bool GenerateUnderlineAP(APGenerationTarget* target,
     }
   }
 
-  auto gs_dict = GenerateExtGStateDict(*annot_dict, blend_name);
-  auto resources_dict =
-      GenerateResourcesDict(target->doc, std::move(gs_dict), nullptr);
-  GenerateAndSetAPDict(target, annot_dict, &app_stream,
-                       std::move(resources_dict),
+  auto gs_dict = GenerateExtGStateDict(*annot_dict, "Normal");
+  auto resources_dict = GenerateResourcesDict(doc, std::move(gs_dict), nullptr);
+  GenerateAndSetAPDict(doc, annot_dict, &app_stream, std::move(resources_dict),
                        true /*IsTextMarkupAnnotation*/);
   return true;
 }
 
-bool GeneratePopupAP(CPDF_Document* doc,
-                     CPDF_Dictionary* annot_dict,
-                     const ByteString& blend_name) {
+bool GeneratePopupAP(CPDF_Document* doc, CPDF_Dictionary* annot_dict) {
   fxcrt::ostringstream app_stream;
   app_stream << "/" << kGSDictName << " gs\n";
 
@@ -3661,7 +1294,7 @@ bool GeneratePopupAP(CPDF_Document* doc,
   RetainPtr<CPDF_Dictionary> resource_font_dict =
       GenerateResourceFontDict(doc, font_name, font_dict->GetObjNum());
   RetainPtr<CPDF_Dictionary> gs_dict =
-      GenerateExtGStateDict(*annot_dict, blend_name);
+      GenerateExtGStateDict(*annot_dict, "Normal");
   RetainPtr<CPDF_Dictionary> resources_dict = GenerateResourcesDict(
       doc, std::move(gs_dict), std::move(resource_font_dict));
 
@@ -3672,9 +1305,7 @@ bool GeneratePopupAP(CPDF_Document* doc,
   return true;
 }
 
-bool GenerateSquareAP(APGenerationTarget* target,
-                      CPDF_Dictionary* annot_dict,
-                      const ByteString& blend_name) {
+bool GenerateSquareAP(CPDF_Document* doc, CPDF_Dictionary* annot_dict) {
   fxcrt::ostringstream app_stream;
   app_stream << "/" << kGSDictName << " gs ";
 
@@ -3689,46 +1320,34 @@ bool GenerateSquareAP(APGenerationTarget* target,
 
   float border_width = GetBorderWidth(annot_dict);
   const bool is_stroke_rect = border_width > 0;
-  CloudyBorderInfo cloudy_info = GetCloudyBorderInfo(annot_dict);
-
   if (is_stroke_rect) {
     app_stream << border_width << " w ";
-    if (cloudy_info.is_cloudy) {
-      app_stream << "1 j ";
-    } else {
-      app_stream << GetDashPatternString(annot_dict);
-    }
+    app_stream << GetDashPatternString(annot_dict);
   }
 
-  const ShapeRotationInfo rot_info = GetShapeRotationInfo(annot_dict);
-  CFX_FloatRect draw_rect = rot_info.bbox;
-  draw_rect.Normalize();
+  CFX_FloatRect rect = annot_dict->GetRectFor(pdfium::annotation::kRect);
+  rect.Normalize();
 
-  if (cloudy_info.is_cloudy) {
-    GenerateCloudyRectanglePath(app_stream, draw_rect, cloudy_info.intensity,
-                                border_width);
-  } else {
-    if (is_stroke_rect) {
-      draw_rect.Deflate(border_width / 2, border_width / 2);
-    }
-    app_stream << draw_rect.left << " " << draw_rect.bottom << " "
-               << draw_rect.Width() << " " << draw_rect.Height() << " re ";
+  if (is_stroke_rect) {
+    // Deflating rect because stroking a path entails painting all points
+    // whose perpendicular distance from the path in user space is less than
+    // or equal to half the line width.
+    rect.Deflate(border_width / 2, border_width / 2);
   }
 
   const bool is_fill_rect = interior_color && (interior_color->size() > 0);
-  app_stream << GetPaintOperatorString(is_stroke_rect, is_fill_rect) << "\n";
+  app_stream << rect.left << " " << rect.bottom << " " << rect.Width() << " "
+             << rect.Height() << " re "
+             << GetPaintOperatorString(is_stroke_rect, is_fill_rect) << "\n";
 
-  auto gs_dict = GenerateExtGStateDict(*annot_dict, blend_name);
-  auto resources_dict =
-      GenerateResourcesDict(target->doc, std::move(gs_dict), nullptr);
-  return GenerateAndSetBoxAPDict(target, annot_dict, &app_stream,
-                                 std::move(resources_dict), rot_info.matrix,
-                                 rot_info.bbox);
+  auto gs_dict = GenerateExtGStateDict(*annot_dict, "Normal");
+  auto resources_dict = GenerateResourcesDict(doc, std::move(gs_dict), nullptr);
+  GenerateAndSetAPDict(doc, annot_dict, &app_stream, std::move(resources_dict),
+                       false /*IsTextMarkupAnnotation*/);
+  return true;
 }
 
-bool GenerateSquigglyAP(APGenerationTarget* target,
-                        CPDF_Dictionary* annot_dict,
-                        const ByteString& blend_name) {
+bool GenerateSquigglyAP(CPDF_Document* doc, CPDF_Dictionary* annot_dict) {
   fxcrt::ostringstream app_stream;
   app_stream << "/" << kGSDictName << " gs ";
 
@@ -3745,13 +1364,6 @@ bool GenerateSquigglyAP(APGenerationTarget* target,
     const size_t quad_point_count =
         CPDF_Annot::QuadPointCount(quad_points_array.Get());
     for (size_t i = 0; i < quad_point_count; ++i) {
-      const std::optional<MarkupQuad> quad =
-          ReadMarkupQuad(quad_points_array.Get(), i);
-      if (quad && !IsAxisAlignedZigZag(*quad)) {
-        EmitOrientedSquiggle(app_stream, *quad, kDelta);
-        continue;
-      }
-
       CFX_FloatRect rect = CPDF_Annot::RectFromQuadPoints(annot_dict, i);
       rect.Normalize();
 
@@ -3778,18 +1390,14 @@ bool GenerateSquigglyAP(APGenerationTarget* target,
     }
   }
 
-  auto gs_dict = GenerateExtGStateDict(*annot_dict, blend_name);
-  auto resources_dict =
-      GenerateResourcesDict(target->doc, std::move(gs_dict), nullptr);
-  GenerateAndSetAPDict(target, annot_dict, &app_stream,
-                       std::move(resources_dict),
+  auto gs_dict = GenerateExtGStateDict(*annot_dict, "Normal");
+  auto resources_dict = GenerateResourcesDict(doc, std::move(gs_dict), nullptr);
+  GenerateAndSetAPDict(doc, annot_dict, &app_stream, std::move(resources_dict),
                        true /*IsTextMarkupAnnotation*/);
   return true;
 }
 
-bool GenerateStrikeOutAP(APGenerationTarget* target,
-                         CPDF_Dictionary* annot_dict,
-                         const ByteString& blend_name) {
+bool GenerateStrikeOutAP(CPDF_Document* doc, CPDF_Dictionary* annot_dict) {
   fxcrt::ostringstream app_stream;
   app_stream << "/" << kGSDictName << " gs ";
 
@@ -3803,18 +1411,6 @@ bool GenerateStrikeOutAP(APGenerationTarget* target,
     const size_t quad_point_count =
         CPDF_Annot::QuadPointCount(quad_points_array.Get());
     for (size_t i = 0; i < quad_point_count; ++i) {
-      const std::optional<MarkupQuad> quad =
-          ReadMarkupQuad(quad_points_array.Get(), i);
-      if (quad && !IsAxisAlignedZigZag(*quad)) {
-        static constexpr int kLineWidth = 1;
-        app_stream << kLineWidth << " w ";
-        WritePoint(app_stream, Midpoint(quad->upper_start, quad->lower_start))
-            << " m ";
-        WritePoint(app_stream, Midpoint(quad->upper_end, quad->lower_end))
-            << " l S\n";
-        continue;
-      }
-
       CFX_FloatRect rect = CPDF_Annot::RectFromQuadPoints(annot_dict, i);
       rect.Normalize();
 
@@ -3825,1077 +1421,10 @@ bool GenerateStrikeOutAP(APGenerationTarget* target,
     }
   }
 
-  auto gs_dict = GenerateExtGStateDict(*annot_dict, blend_name);
-  auto resources_dict =
-      GenerateResourcesDict(target->doc, std::move(gs_dict), nullptr);
-  GenerateAndSetAPDict(target, annot_dict, &app_stream,
-                       std::move(resources_dict),
-                       true /*IsTextMarkupAnnotation*/);
-  return true;
-}
-
-bool GenerateLinkAP(APGenerationTarget* target,
-                    CPDF_Dictionary* annot_dict,
-                    const ByteString& blend_name) {
-  // Get border width - default to 1 if not specified
-  float border_width = GetBorderWidth(annot_dict);
-  if (border_width <= 0) {
-    return true;  // No visible border, no AP needed
-  }
-
-  CFX_FloatRect rect = annot_dict->GetRectFor(pdfium::annotation::kRect);
-  rect.Normalize();
-
-  fxcrt::ostringstream app_stream;
-  app_stream << "/" << kGSDictName << " gs ";
-
-  // Set stroke color from /C array (default: blue for links)
-  app_stream << GetColorStringWithDefault(
-      annot_dict->GetArrayFor(pdfium::annotation::kC).Get(),
-      CFX_Color(CFX_Color::Type::kRGB, 0, 0, 1),  // Default: blue
-      PaintOperation::kStroke);
-
-  app_stream << border_width << " w ";
-  app_stream << GetDashPatternString(annot_dict);
-
-  // Determine border style
-  BorderStyleInfo border_info =
-      GetBorderStyleInfo(annot_dict->GetDictFor("BS"));
-
-  switch (border_info.style) {
-    case BorderStyle::kUnderline: {
-      // Draw underline: 1pt above bottom, inset 1pt from sides
-      float y = rect.bottom + 1.0f;
-      app_stream << (rect.left + 1.0f) << " " << y << " m "
-                 << (rect.right - 1.0f) << " " << y << " l S\n";
-      break;
-    }
-    case BorderStyle::kSolid:
-    case BorderStyle::kDash:
-    default: {
-      // Draw rectangle border
-      CFX_FloatRect stroke_rect = rect;
-      stroke_rect.Deflate(border_width / 2.0f, border_width / 2.0f);
-      app_stream << stroke_rect.left << " " << stroke_rect.bottom << " "
-                 << stroke_rect.Width() << " " << stroke_rect.Height()
-                 << " re S\n";
-      break;
-    }
-  }
-
-  auto gs_dict = GenerateExtGStateDict(*annot_dict, blend_name);
-  auto resources_dict =
-      GenerateResourcesDict(target->doc, std::move(gs_dict), nullptr);
-  GenerateAndSetAPDict(target, annot_dict, &app_stream,
-                       std::move(resources_dict),
-                       /*is_text_markup_annotation=*/false);
-  return true;
-}
-
-// EmbedPDF: the regions a /Redact annotation targets — /QuadPoints quads when
-// present (text redactions), else the annotation /Rect (area redactions).
-// One overlay region: the AABB (label layout + area marks) plus the exact
-// oriented quad when the marked cell is not axis-aligned (rotated text marks
-// fill their true cells; the label tiling stays axis-aligned in the bbox,
-// matching the live scene preview).
-struct RedactOverlayRegion {
-  CFX_FloatRect bbox;
-  std::optional<MarkupQuad> quad;
-};
-
-bool RedactQuadValuesAreFinite(const CPDF_Array* array, size_t index) {
-  const size_t offset = index * 8;
-  for (size_t i = 0; i < 8; ++i) {
-    if (!std::isfinite(array->GetFloatAt(offset + i))) {
-      return false;
-    }
-  }
-  return true;
-}
-
-std::vector<RedactOverlayRegion> GetRedactOverlayRegions(
-    const CPDF_Dictionary* annot_dict) {
-  std::vector<RedactOverlayRegion> regions;
-  RetainPtr<const CPDF_Array> quad_points_array =
-      annot_dict->GetArrayFor("QuadPoints");
-  if (quad_points_array && quad_points_array->size() >= 8) {
-    const size_t quad_count =
-        CPDF_Annot::QuadPointCount(quad_points_array.Get());
-    bool invalid_quad = false;
-    for (size_t i = 0; i < quad_count; ++i) {
-      if (!RedactQuadValuesAreFinite(quad_points_array.Get(), i)) {
-        invalid_quad = true;
-        break;
-      }
-      std::optional<MarkupQuad> quad =
-          ReadMarkupQuad(quad_points_array.Get(), i);
-      CFX_FloatRect rect = CPDF_Annot::RectFromQuadPoints(annot_dict, i);
-      rect.Normalize();
-      if (rect.IsEmpty()) {
-        invalid_quad = true;
-        break;
-      }
-      RedactOverlayRegion region;
-      region.bbox = rect;
-      if (quad && !IsAxisAlignedZigZag(*quad)) {
-        region.quad = quad;
-      }
-      regions.push_back(region);
-    }
-    if (!invalid_quad && !regions.empty()) {
-      return regions;
-    }
-    regions.clear();
-  }
-  CFX_FloatRect rect = annot_dict->GetRectFor(pdfium::annotation::kRect);
-  rect.Normalize();
-  if (!rect.IsEmpty()) {
-    RedactOverlayRegion region;
-    region.bbox = rect;
-    regions.push_back(region);
-  }
-  return regions;
-}
-
-// EmbedPDF: the marking-stage /AP BBox and the overlay BBox share this rule:
-// quad bounding box for text redactions, /Rect for area redactions.
-CFX_FloatRect GetRedactOverlayBBox(const CPDF_Dictionary* annot_dict) {
-  const std::vector<RedactOverlayRegion> regions =
-      GetRedactOverlayRegions(annot_dict);
-  if (regions.empty()) {
-    return CFX_FloatRect();
-  }
-  CFX_FloatRect bbox = regions.front().bbox;
-  for (size_t i = 1; i < regions.size(); ++i) {
-    bbox.Union(regions[i].bbox);
-  }
-  return bbox;
-}
-
-RetainPtr<CPDF_Dictionary> MakeRedactFormDict(
-    const CFX_FloatRect& bbox,
-    RetainPtr<CPDF_Dictionary> resources) {
-  auto stream_dict = pdfium::MakeRetain<CPDF_Dictionary>();
-  stream_dict->SetNewFor<CPDF_Number>("FormType", 1);
-  stream_dict->SetNewFor<CPDF_Name>("Type", "XObject");
-  stream_dict->SetNewFor<CPDF_Name>("Subtype", "Form");
-  stream_dict->SetMatrixFor("Matrix", CFX_Matrix());
-  stream_dict->SetRectFor("BBox", bbox);
-  if (resources) {
-    stream_dict->SetFor("Resources", std::move(resources));
-  }
-  return stream_dict;
-}
-
-RetainPtr<CPDF_Stream> MakeRedactFormStream(
-    CPDF_Document* doc,
-    const CFX_FloatRect& bbox,
-    RetainPtr<CPDF_Dictionary> resources,
-    fxcrt::ostringstream* ops) {
-  auto stream = doc->NewIndirect<CPDF_Stream>(
-      MakeRedactFormDict(bbox, std::move(resources)));
-  stream->SetDataFromStringstream(ops);
-  return stream;
-}
-
-constexpr float kRedactRepeatFallbackFontSize = 12.0f;
-constexpr int kRedactMaxRepeatDoublings = 10;  // 2^10 = 1024 label instances
-
-// EmbedPDF: lay out the /OverlayText label for one redacted region with the
-// same CPVT + annotation-font-map stack as FreeText appearances, so /DA fonts
-// (standard, DR-resolved, or registered runtime fonts) shape and subset
-// identically. Top-aligned in reading order; ISO 32000-2 prescribes neither
-// the vertical placement nor the /Repeat tiling, so /Repeat is expressed as
-// "repeat the label, space-joined, wrapped to the region, clipped".
-void AppendRedactLabelForRegion(CPDF_AnnotFontMap& map,
-                                const CPDF_Dictionary* annot_dict,
-                                const WideString& overlay_text,
-                                float da_font_size,
-                                const CFX_Color& label_color,
-                                const CFX_FloatRect& region,
-                                fxcrt::ostringstream& stream) {
-  CPVT_VariableText::Provider provider(&map);
-  CPVT_VariableText vt(&provider);
-  vt.SetPlateRect(region);
-  vt.SetAlignment(annot_dict->GetIntegerFor("Q"));
-
-  const bool repeat = annot_dict->GetBooleanFor("Repeat", false);
-  // A label shown once at auto-size (0) fits the region on one line: CPVT
-  // auto-sizes multi-line text only up to 12pt (the rule for multi-line form
-  // fields), which would leave a large region mostly empty. A label at a set
-  // size, or a repeated one, wraps to the region.
-  const bool fit_one_line = !repeat && FXSYS_IsFloatZero(da_font_size);
-  vt.SetMultiLine(!fit_one_line);
-  vt.SetAutoReturn(!fit_one_line);
-  // CPVT auto-sizing fits ALL text into the plate, so it cannot combine with
-  // /Repeat (more repetitions would only shrink the font); pin a concrete
-  // size for the repeat case when /DA asks for auto (size 0).
-  float font_size = da_font_size;
-  if (repeat && FXSYS_IsFloatZero(font_size)) {
-    font_size = kRedactRepeatFallbackFontSize;
-  }
-  SetVtFontSize(font_size, vt);
-  vt.Initialize();
-  vt.SetText(overlay_text);
-  vt.RearrangeAll();
-
-  if (repeat) {
-    // Double the space-joined text until the wrapped layout covers the region
-    // vertically; the last row's surplus is removed by the region clip below.
-    // Bounded to keep tiny-font/huge-region combinations sane.
-    WideString tiled = overlay_text;
-    for (int i = 0; i < kRedactMaxRepeatDoublings &&
-                    vt.GetContentRect().Height() < region.Height();
-         ++i) {
-      WideString doubled = tiled;
-      doubled += L' ';
-      doubled += tiled;
-      tiled = std::move(doubled);
-      vt.SetText(tiled);
-      vt.RearrangeAll();
-    }
-  }
-
-  const ByteString body =
-      GenerateEditAP(vt.GetProvider()->GetFontMap(), vt.GetIterator(),
-                     CFX_PointF(0.0f, 0.0f), /*continuous=*/true,
-                     /*sub_word=*/0);
-  if (body.IsEmpty()) {
-    return;
-  }
-  stream << "q\n";
-  WriteRect(stream, region) << " re W n\n";
-  stream << "BT\n"
-         << GenerateColorAP(label_color, PaintOperation::kFill) << body
-         << "ET\nQ\n";
-}
-
-// EmbedPDF: emit the final ("post-apply") overlay ops for a /Redact
-// annotation: opaque /IC fill of every region, then the /OverlayText label.
-// The marking-stage /CA opacity is deliberately not carried over — the
-// content underneath is destroyed, so the replacement marking paints opaque,
-// matching Acrobat. Returns false when the annotation defines neither a fill
-// nor a label.
-bool AppendRedactOverlayOps(CPDF_Document* doc,
-                            const CPDF_Dictionary* annot_dict,
-                            fxcrt::ostringstream& stream,
-                            RetainPtr<CPDF_Dictionary>* out_font_resources) {
-  const WideString overlay_text = annot_dict->GetUnicodeTextFor("OverlayText");
-  RetainPtr<const CPDF_Array> interior_color = annot_dict->GetArrayFor("IC");
-  const bool has_fill = interior_color && !interior_color->IsEmpty();
-  if (!has_fill && overlay_text.IsEmpty()) {
-    return false;
-  }
-
-  const std::vector<RedactOverlayRegion> regions =
-      GetRedactOverlayRegions(annot_dict);
-  if (regions.empty()) {
-    return false;
-  }
-
-  if (has_fill) {
-    stream << GetColorStringWithDefault(
-        interior_color.Get(), CFX_Color(CFX_Color::Type::kTransparent),
-        PaintOperation::kFill);
-    for (const RedactOverlayRegion& region : regions) {
-      if (region.quad.has_value()) {
-        // Fill the exact oriented cell (ring order, like the highlight AP).
-        WritePoint(stream, region.quad->upper_start) << " m ";
-        WritePoint(stream, region.quad->upper_end) << " l ";
-        WritePoint(stream, region.quad->lower_end) << " l ";
-        WritePoint(stream, region.quad->lower_start) << " l h f\n";
-      } else {
-        WriteRect(stream, region.bbox) << " re f\n";
-      }
-    }
-  }
-
-  if (overlay_text.IsEmpty()) {
-    return true;
-  }
-
-  // /DA resolution mirrors the FreeText persistent path, but is forgiving:
-  // redact annotations marked by other producers can lack /DA (ISO requires
-  // it alongside /OverlayText, but such files exist) or an AcroForm /DR —
-  // fall back to Helvetica rather than dropping the label.
-  RetainPtr<CPDF_Dictionary> root_dict = doc->GetMutableRoot();
-  RetainPtr<CPDF_Dictionary> form_dict;
-  if (root_dict) {
-    form_dict = root_dict->GetMutableDictFor("AcroForm");
-    if (!form_dict) {
-      form_dict = CPDF_InteractiveForm::InitAcroFormDict(doc);
-    }
-  }
-
-  std::optional<DefaultAppearanceInfo> da_info =
-      form_dict ? GetDefaultAppearanceInfo(annot_dict, form_dict.Get())
-                : std::nullopt;
-  // A /DA without a Tf parses as a font with no name: Helvetica too (files
-  // from other producers, and marks written before /DA kept the font at
-  // auto-size).
-  const ByteString font_name =
-      da_info.has_value() && !da_info.value().font_name.IsEmpty()
-          ? da_info.value().font_name
-          : ByteString("Helv");
-  const float da_font_size =
-      da_info.has_value() ? da_info.value().font_size : 0.0f;
-
-  CFX_Color label_color =
-      da_info.has_value() ? da_info.value().text_color : CFX_Color();
-  if (label_color.nColorType == CFX_Color::Type::kTransparent) {
-    // Legacy EmbedPDF v2 files carry the label colour in /OC; ISO keeps it
-    // in the /DA string. Default to black when neither is present.
-    RetainPtr<const CPDF_Array> oc = annot_dict->GetArrayFor("OC");
-    label_color = (oc && oc->size() >= 3)
-                      ? fpdfdoc::CFXColorFromArray(*oc)
-                      : CFX_Color(CFX_Color::Type::kRGB, 0, 0, 0);
-  }
-
-  DaFontResolution da_font;
-  if (form_dict) {
-    RetainPtr<CPDF_Dictionary> dr_font_dict =
-        form_dict->GetOrCreateDictFor("DR")->GetOrCreateDictFor("Font");
-    da_font =
-        ResolveDaFontForPersistentTarget(doc, dr_font_dict.Get(), font_name);
-  } else {
-    da_font.font_dict = GenerateFallbackFontDict(doc);
-  }
-  RetainPtr<CPDF_Font> default_font =
-      da_font.font_dict
-          ? CPDF_DocPageData::FromDocument(doc)->GetFont(da_font.font_dict)
-          : nullptr;
-  if (!default_font &&
-      da_font.registered_font_id == CFX_FontRegistry::kInvalidFontId) {
-    return has_fill;
-  }
-
-  CPDF_AnnotFontMap map(doc, std::move(default_font), font_name,
-                        /*allow_registered_fallbacks=*/true,
-                        da_font.registered_font_id,
-                        /*install_dr_entry=*/true);
-  if (!map.HasDefaultFont()) {
-    return has_fill;
-  }
-  for (const RedactOverlayRegion& region : regions) {
-    AppendRedactLabelForRegion(map, annot_dict, overlay_text, da_font_size,
-                               label_color, region.bbox, stream);
-  }
-  *out_font_resources = map.CreateFontResourceDict();
-  return !!*out_font_resources;
-}
-
-bool GenerateRedactAP(APGenerationTarget* target,
-                      CPDF_Dictionary* annot_dict,
-                      const ByteString& blend_name) {
-  CPDF_Document* const doc = target->doc;
-  // Normal (marking-stage) appearance: border-only outline in /C, default
-  // red. The filled preview is NOT drawn here — R/D and /RO all share the
-  // final overlay from BuildRedactOverlayForm, so hovering a marked
-  // redaction previews exactly what apply will paint.
-  fxcrt::ostringstream normal_stream;
-  normal_stream << "/" << kGSDictName << " gs ";
-  normal_stream << GetColorStringWithDefault(
-      annot_dict->GetArrayFor(pdfium::annotation::kC).Get(),
-      CFX_Color(CFX_Color::Type::kRGB, 1, 0, 0),  // default: red
-      PaintOperation::kStroke);
-
-  const float border_width = GetBorderWidth(annot_dict);
-  if (border_width > 0) {
-    normal_stream << border_width << " w ";
-    normal_stream << GetDashPatternString(annot_dict);
-    for (const RedactOverlayRegion& region :
-         GetRedactOverlayRegions(annot_dict)) {
-      CFX_FloatRect stroke_rect = region.bbox;
-      stroke_rect.Deflate(border_width / 2, border_width / 2);
-      normal_stream << stroke_rect.left << " " << stroke_rect.bottom << " "
-                    << stroke_rect.Width() << " " << stroke_rect.Height()
-                    << " re S\n";
-    }
-  }
-
-  auto gs_dict = GenerateExtGStateDict(*annot_dict, blend_name);
+  auto gs_dict = GenerateExtGStateDict(*annot_dict, "Normal");
   auto resources_dict = GenerateResourcesDict(doc, std::move(gs_dict), nullptr);
-  const CFX_FloatRect bbox = GetRedactOverlayBBox(annot_dict);
-  if (!target->IsPersistent()) {
-    // EmbedPDF: drawing a mark without an appearance (one another producer
-    // wrote) builds the outline in memory and writes nothing: not the
-    // appearance streams, /AP or /RO.
-    target->normal_stream = pdfium::MakeRetain<CPDF_Stream>(
-        MakeRedactFormDict(bbox, std::move(resources_dict)));
-    target->normal_stream->SetDataFromStringstream(&normal_stream);
-    return true;
-  }
-  RetainPtr<CPDF_Stream> normal_pdf_stream = MakeRedactFormStream(
-      doc, bbox, std::move(resources_dict), &normal_stream);
-
-  // Rollover/Down and /RO share the final overlay (fill + label).
-  RetainPtr<CPDF_Stream> overlay =
-      CPDF_GenerateAP::BuildRedactOverlayForm(doc, annot_dict);
-  if (!overlay) {
-    // Neither /IC nor /OverlayText: keep the AP structure (and the baked /RO
-    // that pre-v3 clients flatten on apply) with an empty overlay.
-    fxcrt::ostringstream empty_stream;
-    overlay = MakeRedactFormStream(doc, bbox, nullptr, &empty_stream);
-  }
-
-  RetainPtr<CPDF_Dictionary> ap_dict =
-      annot_dict->GetOrCreateDictFor(pdfium::annotation::kAP);
-  ap_dict->SetNewFor<CPDF_Reference>("N", doc, normal_pdf_stream->GetObjNum());
-  ap_dict->SetNewFor<CPDF_Reference>("R", doc, overlay->GetObjNum());
-  ap_dict->SetNewFor<CPDF_Reference>("D", doc, overlay->GetObjNum());
-
-  // /RO lives on the annotation dict, not inside /AP.
-  annot_dict->SetNewFor<CPDF_Reference>("RO", doc, overlay->GetObjNum());
-  return true;
-}
-
-void GenerateTextFieldFormAP(fxcrt::ostringstream& app_stream,
-                             const CPDF_Dictionary* annot_dict,
-                             const CFX_FloatRect& bbox,
-                             const DefaultAppearanceInfo& da_info,
-                             CPVT_VariableText::Provider& provider,
-                             const WideString* value_override) {
-  const AppearanceCharacteristics mk =
-      GetAppearanceCharacteristics(annot_dict->GetDictFor("MK"));
-  const bool has_bg =
-      mk.background_color.nColorType != CFX_Color::Type::kTransparent;
-  const bool has_bc =
-      mk.border_color.nColorType != CFX_Color::Type::kTransparent;
-
-  const BorderStyleInfo bs = GetBorderStyleInfo(annot_dict->GetDictFor("BS"));
-  const float bw = bs.width;
-  const float half_bw = bw / 2.0f;
-
-  CFX_FloatRect stroke_rect = bbox;
-  if (bw > 0) {
-    stroke_rect.Deflate(half_bw, half_bw);
-  }
-
-  CFX_FloatRect body_rect = bbox;
-  body_rect.Deflate(2.0f * bw, bw);
-
-  // Background + border in isolated graphics state. A solid border is a
-  // stroked rectangle; the other styles draw as a combo box's and a list
-  // box's do.
-  app_stream << "q\n";
-  if (has_bg) {
-    app_stream << GenerateColorAP(mk.background_color, PaintOperation::kFill);
-    WriteRect(app_stream, bbox) << " re f*\n";
-  }
-  if (bs.style == BorderStyle::kSolid) {
-    if (has_bc && bw > 0) {
-      app_stream << GenerateColorAP(mk.border_color, PaintOperation::kStroke);
-      WriteFloat(app_stream, bw) << " w\n";
-      WriteRect(app_stream, stroke_rect) << " re s\n";
-    }
-  } else {
-    app_stream << GenerateBorderAP(bbox, bs, mk.border_color);
-  }
-  app_stream << "Q\n";
-
-  // Text content in isolated graphics state with proper clipping
-  app_stream << "/Tx BMC\nq\n";
-
-  CFX_FloatRect clip_rect = bbox;
-  clip_rect.Deflate(bw, bw);
-  WriteRect(app_stream, clip_rect) << " re W n\n";
-
-  CPVT_VariableText vt(&provider);
-  ByteString body = GenerateTextFieldAP(annot_dict, body_rect,
-                                        da_info.font_size, vt, value_override);
-
-  app_stream << "BT\n";
-  app_stream << GenerateColorAP(da_info.text_color, PaintOperation::kStroke);
-  app_stream << GenerateColorAP(da_info.text_color, PaintOperation::kFill);
-
-  if (body.GetLength() > 0) {
-    app_stream << body;
-  }
-
-  app_stream << "0 G 0 g\n";
-  app_stream << "ET\n";
-  app_stream << "Q\nEMC\n";
-}
-
-void GenerateComboBoxFormAP(fxcrt::ostringstream& app_stream,
-                            const CPDF_Dictionary* annot_dict,
-                            const CFX_FloatRect& bbox,
-                            const DefaultAppearanceInfo& da_info,
-                            CPVT_VariableText::Provider& provider,
-                            const WideString* value_override) {
-  const AnnotationDimensionsAndColor dims =
-      GetAnnotationDimensionsAndColor(annot_dict);
-  const BorderStyleInfo border_info =
-      GetBorderStyleInfo(annot_dict->GetDictFor("BS"));
-
-  const ByteString background =
-      GenerateColorAP(dims.background_color, PaintOperation::kFill);
-  if (background.GetLength() > 0) {
-    app_stream << "q\n" << background;
-    WriteRect(app_stream, bbox) << " re f\nQ\n";
-  }
-
-  const ByteString border_stream =
-      GenerateBorderAP(bbox, border_info, dims.border_color);
-  if (border_stream.GetLength() > 0) {
-    app_stream << "q\n" << border_stream << "Q\n";
-  }
-
-  CFX_FloatRect body_rect = bbox;
-  body_rect.Deflate(border_info.width, border_info.width);
-
-  app_stream << GenerateComboBoxAP(annot_dict, body_rect, da_info.text_color,
-                                   da_info.font_size, provider, value_override);
-}
-
-void GenerateListBoxFormAP(fxcrt::ostringstream& app_stream,
-                           const CPDF_Dictionary* annot_dict,
-                           const CFX_FloatRect& bbox,
-                           const DefaultAppearanceInfo& da_info,
-                           CPVT_VariableText::Provider& provider) {
-  const AnnotationDimensionsAndColor dims =
-      GetAnnotationDimensionsAndColor(annot_dict);
-  const BorderStyleInfo border_info =
-      GetBorderStyleInfo(annot_dict->GetDictFor("BS"));
-
-  const ByteString background =
-      GenerateColorAP(dims.background_color, PaintOperation::kFill);
-  if (background.GetLength() > 0) {
-    app_stream << "q\n" << background;
-    WriteRect(app_stream, bbox) << " re f\nQ\n";
-  }
-
-  const ByteString border_stream =
-      GenerateBorderAP(bbox, border_info, dims.border_color);
-  if (border_stream.GetLength() > 0) {
-    app_stream << "q\n" << border_stream << "Q\n";
-  }
-
-  CFX_FloatRect body_rect = bbox;
-  body_rect.Deflate(border_info.width, border_info.width);
-
-  const ByteString body = GenerateListBoxAP(
-      annot_dict, body_rect, da_info.text_color, da_info.font_size, provider);
-  if (body.GetLength() > 0) {
-    app_stream << "/Tx BMC\nq\n";
-    WriteRect(app_stream, body_rect) << " re\nW\nn\n" << body << "Q\nEMC\n";
-  }
-}
-
-void GenerateCheckmarkPath(fxcrt::ostringstream& stream,
-                           const CFX_FloatRect& bbox) {
-  const float w = bbox.Width();
-  const float h = bbox.Height();
-
-  using PointRow = std::array<CFX_PointF, 3>;
-  std::array<PointRow, 8> pts = {{
-      {{CFX_PointF(0.28f, 0.52f), CFX_PointF(0.27f, 0.48f),
-        CFX_PointF(0.29f, 0.40f)}},
-      {{CFX_PointF(0.30f, 0.33f), CFX_PointF(0.31f, 0.29f),
-        CFX_PointF(0.31f, 0.28f)}},
-      {{CFX_PointF(0.39f, 0.28f), CFX_PointF(0.49f, 0.29f),
-        CFX_PointF(0.77f, 0.67f)}},
-      {{CFX_PointF(0.76f, 0.68f), CFX_PointF(0.78f, 0.69f),
-        CFX_PointF(0.76f, 0.75f)}},
-      {{CFX_PointF(0.76f, 0.75f), CFX_PointF(0.73f, 0.80f),
-        CFX_PointF(0.68f, 0.75f)}},
-      {{CFX_PointF(0.68f, 0.74f), CFX_PointF(0.68f, 0.74f),
-        CFX_PointF(0.44f, 0.47f)}},
-      {{CFX_PointF(0.43f, 0.47f), CFX_PointF(0.40f, 0.47f),
-        CFX_PointF(0.41f, 0.58f)}},
-      {{CFX_PointF(0.40f, 0.60f), CFX_PointF(0.28f, 0.66f),
-        CFX_PointF(0.30f, 0.56f)}},
-  }};
-
-  for (auto& row : pts) {
-    for (auto& pt : row) {
-      pt.x = pt.x * w + bbox.left;
-      pt.y = pt.y * h + bbox.bottom;
-    }
-  }
-
-  WritePoint(stream, pts[0][0]) << " m\n";
-  for (size_t i = 0; i < pts.size(); ++i) {
-    const size_t next = (i + 1) % pts.size();
-    const CFX_PointF& pt_next = pts[next][0];
-    const float px1 = pts[i][1].x - pts[i][0].x;
-    const float py1 = pts[i][1].y - pts[i][0].y;
-    const float px2 = pts[i][2].x - pt_next.x;
-    const float py2 = pts[i][2].y - pt_next.y;
-    WritePoint(stream, {pts[i][0].x + px1 * FXSYS_BEZIER,
-                        pts[i][0].y + py1 * FXSYS_BEZIER})
-        << " ";
-    WritePoint(stream,
-               {pt_next.x + px2 * FXSYS_BEZIER, pt_next.y + py2 * FXSYS_BEZIER})
-        << " ";
-    WritePoint(stream, pt_next) << " c\n";
-  }
-}
-
-void BuildCheckboxBoxStream(fxcrt::ostringstream& stream,
-                            const AppearanceCharacteristics& mk,
-                            const BorderStyleInfo& bs,
-                            const CFX_FloatRect& bbox) {
-  const bool has_bg =
-      mk.background_color.nColorType != CFX_Color::Type::kTransparent;
-  const bool has_bc =
-      mk.border_color.nColorType != CFX_Color::Type::kTransparent;
-  const float bw = bs.width;
-  const float half_bw = bw / 2.0f;
-
-  CFX_FloatRect stroke_rect = bbox;
-  if (bw > 0) {
-    stroke_rect.Deflate(half_bw, half_bw);
-  }
-
-  if (has_bg) {
-    stream << GenerateColorAP(mk.background_color, PaintOperation::kFill);
-    WriteRect(stream, stroke_rect) << " re f*\n";
-  }
-
-  if (has_bc && bw > 0) {
-    stream << GenerateColorAP(mk.border_color, PaintOperation::kStroke);
-    WriteFloat(stream, bw) << " w\n";
-    WriteRect(stream, stroke_rect) << " re S\n";
-  }
-}
-
-// A push button: background and border as a text field draws them, and the
-// caption (/MK /CA) on one line, centred both ways, in the /DA font and
-// colour. An icon (/MK /I) is not drawn, so the caption takes the whole
-// button whatever /MK /TP says.
-void GeneratePushButtonFormAP(fxcrt::ostringstream& app_stream,
-                              const CPDF_Dictionary* annot_dict,
-                              const CFX_FloatRect& bbox,
-                              const DefaultAppearanceInfo& da_info,
-                              CPVT_VariableText::Provider& provider) {
-  const AppearanceCharacteristics mk =
-      GetAppearanceCharacteristics(annot_dict->GetDictFor("MK"));
-  const BorderStyleInfo bs = GetBorderStyleInfo(annot_dict->GetDictFor("BS"));
-  const float bw = bs.width;
-
-  app_stream << "q\n";
-  BuildCheckboxBoxStream(app_stream, mk, bs, bbox);
-  app_stream << "Q\n";
-  if (mk.caption.IsEmpty()) {
-    return;
-  }
-
-  CFX_FloatRect body_rect = bbox;
-  body_rect.Deflate(2.0f * bw, bw);
-  CPVT_VariableText vt(&provider);
-  vt.SetPlateRect(body_rect);
-  vt.SetAlignment(1);  // centred
-  SetVtFontSize(da_info.font_size, vt);
-  vt.Initialize();
-  vt.SetText(mk.caption);
-  vt.RearrangeAll();
-  const CFX_PointF offset(
-      0.0f, (vt.GetContentRect().Height() - body_rect.Height()) / 2.0f);
-  const ByteString caption =
-      GenerateEditAP(provider.GetFontMap(), vt.GetIterator(), offset, true, 0);
-  if (caption.IsEmpty()) {
-    return;
-  }
-
-  app_stream << "q\n";
-  CFX_FloatRect clip_rect = bbox;
-  clip_rect.Deflate(bw, bw);
-  WriteRect(app_stream, clip_rect) << " re W n\n";
-  app_stream << "BT\n"
-             << GenerateColorAP(da_info.text_color, PaintOperation::kFill)
-             << caption << "ET\nQ\n";
-}
-
-// The symbol a check box or radio button shows when on, named by the
-// ZapfDingbats character in its /MK /CA (the characters Acrobat writes).
-enum class CheckStyle { kCheck, kCircle, kCross, kDiamond, kSquare, kStar };
-
-std::optional<CheckStyle> CheckStyleFromCaption(const WideString& caption) {
-  if (caption.IsEmpty()) {
-    return std::nullopt;
-  }
-  switch (caption[0]) {
-    case L'4':
-      return CheckStyle::kCheck;
-    case L'8':
-      return CheckStyle::kCross;
-    case L'H':
-      return CheckStyle::kStar;
-    case L'l':
-      return CheckStyle::kCircle;
-    case L'n':
-      return CheckStyle::kSquare;
-    case L'u':
-      return CheckStyle::kDiamond;
-    default:
-      return std::nullopt;
-  }
-}
-
-// The colour the symbol is painted in: the widget's /DA colour, inherited
-// from its field or the form, and black when none names one.
-CFX_Color CheckSymbolColor(CPDF_Document* doc,
-                           const CPDF_Dictionary* annot_dict) {
-  const CPDF_Dictionary* root = doc->GetRoot();
-  RetainPtr<const CPDF_Dictionary> acroform =
-      root ? root->GetDictFor("AcroForm") : nullptr;
-  std::optional<CFX_Color> color =
-      CPDF_DefaultAppearance(annot_dict, acroform.Get()).GetColor();
-  if (!color.has_value() ||
-      color->nColorType == CFX_Color::Type::kTransparent) {
-    return CFX_Color(CFX_Color::Type::kRGB, 0, 0, 0);
-  }
-  return color.value();
-}
-
-// Where the symbol is drawn: the middle square of `body` (the widget inside
-// its border), shrunk for the filled shapes as PDFium's form filler shrinks
-// them (CPDFSDK_AppStream), so a symbol looks the same whichever drew it.
-CFX_FloatRect CheckSymbolRect(const CFX_FloatRect& body,
-                              CheckStyle style,
-                              bool radio) {
-  CFX_FloatRect rect = body.GetCenterSquare();
-  switch (style) {
-    case CheckStyle::kCheck:
-    case CheckStyle::kCross:
-      break;
-    case CheckStyle::kCircle:
-      rect.ScaleFromCenterPoint(radio ? 1.0f / 2.0f : 2.0f / 3.0f);
-      break;
-    case CheckStyle::kDiamond:
-    case CheckStyle::kSquare:
-    case CheckStyle::kStar:
-      rect.ScaleFromCenterPoint(2.0f / 3.0f);
-      break;
-  }
-  return rect;
-}
-
-void WriteClosedPolygon(fxcrt::ostringstream& stream,
-                        std::initializer_list<CFX_PointF> points) {
-  bool first = true;
-  for (const CFX_PointF& point : points) {
-    WritePoint(stream, point) << (first ? " m\n" : " l\n");
-    first = false;
-  }
-  stream << "h\n";
-}
-
-// The symbol of `style` filling `rect`, painted in `color`: a cross is
-// stroked, every other symbol filled. The shapes are PDFium's form filler's.
-void WriteCheckSymbol(fxcrt::ostringstream& stream,
-                      CheckStyle style,
-                      const CFX_FloatRect& rect,
-                      const CFX_Color& color) {
-  const bool stroked = style == CheckStyle::kCross;
-  stream << "q\n"
-         << GenerateColorAP(color, stroked ? PaintOperation::kStroke
-                                           : PaintOperation::kFill);
-  const float mid_x = (rect.left + rect.right) / 2.0f;
-  const float mid_y = (rect.bottom + rect.top) / 2.0f;
-  switch (style) {
-    case CheckStyle::kCheck:
-      GenerateCheckmarkPath(stream, rect);
-      break;
-    case CheckStyle::kCircle: {
-      // Four quarter arcs, from the left middle clockwise.
-      const float rx = rect.Width() / 2.0f;
-      const float ry = rect.Height() / 2.0f;
-      const CFX_PointF left(rect.left, mid_y);
-      const CFX_PointF top(mid_x, rect.top);
-      const CFX_PointF right(rect.right, mid_y);
-      const CFX_PointF bottom(mid_x, rect.bottom);
-      WritePoint(stream, left) << " m\n";
-      WritePoint(stream, {left.x, left.y + ry * FXSYS_BEZIER}) << " ";
-      WritePoint(stream, {top.x - rx * FXSYS_BEZIER, top.y}) << " ";
-      WritePoint(stream, top) << " c\n";
-      WritePoint(stream, {top.x + rx * FXSYS_BEZIER, top.y}) << " ";
-      WritePoint(stream, {right.x, right.y + ry * FXSYS_BEZIER}) << " ";
-      WritePoint(stream, right) << " c\n";
-      WritePoint(stream, {right.x, right.y - ry * FXSYS_BEZIER}) << " ";
-      WritePoint(stream, {bottom.x + rx * FXSYS_BEZIER, bottom.y}) << " ";
-      WritePoint(stream, bottom) << " c\n";
-      WritePoint(stream, {bottom.x - rx * FXSYS_BEZIER, bottom.y}) << " ";
-      WritePoint(stream, {left.x, left.y - ry * FXSYS_BEZIER}) << " ";
-      WritePoint(stream, left) << " c\n";
-      break;
-    }
-    case CheckStyle::kCross:
-      WritePoint(stream, {rect.left, rect.top}) << " m\n";
-      WritePoint(stream, {rect.right, rect.bottom}) << " l\n";
-      WritePoint(stream, {rect.left, rect.bottom}) << " m\n";
-      WritePoint(stream, {rect.right, rect.top}) << " l\n";
-      break;
-    case CheckStyle::kDiamond:
-      WriteClosedPolygon(stream, {{rect.left, mid_y},
-                                  {mid_x, rect.top},
-                                  {rect.right, mid_y},
-                                  {mid_x, rect.bottom}});
-      break;
-    case CheckStyle::kSquare:
-      WriteClosedPolygon(stream, {{rect.left, rect.top},
-                                  {rect.right, rect.top},
-                                  {rect.right, rect.bottom},
-                                  {rect.left, rect.bottom}});
-      break;
-    case CheckStyle::kStar: {
-      // A five-pointed star, its points joined every second one, filled by
-      // the nonzero rule so the middle is solid.
-      const float radius =
-          (rect.top - rect.bottom) / (1 + cosf(FXSYS_PI / 5.0f));
-      std::array<CFX_PointF, 5> tips;
-      float angle = FXSYS_PI / 10.0f;
-      for (CFX_PointF& tip : tips) {
-        tip = {mid_x + radius * cosf(angle), mid_y + radius * sinf(angle)};
-        angle += FXSYS_PI * 2 / 5.0f;
-      }
-      WriteClosedPolygon(stream, {tips[0], tips[2], tips[4], tips[1], tips[3]});
-      break;
-    }
-  }
-  stream << (stroked ? "S\n" : "f\n") << "Q\n";
-}
-
-uint32_t CreateFormXObjectStream(CPDF_Document* doc,
-                                 fxcrt::ostringstream& content,
-                                 const CFX_FloatRect& bbox,
-                                 const CFX_Matrix& matrix) {
-  auto stream_dict = pdfium::MakeRetain<CPDF_Dictionary>();
-  stream_dict->SetNewFor<CPDF_Number>("FormType", 1);
-  stream_dict->SetNewFor<CPDF_Name>("Type", "XObject");
-  stream_dict->SetNewFor<CPDF_Name>("Subtype", "Form");
-  stream_dict->SetMatrixFor("Matrix", matrix);
-  stream_dict->SetRectFor("BBox", bbox);
-
-  auto stream = doc->NewIndirect<CPDF_Stream>(std::move(stream_dict));
-  stream->SetDataFromStringstreamAndRemoveFilter(&content);
-  return stream->GetObjNum();
-}
-
-std::optional<CPDF_GenerateAP::FormType> GetWidgetFormType(
-    const CPDF_Dictionary* annot_dict) {
-  RetainPtr<const CPDF_Object> field_type_obj =
-      CPDF_FormField::GetFieldAttrForDict(annot_dict, pdfium::form_fields::kFT);
-  if (!field_type_obj) {
-    return std::nullopt;
-  }
-
-  const ByteString field_type = field_type_obj->GetString();
-  if (field_type == pdfium::form_fields::kTx) {
-    return CPDF_GenerateAP::kTextField;
-  }
-
-  if (field_type != pdfium::form_fields::kCh) {
-    return std::nullopt;
-  }
-
-  RetainPtr<const CPDF_Object> field_flags_obj =
-      CPDF_FormField::GetFieldAttrForDict(annot_dict, pdfium::form_fields::kFf);
-  const uint32_t flags = field_flags_obj ? field_flags_obj->GetInteger() : 0;
-  return (flags & pdfium::form_flags::kChoiceCombo) ? CPDF_GenerateAP::kComboBox
-                                                    : CPDF_GenerateAP::kListBox;
-}
-
-bool GenerateFormAPToTarget(APGenerationTarget* target,
-                            CPDF_Dictionary* annot_dict,
-                            CPDF_GenerateAP::FormType type,
-                            const WideString* value_override) {
-  CPDF_Document* const doc = target->doc;
-  const CPDF_Dictionary* root_dict = doc->GetRoot();
-  if (!root_dict) {
-    return false;
-  }
-
-  RetainPtr<const CPDF_Dictionary> form_dict =
-      root_dict->GetDictFor("AcroForm");
-  RetainPtr<CPDF_Dictionary> ephemeral_form_dict;
-  if (!form_dict) {
-    if (target->IsPersistent()) {
-      form_dict = CPDF_InteractiveForm::InitAcroFormDict(doc);
-      CHECK(form_dict);
-    } else {
-      ephemeral_form_dict = GenerateEphemeralDefaultAcroFormDict();
-      form_dict = ephemeral_form_dict;
-    }
-  }
-
-  std::optional<DefaultAppearanceInfo> default_appearance_info =
-      GetDefaultAppearanceInfo(annot_dict, form_dict.Get());
-  if (!default_appearance_info.has_value()) {
-    return false;
-  }
-
-  // A missing or font-less /DR must not veto appearance generation — the
-  // widget's own /DA names the font it wants, and DR-less AcroForms are
-  // common in flattened government forms (the IRS f1040 class). Persistent
-  // targets seed /DR/Font with a fallback the same way redaction overlays
-  // do; ephemeral targets fall back without mutating the document.
-  RetainPtr<const CPDF_Dictionary> dr_dict = form_dict->GetDictFor("DR");
-  RetainPtr<const CPDF_Dictionary> dr_font_dict =
-      dr_dict ? dr_dict->GetDictFor("Font") : nullptr;
-  if (!ValidateFontResourceDict(dr_font_dict.Get())) {
-    dr_font_dict.Reset();
-  }
-
-  const ByteString& font_name = default_appearance_info.value().font_name;
-  RetainPtr<CPDF_Dictionary> font_dict;
-  DaFontResolution da_font;
-  if (target->IsPersistent()) {
-    RetainPtr<CPDF_Dictionary> mutable_dr_font_dict;
-    if (dr_font_dict) {
-      mutable_dr_font_dict =
-          pdfium::WrapRetain(const_cast<CPDF_Dictionary*>(dr_font_dict.Get()));
-    } else {
-      RetainPtr<CPDF_Dictionary> mutable_root = doc->GetMutableRoot();
-      RetainPtr<CPDF_Dictionary> mutable_form_dict =
-          mutable_root ? mutable_root->GetMutableDictFor("AcroForm") : nullptr;
-      if (!mutable_form_dict) {
-        return false;
-      }
-      mutable_dr_font_dict =
-          mutable_form_dict->GetOrCreateDictFor("DR")->GetOrCreateDictFor(
-              "Font");
-      dr_dict = mutable_form_dict->GetDictFor("DR");
-    }
-    da_font = ResolveDaFontForPersistentTarget(doc, mutable_dr_font_dict.Get(),
-                                               font_name);
-  } else {
-    da_font =
-        ResolveDaFontForEphemeralTarget(doc, dr_font_dict.Get(), font_name);
-  }
-  font_dict = da_font.font_dict;
-  const bool use_registered_font_map =
-      target->IsPersistent() &&
-      (CFX_FontRegistry::HasFallbackFonts() ||
-       da_font.registered_font_id != CFX_FontRegistry::kInvalidFontId);
-  if (!font_dict && !use_registered_font_map) {
-    // Ephemeral render of a widget whose /DA names a registered font that has
-    // no /DR entry yet: draw with the fallback rather than nothing.
-    font_dict = GenerateDirectFallbackFontDict();
-  }
-  auto* doc_page_data = CPDF_DocPageData::FromDocument(doc);
-  RetainPtr<CPDF_Font> default_font =
-      font_dict ? doc_page_data->GetFont(font_dict) : nullptr;
-  if (!default_font && !use_registered_font_map) {
-    return false;
-  }
-
-  const AnnotationDimensionsAndColor dims =
-      GetAnnotationDimensionsAndColor(annot_dict);
-
-  RetainPtr<CPDF_Dictionary> resources_dict;
-  RetainPtr<CPDF_Stream> normal_stream;
-  if (target->IsPersistent()) {
-    RetainPtr<CPDF_Dictionary> ap_dict =
-        annot_dict->GetOrCreateDictFor(pdfium::annotation::kAP);
-    normal_stream = ap_dict->GetMutableStreamFor("N");
-    if (normal_stream) {
-      RetainPtr<CPDF_Dictionary> stream_dict = normal_stream->GetMutableDict();
-      const bool cloned =
-          CloneResourcesDictIfMissingFromStream(stream_dict, dr_dict.Get());
-      if (!cloned) {
-        if (!ValidateOrCreateFontResources(doc, stream_dict, font_dict,
-                                           font_name)) {
-          return false;
-        }
-      }
-      resources_dict = stream_dict->GetMutableDictFor("Resources");
-    } else {
-      normal_stream =
-          doc->NewIndirect<CPDF_Stream>(pdfium::MakeRetain<CPDF_Dictionary>());
-      ap_dict->SetNewFor<CPDF_Reference>("N", doc, normal_stream->GetObjNum());
-    }
-  } else {
-    auto gs_dict = GenerateExtGStateDict(*annot_dict, "Normal");
-    auto resource_font_dict =
-        GenerateResourceFontDict(doc, font_name, font_dict.Get());
-    resources_dict = GenerateResourcesDict(doc, std::move(gs_dict),
-                                           std::move(resource_font_dict));
-  }
-
-  auto generate_form_stream = [&](CPVT_VariableText::Provider& provider,
-                                  fxcrt::ostringstream& app_stream) {
-    switch (type) {
-      case CPDF_GenerateAP::kTextField:
-        GenerateTextFieldFormAP(app_stream, annot_dict, dims.bbox,
-                                default_appearance_info.value(), provider,
-                                value_override);
-        break;
-      case CPDF_GenerateAP::kComboBox:
-        GenerateComboBoxFormAP(app_stream, annot_dict, dims.bbox,
-                               default_appearance_info.value(), provider,
-                               value_override);
-        break;
-      case CPDF_GenerateAP::kListBox:
-        GenerateListBoxFormAP(app_stream, annot_dict, dims.bbox,
-                              default_appearance_info.value(), provider);
-        break;
-      case CPDF_GenerateAP::kPushButton:
-        GeneratePushButtonFormAP(app_stream, annot_dict, dims.bbox,
-                                 default_appearance_info.value(), provider);
-        break;
-    }
-  };
-
-  if (use_registered_font_map) {
-    // EmbedPDF: form widgets need the same registered fallback/subset path as
-    // FreeText when their value/options contain glyphs outside the DA font.
-    // Keep the old CPVT_FontMap path unless a registered font is actually
-    // involved so existing form AP output remains stable by default.
-    CPDF_AnnotFontMap map(
-        doc, std::move(default_font), font_name,
-        /*allow_registered_fallbacks=*/true, da_font.registered_font_id,
-        /*install_dr_entry=*/true, CPDF_AnnotFontMap::Owner::kWidget);
-    if (!map.HasDefaultFont()) {
-      return false;
-    }
-    CPVT_VariableText::Provider provider(&map);
-
-    fxcrt::ostringstream app_stream;
-    generate_form_stream(provider, app_stream);
-
-    normal_stream->SetDataFromStringstreamAndRemoveFilter(&app_stream);
-    RetainPtr<CPDF_Dictionary> stream_dict = normal_stream->GetMutableDict();
-    stream_dict->SetMatrixFor("Matrix", dims.matrix);
-    stream_dict->SetRectFor("BBox", dims.bbox);
-    RetainPtr<CPDF_Dictionary> stream_resources =
-        stream_dict->GetOrCreateDictFor("Resources");
-    RetainPtr<CPDF_Dictionary> resource_font_dict =
-        map.CreateFontResourceDict();
-    if (!resource_font_dict) {
-      return false;  // registered /DA font without a resource: no appearance
-    }
-    stream_resources->SetFor("Font", std::move(resource_font_dict));
-    return true;
-  }
-
-  RetainPtr<CPDF_Dictionary> ephemeral_resources_dict = resources_dict;
-  CPVT_FontMap map(doc, std::move(resources_dict), std::move(default_font),
-                   font_name);
-  CPVT_VariableText::Provider provider(&map);
-
-  fxcrt::ostringstream app_stream;
-  generate_form_stream(provider, app_stream);
-
-  if (!target->IsPersistent()) {
-    return GenerateAPDict(
-        target, annot_dict, &app_stream, std::move(ephemeral_resources_dict),
-        /*is_text_markup_annotation=*/false, dims.matrix, dims.bbox);
-  }
-
-  normal_stream->SetDataFromStringstreamAndRemoveFilter(&app_stream);
-  RetainPtr<CPDF_Dictionary> stream_dict = normal_stream->GetMutableDict();
-  stream_dict->SetMatrixFor("Matrix", dims.matrix);
-  stream_dict->SetRectFor("BBox", dims.bbox);
-
-  const bool cloned =
-      CloneResourcesDictIfMissingFromStream(stream_dict, dr_dict);
-  if (cloned) {
-    return true;
-  }
-
-  ValidateOrCreateFontResources(doc, stream_dict, font_dict, font_name);
+  GenerateAndSetAPDict(doc, annot_dict, &app_stream, std::move(resources_dict),
+                       true /*IsTextMarkupAnnotation*/);
   return true;
 }
 
@@ -4905,267 +1434,137 @@ bool GenerateFormAPToTarget(APGenerationTarget* target,
 void CPDF_GenerateAP::GenerateFormAP(CPDF_Document* doc,
                                      CPDF_Dictionary* annot_dict,
                                      FormType type) {
-  APGenerationTarget target{doc, annot_dict};
-  GenerateFormAPToTarget(&target, annot_dict, type, nullptr);
-}
-
-// static
-bool CPDF_GenerateAP::GenerateFormAPWithValueOverride(
-    CPDF_Document* doc,
-    CPDF_Dictionary* annot_dict,
-    FormType type,
-    const WideString& value_override) {
-  APGenerationTarget target{doc, annot_dict};
-  return GenerateFormAPToTarget(&target, annot_dict, type, &value_override);
-}
-
-// static
-std::optional<CPDF_GenerateAP::GeneratedAP>
-CPDF_GenerateAP::GenerateEphemeralFormAP(CPDF_Document* doc,
-                                         const CPDF_Dictionary* annot_dict,
-                                         FormType type) {
-  APGenerationTarget target{doc, nullptr};
-  if (!GenerateFormAPToTarget(&target, const_cast<CPDF_Dictionary*>(annot_dict),
-                              type, nullptr)) {
-    return std::nullopt;
+  RetainPtr<CPDF_Dictionary> root_dict = doc->GetMutableRoot();
+  if (!root_dict) {
+    return;
   }
-  return GeneratedAP{std::move(target.ephemeral_fonts),
-                     std::move(target.normal_stream)};
-}
 
-// static
-void CPDF_GenerateAP::GenerateCheckboxFormAP(CPDF_Document* doc,
-                                             CPDF_Dictionary* annot_dict) {
-  const AppearanceCharacteristics mk =
-      GetAppearanceCharacteristics(annot_dict->GetDictFor("MK"));
-  const BorderStyleInfo bs = GetBorderStyleInfo(annot_dict->GetDictFor("BS"));
-  const AnnotationDimensionsAndColor dims =
+  RetainPtr<CPDF_Dictionary> form_dict =
+      root_dict->GetMutableDictFor("AcroForm");
+  if (!form_dict) {
+    return;
+  }
+
+  std::optional<DefaultAppearanceInfo> default_appearance_info =
+      GetDefaultAppearanceInfo(annot_dict, form_dict);
+  if (!default_appearance_info.has_value()) {
+    return;
+  }
+
+  RetainPtr<CPDF_Dictionary> dr_dict = form_dict->GetMutableDictFor("DR");
+  if (!dr_dict) {
+    return;
+  }
+
+  RetainPtr<CPDF_Dictionary> dr_font_dict = dr_dict->GetMutableDictFor("Font");
+  if (!ValidateFontResourceDict(dr_font_dict.Get())) {
+    return;
+  }
+
+  const ByteString& font_name = default_appearance_info.value().font_name;
+  RetainPtr<CPDF_Dictionary> font_dict =
+      GetFontFromDrFontDictOrGenerateFallback(doc, dr_font_dict, font_name);
+  auto* doc_page_data = CPDF_DocPageData::FromDocument(doc);
+  RetainPtr<CPDF_Font> default_font = doc_page_data->GetFont(font_dict);
+  if (!default_font) {
+    return;
+  }
+
+  const AnnotationDimensionsAndColor annot_dimensions_and_color =
       GetAnnotationDimensionsAndColor(annot_dict);
+  fxcrt::ostringstream app_stream;
+  const ByteString background = GenerateColorAP(
+      annot_dimensions_and_color.background_color, PaintOperation::kFill);
+  if (background.GetLength() > 0) {
+    app_stream << "q\n" << background;
+    WriteRect(app_stream, annot_dimensions_and_color.bbox) << " re f\nQ\n";
+  }
 
-  CFX_FloatRect body_rect = dims.bbox;
-  body_rect.Deflate(bs.width, bs.width);
-  const CheckStyle style =
-      CheckStyleFromCaption(mk.caption).value_or(CheckStyle::kCheck);
+  const BorderStyleInfo border_style_info =
+      GetBorderStyleInfo(annot_dict->GetDictFor("BS"));
+  const ByteString border_stream =
+      GenerateBorderAP(annot_dimensions_and_color.bbox, border_style_info,
+                       annot_dimensions_and_color.border_color);
+  if (border_stream.GetLength() > 0) {
+    app_stream << "q\n" << border_stream << "Q\n";
+  }
 
-  // Off state: box only (background fill + border stroke).
-  fxcrt::ostringstream off_content;
-  BuildCheckboxBoxStream(off_content, mk, bs, dims.bbox);
-
-  // On state: the same box and the symbol /MK /CA names, in the /DA colour.
-  fxcrt::ostringstream yes_content;
-  BuildCheckboxBoxStream(yes_content, mk, bs, dims.bbox);
-  WriteCheckSymbol(yes_content, style,
-                   CheckSymbolRect(body_rect, style, /*radio=*/false),
-                   CheckSymbolColor(doc, annot_dict));
-
-  const uint32_t off_obj_num =
-      CreateFormXObjectStream(doc, off_content, dims.bbox, dims.matrix);
-  const uint32_t yes_obj_num =
-      CreateFormXObjectStream(doc, yes_content, dims.bbox, dims.matrix);
+  CFX_FloatRect body_rect = annot_dimensions_and_color.bbox;
+  body_rect.Deflate(border_style_info.width, border_style_info.width);
 
   RetainPtr<CPDF_Dictionary> ap_dict =
       annot_dict->GetOrCreateDictFor(pdfium::annotation::kAP);
-
-  ByteString on_state;
-  RetainPtr<const CPDF_Dictionary> old_n = ap_dict->GetDictFor("N");
-  if (old_n) {
-    CPDF_DictionaryLocker locker(old_n);
-    for (const auto& it : locker) {
-      if (it.first != "Off") {
-        on_state = it.first;
-        break;
+  RetainPtr<CPDF_Stream> normal_stream = ap_dict->GetMutableStreamFor("N");
+  RetainPtr<CPDF_Dictionary> resources_dict;
+  if (normal_stream) {
+    RetainPtr<CPDF_Dictionary> stream_dict = normal_stream->GetMutableDict();
+    const bool cloned =
+        CloneResourcesDictIfMissingFromStream(stream_dict, dr_dict);
+    if (!cloned) {
+      if (!ValidateOrCreateFontResources(doc, stream_dict, font_dict,
+                                         font_name)) {
+        return;
       }
     }
-  }
-  if (on_state.IsEmpty()) {
-    on_state = "Yes";
-  }
-
-  RetainPtr<CPDF_Dictionary> n_dict = ap_dict->SetNewFor<CPDF_Dictionary>("N");
-  n_dict->SetNewFor<CPDF_Reference>("Off", doc, off_obj_num);
-  n_dict->SetNewFor<CPDF_Reference>(on_state, doc, yes_obj_num);
-
-  if (!annot_dict->KeyExist("AS")) {
-    annot_dict->SetNewFor<CPDF_Name>("AS", "Off");
-  }
-}
-
-void BuildRadioCircleStream(fxcrt::ostringstream& stream,
-                            const AppearanceCharacteristics& mk,
-                            const BorderStyleInfo& bs,
-                            const CFX_FloatRect& bbox) {
-  const bool has_bg =
-      mk.background_color.nColorType != CFX_Color::Type::kTransparent;
-  const bool has_bc =
-      mk.border_color.nColorType != CFX_Color::Type::kTransparent;
-  const float bw = bs.width;
-  const float half_bw = bw / 2.0f;
-
-  const float cx = (bbox.left + bbox.right) / 2.0f;
-  const float cy = (bbox.bottom + bbox.top) / 2.0f;
-  const float rx = (bbox.right - bbox.left) / 2.0f;
-  const float ry = (bbox.top - bbox.bottom) / 2.0f;
-
-  constexpr float kKappa = 0.5523f;
-
-  auto WriteEllipse = [&](fxcrt::ostringstream& s, float erx, float ery) {
-    const float dx = kKappa * erx;
-    const float dy = kKappa * ery;
-    WriteFloat(s, cx) << " ";
-    WriteFloat(s, cy + ery) << " m\n";
-    WriteFloat(s, cx + dx) << " ";
-    WriteFloat(s, cy + ery) << " ";
-    WriteFloat(s, cx + erx) << " ";
-    WriteFloat(s, cy + dy) << " ";
-    WriteFloat(s, cx + erx) << " ";
-    WriteFloat(s, cy) << " c\n";
-    WriteFloat(s, cx + erx) << " ";
-    WriteFloat(s, cy - dy) << " ";
-    WriteFloat(s, cx + dx) << " ";
-    WriteFloat(s, cy - ery) << " ";
-    WriteFloat(s, cx) << " ";
-    WriteFloat(s, cy - ery) << " c\n";
-    WriteFloat(s, cx - dx) << " ";
-    WriteFloat(s, cy - ery) << " ";
-    WriteFloat(s, cx - erx) << " ";
-    WriteFloat(s, cy - dy) << " ";
-    WriteFloat(s, cx - erx) << " ";
-    WriteFloat(s, cy) << " c\n";
-    WriteFloat(s, cx - erx) << " ";
-    WriteFloat(s, cy + dy) << " ";
-    WriteFloat(s, cx - dx) << " ";
-    WriteFloat(s, cy + ery) << " ";
-    WriteFloat(s, cx) << " ";
-    WriteFloat(s, cy + ery) << " c\n";
-    s << "h\n";
-  };
-
-  if (has_bg) {
-    stream << GenerateColorAP(mk.background_color, PaintOperation::kFill);
-    WriteEllipse(stream, rx - half_bw, ry - half_bw);
-    stream << "f*\n";
-  }
-
-  if (has_bc && bw > 0) {
-    stream << GenerateColorAP(mk.border_color, PaintOperation::kStroke);
-    WriteFloat(stream, bw) << " w\n";
-    WriteEllipse(stream, rx - half_bw, ry - half_bw);
-    stream << "S\n";
-  }
-}
-
-// static
-void CPDF_GenerateAP::GenerateRadioButtonFormAP(CPDF_Document* doc,
-                                                CPDF_Dictionary* annot_dict) {
-  const AppearanceCharacteristics mk =
-      GetAppearanceCharacteristics(annot_dict->GetDictFor("MK"));
-  const BorderStyleInfo bs = GetBorderStyleInfo(annot_dict->GetDictFor("BS"));
-  const AnnotationDimensionsAndColor dims =
-      GetAnnotationDimensionsAndColor(annot_dict);
-
-  const float cx = (dims.bbox.left + dims.bbox.right) / 2.0f;
-  const float cy = (dims.bbox.bottom + dims.bbox.top) / 2.0f;
-  const float rx = (dims.bbox.right - dims.bbox.left) / 2.0f;
-  const float ry = (dims.bbox.top - dims.bbox.bottom) / 2.0f;
-  const float inner_rx = (rx - bs.width) * 0.5f;
-  const float inner_ry = (ry - bs.width) * 0.5f;
-
-  constexpr float kKappa = 0.5523f;
-
-  auto WriteEllipse = [&](fxcrt::ostringstream& s, float erx, float ery) {
-    const float dx = kKappa * erx;
-    const float dy = kKappa * ery;
-    WriteFloat(s, cx) << " ";
-    WriteFloat(s, cy + ery) << " m\n";
-    WriteFloat(s, cx + dx) << " ";
-    WriteFloat(s, cy + ery) << " ";
-    WriteFloat(s, cx + erx) << " ";
-    WriteFloat(s, cy + dy) << " ";
-    WriteFloat(s, cx + erx) << " ";
-    WriteFloat(s, cy) << " c\n";
-    WriteFloat(s, cx + erx) << " ";
-    WriteFloat(s, cy - dy) << " ";
-    WriteFloat(s, cx + dx) << " ";
-    WriteFloat(s, cy - ery) << " ";
-    WriteFloat(s, cx) << " ";
-    WriteFloat(s, cy - ery) << " c\n";
-    WriteFloat(s, cx - dx) << " ";
-    WriteFloat(s, cy - ery) << " ";
-    WriteFloat(s, cx - erx) << " ";
-    WriteFloat(s, cy - dy) << " ";
-    WriteFloat(s, cx - erx) << " ";
-    WriteFloat(s, cy) << " c\n";
-    WriteFloat(s, cx - erx) << " ";
-    WriteFloat(s, cy + dy) << " ";
-    WriteFloat(s, cx - dx) << " ";
-    WriteFloat(s, cy + ery) << " ";
-    WriteFloat(s, cx) << " ";
-    WriteFloat(s, cy + ery) << " c\n";
-    s << "h\n";
-  };
-
-  const CheckStyle style =
-      CheckStyleFromCaption(mk.caption).value_or(CheckStyle::kCircle);
-  const CFX_Color symbol_color = CheckSymbolColor(doc, annot_dict);
-
-  fxcrt::ostringstream off_content;
-  fxcrt::ostringstream yes_content;
-  if (style == CheckStyle::kCircle) {
-    // Off state: circle only (background fill + border stroke).
-    BuildRadioCircleStream(off_content, mk, bs, dims.bbox);
-
-    // On state: the same circle and a filled dot, in the /DA colour.
-    BuildRadioCircleStream(yes_content, mk, bs, dims.bbox);
-    yes_content << "q\n"
-                << GenerateColorAP(symbol_color, PaintOperation::kFill);
-    WriteEllipse(yes_content, inner_rx, inner_ry);
-    yes_content << "f*\nQ\n";
+    resources_dict = stream_dict->GetMutableDictFor("Resources");
   } else {
-    // Any other symbol sits in a box, as PDFium's form filler draws it.
-    CFX_FloatRect body_rect = dims.bbox;
-    body_rect.Deflate(bs.width, bs.width);
-    BuildCheckboxBoxStream(off_content, mk, bs, dims.bbox);
-    BuildCheckboxBoxStream(yes_content, mk, bs, dims.bbox);
-    WriteCheckSymbol(yes_content, style,
-                     CheckSymbolRect(body_rect, style, /*radio=*/true),
-                     symbol_color);
+    normal_stream =
+        doc->NewIndirect<CPDF_Stream>(pdfium::MakeRetain<CPDF_Dictionary>());
+    ap_dict->SetNewFor<CPDF_Reference>("N", doc, normal_stream->GetObjNum());
   }
 
-  const uint32_t off_obj_num =
-      CreateFormXObjectStream(doc, off_content, dims.bbox, dims.matrix);
-  const uint32_t yes_obj_num =
-      CreateFormXObjectStream(doc, yes_content, dims.bbox, dims.matrix);
-
-  RetainPtr<CPDF_Dictionary> ap_dict =
-      annot_dict->GetOrCreateDictFor(pdfium::annotation::kAP);
-
-  ByteString on_state;
-  RetainPtr<const CPDF_Dictionary> old_n = ap_dict->GetDictFor("N");
-  if (old_n) {
-    CPDF_DictionaryLocker locker(old_n);
-    for (const auto& it : locker) {
-      if (it.first != "Off") {
-        on_state = it.first;
-        break;
+  const float font_size = default_appearance_info.value().font_size;
+  const CFX_Color& text_color = default_appearance_info.value().text_color;
+  CPVT_FontMap map(doc, std::move(resources_dict), std::move(default_font),
+                   font_name);
+  CPVT_VariableText::Provider provider(&map);
+  switch (type) {
+    case CPDF_GenerateAP::kTextField: {
+      CPVT_VariableText vt(&provider);
+      ByteString body =
+          GenerateTextFieldAP(annot_dict, body_rect, font_size, vt);
+      if (body.GetLength() > 0) {
+        const CFX_FloatRect content_rect = vt.GetContentRect();
+        app_stream << "/Tx BMC\n" << "q\n";
+        if (content_rect.Width() > body_rect.Width() ||
+            content_rect.Height() > body_rect.Height()) {
+          WriteRect(app_stream, body_rect) << " re\nW\nn\n";
+        }
+        app_stream << "BT\n"
+                   << GenerateColorAP(text_color, PaintOperation::kFill) << body
+                   << "ET\n"
+                   << "Q\nEMC\n";
       }
+      break;
     }
-  }
-  if (on_state.IsEmpty()) {
-    WideString nm = annot_dict->GetUnicodeTextFor("NM");
-    if (!nm.IsEmpty()) {
-      on_state = nm.ToUTF8();
-    } else {
-      on_state = "Yes";
+    case CPDF_GenerateAP::kComboBox: {
+      app_stream << GenerateComboBoxAP(annot_dict, body_rect, text_color,
+                                       font_size, provider);
+      break;
+    }
+    case CPDF_GenerateAP::kListBox: {
+      const ByteString body = GenerateListBoxAP(
+          annot_dict, body_rect, text_color, font_size, provider);
+      if (body.GetLength() > 0) {
+        app_stream << "/Tx BMC\nq\n";
+        WriteRect(app_stream, body_rect) << " re\nW\nn\n" << body << "Q\nEMC\n";
+      }
+      break;
     }
   }
 
-  RetainPtr<CPDF_Dictionary> n_dict = ap_dict->SetNewFor<CPDF_Dictionary>("N");
-  n_dict->SetNewFor<CPDF_Reference>("Off", doc, off_obj_num);
-  n_dict->SetNewFor<CPDF_Reference>(on_state, doc, yes_obj_num);
+  normal_stream->SetDataFromStringstreamAndRemoveFilter(&app_stream);
+  RetainPtr<CPDF_Dictionary> stream_dict = normal_stream->GetMutableDict();
+  stream_dict->SetMatrixFor("Matrix", annot_dimensions_and_color.matrix);
+  stream_dict->SetRectFor("BBox", annot_dimensions_and_color.bbox);
 
-  if (!annot_dict->KeyExist("AS")) {
-    annot_dict->SetNewFor<CPDF_Name>("AS", "Off");
+  const bool cloned =
+      CloneResourcesDictIfMissingFromStream(stream_dict, dr_dict);
+  if (cloned) {
+    return;
   }
+
+  ValidateOrCreateFontResources(doc, stream_dict, font_dict, font_name);
 }
 
 // static
@@ -5179,198 +1578,34 @@ void CPDF_GenerateAP::GenerateEmptyAP(CPDF_Document* doc,
                        false);
 }
 
-bool GenerateCaretAP(APGenerationTarget* target,
-                     CPDF_Dictionary* annot_dict,
-                     const ByteString& blend_name) {
-  CPDF_Document* doc = target->doc;
-  fxcrt::ostringstream app_stream;
-  app_stream << "/" << kGSDictName << " gs ";
-
-  app_stream << GetColorStringWithDefault(
-      annot_dict->GetArrayFor(pdfium::annotation::kC).Get(),
-      CFX_Color(CFX_Color::Type::kRGB, 0, 0, 0), PaintOperation::kStroke);
-  app_stream << GetColorStringWithDefault(
-      annot_dict->GetArrayFor(pdfium::annotation::kC).Get(),
-      CFX_Color(CFX_Color::Type::kRGB, 0, 0, 0), PaintOperation::kFill);
-
-  // A caret anchored to rotated text carries the box-family /EMBD_Metadata
-  // rotation pair: draw in the UNROTATED box and let the AP form matrix turn
-  // the symbol onto its text's baseline (the shape/free-text machinery).
-  const ShapeRotationInfo rot_info = GetShapeRotationInfo(annot_dict);
-  CFX_FloatRect rect = rot_info.bbox;
-  rect.Normalize();
-
-  const float draw_left = rect.left;
-  const float draw_bottom = rect.bottom;
-  const float draw_right = rect.right;
-  const float draw_top = rect.top;
-
-  float width = draw_right - draw_left;
-  float height = draw_top - draw_bottom;
-  float mid_x = (draw_left + draw_right) / 2.0f;
-
-  app_stream << "0.5 w\n";
-
-  // Left bezier: from (draw_left, draw_bottom) to (mid_x, draw_top)
-  app_stream << draw_left << " " << draw_bottom << " m\n";
-  app_stream << (draw_left + width * 0.27f) << " " << draw_bottom << " "
-             << mid_x << " " << (draw_bottom + height * 0.44f) << " " << mid_x
-             << " " << draw_top << " c\n";
-
-  // Right bezier: from (mid_x, draw_top) to (draw_right, draw_bottom)
-  app_stream << mid_x << " " << (draw_bottom + height * 0.44f) << " "
-             << (draw_right - width * 0.27f) << " " << draw_bottom << " "
-             << draw_right << " " << draw_bottom << " c\n";
-
-  app_stream << "B*\n";
-
-  auto gs_dict = GenerateExtGStateDict(*annot_dict, blend_name);
-  auto resources_dict = GenerateResourcesDict(doc, std::move(gs_dict), nullptr);
-  return GenerateAndSetBoxAPDict(target, annot_dict, &app_stream,
-                                 std::move(resources_dict), rot_info.matrix,
-                                 rot_info.bbox);
-}
-
-bool GenerateAnnotAPToTarget(APGenerationTarget* target,
-                             CPDF_Dictionary* annot_dict,
-                             CPDF_Annot::Subtype subtype,
-                             BlendMode blend_mode) {
-  ByteString blend_name = BlendModeToPDFName(blend_mode);
-  switch (subtype) {
-    case CPDF_Annot::Subtype::CIRCLE:
-      return GenerateCircleAP(target, annot_dict, blend_name);
-    case CPDF_Annot::Subtype::HIGHLIGHT:
-      return GenerateHighlightAP(target, annot_dict, blend_name);
-    case CPDF_Annot::Subtype::INK:
-      return GenerateInkAP(target, annot_dict, blend_name);
-    case CPDF_Annot::Subtype::LINE:
-      return GenerateLineAP(target, annot_dict, blend_name);
-    case CPDF_Annot::Subtype::POLYGON:
-      return GeneratePolygonAP(target, annot_dict, blend_name);
-    case CPDF_Annot::Subtype::POLYLINE:
-      return GeneratePolyLineAP(target, annot_dict, blend_name);
-    case CPDF_Annot::Subtype::SQUARE:
-      return GenerateSquareAP(target, annot_dict, blend_name);
-    case CPDF_Annot::Subtype::SQUIGGLY:
-      return GenerateSquigglyAP(target, annot_dict, blend_name);
-    case CPDF_Annot::Subtype::STRIKEOUT:
-      return GenerateStrikeOutAP(target, annot_dict, blend_name);
-    case CPDF_Annot::Subtype::UNDERLINE:
-      return GenerateUnderlineAP(target, annot_dict, blend_name);
-    case CPDF_Annot::Subtype::TEXT:
-      return GenerateTextAP(target, annot_dict, blend_name);
-    case CPDF_Annot::Subtype::FILEATTACHMENT:
-      return GenerateFileAttachmentAP(target, annot_dict, blend_name);
-    case CPDF_Annot::Subtype::LINK:
-      return GenerateLinkAP(target, annot_dict, blend_name);
-    case CPDF_Annot::Subtype::CARET:
-      return GenerateCaretAP(target, annot_dict, blend_name);
-    case CPDF_Annot::Subtype::REDACT:
-      return GenerateRedactAP(target, annot_dict, blend_name);
-    default:
-      return false;
-  }
-}
-
 // static
 bool CPDF_GenerateAP::GenerateAnnotAP(CPDF_Document* doc,
                                       CPDF_Dictionary* annot_dict,
                                       CPDF_Annot::Subtype subtype) {
-  return GenerateAnnotAP(doc, annot_dict, subtype,
-                         DefaultBlendModeFor(subtype));
-}
-
-// static
-bool CPDF_GenerateAP::GenerateAnnotAP(CPDF_Document* doc,
-                                      CPDF_Dictionary* annot_dict,
-                                      CPDF_Annot::Subtype subtype,
-                                      BlendMode blend_mode) {
-  APGenerationTarget target{doc, annot_dict};
-  if (GenerateAnnotAPToTarget(&target, annot_dict, subtype, blend_mode)) {
-    return true;
-  }
-
-  ByteString blend_name = BlendModeToPDFName(blend_mode);
   switch (subtype) {
+    case CPDF_Annot::Subtype::CIRCLE:
+      return GenerateCircleAP(doc, annot_dict);
     case CPDF_Annot::Subtype::FREETEXT:
-      return GenerateFreeTextAP(&target, annot_dict, blend_name);
+      return GenerateFreeTextAP(doc, annot_dict);
+    case CPDF_Annot::Subtype::HIGHLIGHT:
+      return GenerateHighlightAP(doc, annot_dict);
+    case CPDF_Annot::Subtype::INK:
+      return GenerateInkAP(doc, annot_dict);
     case CPDF_Annot::Subtype::POPUP:
-      return GeneratePopupAP(doc, annot_dict, blend_name);
+      return GeneratePopupAP(doc, annot_dict);
+    case CPDF_Annot::Subtype::SQUARE:
+      return GenerateSquareAP(doc, annot_dict);
+    case CPDF_Annot::Subtype::SQUIGGLY:
+      return GenerateSquigglyAP(doc, annot_dict);
+    case CPDF_Annot::Subtype::STRIKEOUT:
+      return GenerateStrikeOutAP(doc, annot_dict);
+    case CPDF_Annot::Subtype::TEXT:
+      return GenerateTextAP(doc, annot_dict);
+    case CPDF_Annot::Subtype::UNDERLINE:
+      return GenerateUnderlineAP(doc, annot_dict);
     default:
       return false;
   }
-}
-
-// static
-std::optional<CPDF_GenerateAP::GeneratedAP>
-CPDF_GenerateAP::GenerateEphemeralAnnotAP(CPDF_Document* doc,
-                                          const CPDF_Dictionary* annot_dict,
-                                          CPDF_Annot::Subtype subtype) {
-  return GenerateEphemeralAnnotAP(doc, annot_dict, subtype,
-                                  DefaultBlendModeFor(subtype));
-}
-
-// static
-std::optional<CPDF_GenerateAP::GeneratedAP>
-CPDF_GenerateAP::GenerateEphemeralAnnotAP(CPDF_Document* doc,
-                                          const CPDF_Dictionary* annot_dict,
-                                          CPDF_Annot::Subtype subtype,
-                                          BlendMode blend_mode) {
-  if (!SupportsEphemeralAnnotAP(subtype)) {
-    return std::nullopt;
-  }
-
-  if (subtype == CPDF_Annot::Subtype::WIDGET) {
-    std::optional<FormType> type = GetWidgetFormType(annot_dict);
-    return type.has_value()
-               ? GenerateEphemeralFormAP(doc, annot_dict, type.value())
-               : std::nullopt;
-  }
-
-  APGenerationTarget target{doc, nullptr};
-  CPDF_Dictionary* mutable_annot_dict =
-      const_cast<CPDF_Dictionary*>(annot_dict);
-  if (subtype == CPDF_Annot::Subtype::FREETEXT) {
-    if (!GenerateFreeTextAP(&target, mutable_annot_dict,
-                            BlendModeToPDFName(blend_mode))) {
-      return std::nullopt;
-    }
-    return GeneratedAP{std::move(target.ephemeral_fonts),
-                       std::move(target.normal_stream)};
-  }
-
-  if (!GenerateAnnotAPToTarget(&target, mutable_annot_dict, subtype,
-                               blend_mode)) {
-    return std::nullopt;
-  }
-
-  return GeneratedAP{std::move(target.ephemeral_fonts),
-                     std::move(target.normal_stream)};
-}
-
-// static
-bool CPDF_GenerateAP::CanGenerateEphemeralAnnotAP(CPDF_Annot::Subtype subtype) {
-  return SupportsEphemeralAnnotAP(subtype);
-}
-
-// static
-RetainPtr<CPDF_Stream> CPDF_GenerateAP::BuildRedactOverlayForm(
-    CPDF_Document* doc,
-    const CPDF_Dictionary* annot_dict) {
-  if (!doc || !annot_dict) {
-    return nullptr;
-  }
-  fxcrt::ostringstream ops;
-  RetainPtr<CPDF_Dictionary> font_resources;
-  if (!AppendRedactOverlayOps(doc, annot_dict, ops, &font_resources)) {
-    return nullptr;
-  }
-  RetainPtr<CPDF_Dictionary> resources;
-  if (font_resources) {
-    resources = GenerateResourcesDict(doc, nullptr, std::move(font_resources));
-  }
-  return MakeRedactFormStream(doc, GetRedactOverlayBBox(annot_dict),
-                              std::move(resources), &ops);
 }
 
 // static
@@ -5396,13 +1631,6 @@ bool CPDF_GenerateAP::GenerateDefaultAppearanceWithColor(
     return false;
   }
 
-  RetainPtr<CPDF_Dictionary> dr_font_dict =
-      acroform_dict->GetOrCreateDictFor("DR")->GetOrCreateDictFor("Font");
-  if (!GetFontFromDrFontDictOrGenerateFallback(
-          doc, dr_font_dict.Get(), maybe_font_name_and_size.value().name)) {
-    return false;
-  }
-
   ByteString new_default_appearance_font_name_and_size =
       StringFromFontNameAndSize(maybe_font_name_and_size.value().name,
                                 maybe_font_name_and_size.value().size);
@@ -5413,159 +1641,10 @@ bool CPDF_GenerateAP::GenerateDefaultAppearanceWithColor(
   ByteString new_default_appearance_color =
       GenerateColorAP(color, PaintOperation::kFill);
   CHECK(!new_default_appearance_color.IsEmpty());
-  // EmbedPDF: Strip trailing newlines and write color before font.
-  // GenerateColorAP/StringFromFontNameAndSize append '\n' for content streams,
-  // but the /DA string value must be a compact single-line format for Adobe
-  // Acrobat compatibility. Adobe's FreeText callout AP regeneration fails to
-  // parse the color when the DA contains embedded newlines, causing the
-  // border/line color to fall back to black. Color-first order also matches
-  // the format Adobe produce.
-  new_default_appearance_color.TrimBack('\n');
-  new_default_appearance_font_name_and_size.TrimBack('\n');
   annot_dict->SetNewFor<CPDF_String>(
-      "DA", new_default_appearance_color + " " +
-                new_default_appearance_font_name_and_size);
+      "DA",
+      new_default_appearance_font_name_and_size + new_default_appearance_color);
 
   // TODO(thestig): Call GenerateAnnotAP();
   return true;
-}
-
-bool CPDF_GenerateAP::UpdateDefaultAppearance(CPDF_Document* doc,
-                                              CPDF_Dictionary* annot_dict,
-                                              CPDF_Annot::StandardFont font,
-                                              float font_size,
-                                              const CFX_Color& color) {
-  ByteString resource_key;
-
-  // When font is kUnknown, preserve the font resource key the /DA in effect
-  // names (the annotation's own, its field's, or the form's) instead of
-  // failing. This allows updating fontSize and fontColor without replacing
-  // the original font.
-  if (font == CPDF_Annot::StandardFont::kUnknown) {
-    const CPDF_Dictionary* root = doc->GetRoot();
-    RetainPtr<const CPDF_Dictionary> acroform =
-        root ? root->GetDictFor("AcroForm") : nullptr;
-    CPDF_DefaultAppearance current_da(annot_dict, acroform.Get());
-    auto font_info = current_da.GetFont();
-    if (!font_info.has_value() || font_info->name.IsEmpty()) {
-      return false;
-    }
-    resource_key = font_info->name;
-  } else {
-    RetainPtr<CPDF_Dictionary> root_dict = doc->GetMutableRoot();
-    if (!root_dict) {
-      return false;
-    }
-
-    RetainPtr<CPDF_Dictionary> acroform_dict =
-        root_dict->GetMutableDictFor("AcroForm");
-    if (!acroform_dict) {
-      acroform_dict = CPDF_InteractiveForm::InitAcroFormDict(doc);
-      CHECK(acroform_dict);
-    }
-
-    ByteString base_font_name = CPDF_Annot::StandardFontToString(font);
-    if (base_font_name.IsEmpty()) {
-      return false;
-    }
-
-    resource_key =
-        EnsureFontInAcroFormDR(doc, acroform_dict.Get(), base_font_name);
-    if (resource_key.IsEmpty()) {
-      return false;
-    }
-  }
-
-  ByteString da_font_part = DefaultAppearanceFontPart(resource_key, font_size);
-  if (da_font_part.IsEmpty()) {
-    return false;
-  }
-  ByteString da_color_part = GenerateColorAP(color, PaintOperation::kFill);
-  // EmbedPDF: Strip trailing newlines and write color before font.
-  // See comment in GenerateDefaultAppearanceWithColor for rationale.
-  da_color_part.TrimBack('\n');
-
-  annot_dict->SetNewFor<CPDF_String>("DA", da_color_part + " " + da_font_part);
-  return true;
-}
-
-bool CPDF_GenerateAP::UpdateDefaultAppearanceRegisteredFont(
-    CPDF_Document* doc,
-    CPDF_Dictionary* annot_dict,
-    CFX_FontRegistry::FontId font_id,
-    float font_size,
-    const CFX_Color& color) {
-  // EmbedPDF: allow FreeText DA to reference a registered runtime font. The DA
-  // names a reserved alias; the real /DR font (the embedded subset) is
-  // installed when AP generation knows the characters used by this
-  // annotation/layer. No placeholder is written: Acrobat refuses to edit a
-  // FreeText whose /DR font is a descriptor-less stub.
-  if (!doc || !annot_dict || !CFX_FontRegistry::IsValidFont(font_id)) {
-    return false;
-  }
-  // A preview-and-print font renders existing text but may not author new
-  // text until the app asserts a licence (EPDFFont_AuthorizeEditing).
-  if (!CFX_FontRegistry::IsEditingAuthorized(font_id)) {
-    return false;
-  }
-
-  ByteString resource_key;
-  if (!CPDF_AnnotFontMap::ReserveRegisteredFontAlias(doc, font_id,
-                                                     &resource_key) ||
-      resource_key.IsEmpty()) {
-    return false;
-  }
-
-  ByteString da_font_part = DefaultAppearanceFontPart(resource_key, font_size);
-  if (da_font_part.IsEmpty()) {
-    return false;
-  }
-  ByteString da_color_part = GenerateColorAP(color, PaintOperation::kFill);
-  da_color_part.TrimBack('\n');
-
-  annot_dict->SetNewFor<CPDF_String>("DA", da_color_part + " " + da_font_part);
-  return true;
-}
-
-// ---- Rich text FreeText, the writer's halves (Phase D)
-// --------------------------
-
-CPDF_GenerateAP::PreparedRichFreeTextAP::PreparedRichFreeTextAP() = default;
-
-CPDF_GenerateAP::PreparedRichFreeTextAP::PreparedRichFreeTextAP(
-    PreparedRichFreeTextAP&& that) noexcept = default;
-
-CPDF_GenerateAP::PreparedRichFreeTextAP&
-CPDF_GenerateAP::PreparedRichFreeTextAP::operator=(
-    PreparedRichFreeTextAP&& that) noexcept = default;
-
-CPDF_GenerateAP::PreparedRichFreeTextAP::~PreparedRichFreeTextAP() = default;
-
-// static
-std::unique_ptr<CPDF_GenerateAP::PreparedRichFreeTextAP>
-CPDF_GenerateAP::PrepareRichFreeTextAP(CPDF_Document* doc,
-                                       const CPDF_Dictionary* annot_dict,
-                                       const RichFreeTextRequest& request) {
-  RichFreeTextInputs in;
-  in.document = request.document;
-  in.da_color = request.da_color;
-  in.persistent = true;
-  in.author_default_appearance = true;
-  return PrepareRichFreeTextAPInternal(
-      doc, annot_dict,
-      BlendModeToPDFName(DefaultBlendModeFor(CPDF_Annot::Subtype::FREETEXT)),
-      std::move(in));
-}
-
-// static
-bool CPDF_GenerateAP::PublishRichFreeTextAP(
-    CPDF_Document* doc,
-    CPDF_Dictionary* annot_dict,
-    std::unique_ptr<PreparedRichFreeTextAP> prepared) {
-  if (!doc || !annot_dict) {
-    return false;
-  }
-  APGenerationTarget target{doc, annot_dict};
-  return PublishRichFreeTextAPToTarget(&target, annot_dict,
-                                       std::move(prepared));
 }

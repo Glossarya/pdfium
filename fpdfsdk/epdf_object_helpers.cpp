@@ -3,6 +3,8 @@
 
 #include "fpdfsdk/epdf_object_helpers.h"
 
+#include "core/fpdfapi/page/cpdf_annotcontext.h"
+#include "core/fpdfapi/page/cpdf_page.h"
 #include "core/fpdfapi/parser/cpdf_array.h"
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
 #include "core/fpdfapi/parser/cpdf_document.h"
@@ -26,6 +28,30 @@ RetainPtr<CPDF_Array> GetMutableArrayMember(CPDF_Document* doc,
     return ToArray(doc->GetMutableIndirectObject(ref->GetRefObjNum()));
   }
   return dict->GetMutableArrayFor(key);
+}
+
+bool IsAnnotationOfPage(CPDF_Page* page, CPDF_AnnotContext* annotation) {
+  CPDF_Page* annotation_page = annotation && annotation->GetPage()
+                                   ? annotation->GetPage()->AsPDFPage()
+                                   : nullptr;
+  if (!page || !annotation_page ||
+      page->GetDocument() != annotation_page->GetDocument()) {
+    return false;
+  }
+
+  RetainPtr<const CPDF_Dictionary> page_dictionary = page->GetDict();
+  RetainPtr<const CPDF_Dictionary> annotation_page_dictionary =
+      annotation_page->GetDict();
+  if (!page_dictionary || !annotation_page_dictionary) {
+    return false;
+  }
+
+  const uint32_t page_object_number = page_dictionary->GetObjNum();
+  const uint32_t annotation_page_object_number =
+      annotation_page_dictionary->GetObjNum();
+  return page_object_number != 0 && annotation_page_object_number != 0
+             ? page_object_number == annotation_page_object_number
+             : page_dictionary.Get() == annotation_page_dictionary.Get();
 }
 
 }  // namespace epdf

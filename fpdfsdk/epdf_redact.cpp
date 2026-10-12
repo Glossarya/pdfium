@@ -29,15 +29,10 @@
 #include "core/fxcrt/numerics/safe_conversions.h"
 #include "core/fxcrt/span.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
+#include "fpdfsdk/epdf_object_helpers.h"
 #include "fpdfsdk/epdf_page_content_helpers.h"
 
 namespace {
-
-const CPDF_Dictionary* GetAnnotDictFromFPDFAnnotation(
-    const FPDF_ANNOTATION annot) {
-  CPDF_AnnotContext* context = CPDFAnnotContextFromFPDFAnnotation(annot);
-  return context ? context->GetAnnotDict() : nullptr;
-}
 
 std::vector<RedactRegion> GetRedactRegionsFromAnnotDict(
     const CPDF_Dictionary* annot_dict) {
@@ -371,7 +366,8 @@ RetainPtr<const CPDF_Stream> ResolveRedactOverlay(
 // The indexes in the page's /Annots of the REDACT annotations to apply:
 // `marks`, each a REDACT annotation of the page, or every one on the page
 // when `marks` is empty. In /Annots order, each once. Nullopt when a mark
-// isn't a REDACT annotation of the page.
+// isn't a REDACT annotation of the page (another page's, or another
+// document's under the same object number).
 std::optional<std::vector<size_t>> MarkIndexes(
     CPDF_Page* page,
     pdfium::span<const FPDF_ANNOTATION> marks) {
@@ -389,7 +385,11 @@ std::optional<std::vector<size_t>> MarkIndexes(
     return indexes;
   }
   for (FPDF_ANNOTATION mark : marks) {
-    const CPDF_Dictionary* annot_dict = GetAnnotDictFromFPDFAnnotation(mark);
+    CPDF_AnnotContext* context = CPDFAnnotContextFromFPDFAnnotation(mark);
+    if (!context || !epdf::IsAnnotationOfPage(page, context)) {
+      return std::nullopt;
+    }
+    const CPDF_Dictionary* annot_dict = context->GetAnnotDict();
     if (!annot_dict ||
         annot_dict->GetNameFor(pdfium::annotation::kSubtype) != "Redact") {
       return std::nullopt;

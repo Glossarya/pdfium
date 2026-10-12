@@ -272,30 +272,6 @@ FlattenPlan BuildFlattenPlan(CPDF_Document* document,
   return plan;
 }
 
-bool IsSamePage(CPDF_Page* page, CPDF_AnnotContext* annotation) {
-  CPDF_Page* annotation_page = annotation && annotation->GetPage()
-                                   ? annotation->GetPage()->AsPDFPage()
-                                   : nullptr;
-  if (!page || !annotation_page ||
-      page->GetDocument() != annotation_page->GetDocument()) {
-    return false;
-  }
-
-  RetainPtr<const CPDF_Dictionary> page_dictionary = page->GetDict();
-  RetainPtr<const CPDF_Dictionary> annotation_page_dictionary =
-      annotation_page->GetDict();
-  if (!page_dictionary || !annotation_page_dictionary) {
-    return false;
-  }
-
-  const uint32_t page_object_number = page_dictionary->GetObjNum();
-  const uint32_t annotation_page_object_number =
-      annotation_page_dictionary->GetObjNum();
-  return page_object_number != 0 && annotation_page_object_number != 0
-             ? page_object_number == annotation_page_object_number
-             : page_dictionary.Get() == annotation_page_dictionary.Get();
-}
-
 ByteString GenerateFlattenedContent(const ByteString& key) {
   return "q 1 0 0 1 0 0 cm /" + key + " Do Q";
 }
@@ -797,7 +773,7 @@ bool CollectTargets(CPDF_Page* page,
         CPDFAnnotContextFromFPDFAnnotation(annots[i]);
     const CPDF_Dictionary* dictionary =
         annotation ? annotation->GetAnnotDict() : nullptr;
-    if (!dictionary || !IsSamePage(page, annotation)) {
+    if (!dictionary || !epdf::IsAnnotationOfPage(page, annotation)) {
       if (statuses) {
         statuses[i] = EPDF_FLATTEN_STATUS_NOT_ON_PAGE;
       }

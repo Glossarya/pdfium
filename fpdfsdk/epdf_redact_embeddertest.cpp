@@ -1836,6 +1836,44 @@ TEST_F(EPDFRedactEmbedderTest,
   EXPECT_EQ(2, FPDFPage_GetAnnotCount(page.get()));
 }
 
+// A mark of another document applies nothing, though the page has a mark
+// under the same object number.
+TEST_F(EPDFRedactEmbedderTest, AMarkOfAnotherDocumentAppliesNothing) {
+  const std::string input = PdfOf({
+      "<< /Type /Catalog /Pages 2 0 R >>",
+      "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 50] /Contents 4 0 R "
+      "/Resources << /Font << /F1 5 0 R >> >> /Annots [6 0 R] >>",
+      StreamObject("", "BT /F1 24 Tf 10 10 Td (AAAA) Tj ET"),
+      "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+      "<< /Type /Annot /Subtype /Redact /Rect [5 5 150 40] >>",
+  });
+  for (bool layer : {false, true}) {
+    SCOPED_TRACE(layer ? "layer transaction" : "document");
+    OpenedPdf opened = OpenPdf(input, layer);
+    OpenedPdf other = OpenPdf(input, layer);
+    ASSERT_TRUE(opened.doc);
+    ASSERT_TRUE(other.doc);
+    ScopedFPDFPage page(FPDF_LoadPage(opened.doc.get(), 0));
+    ScopedFPDFPage other_page(FPDF_LoadPage(other.doc.get(), 0));
+    ASSERT_TRUE(page);
+    ASSERT_TRUE(other_page);
+    ScopedFPDFAnnotation foreign(FPDFPage_GetAnnot(other_page.get(), 0));
+    ASSERT_TRUE(foreign);
+    if (layer) {
+      ASSERT_TRUE(EPDFLayer_BeginTransaction(opened.doc.get()));
+    }
+    const FPDF_ANNOTATION marks[] = {foreign.get()};
+    EXPECT_FALSE(EPDFPage_ApplyRedactions(page.get(), marks, 1, nullptr));
+    if (layer) {
+      ASSERT_TRUE(EPDFLayer_CommitTransaction(opened.doc.get()));
+    }
+    EXPECT_EQ(L"AAAA", ReadText(page.get()));
+    EXPECT_EQ(1, FPDFPage_GetAnnotCount(page.get()));
+    EXPECT_EQ(1, FPDFPage_GetAnnotCount(other_page.get()));
+  }
+}
+
 // Two marks on one image applied in one call both leave their hole.
 TEST_F(EPDFRedactEmbedderTest, MarksOnOneImageApplyInOneCall) {
   const std::string input = ImagePage(StreamObject(
@@ -2004,5 +2042,50 @@ TEST_F(EPDFRedactEmbedderTest,
     ASSERT_TRUE(mask);
     EXPECT_EQ("FlateDecode", mask->GetDict()->GetNameFor("Filter"));
     EXPECT_EQ(40, mask->GetDict()->GetIntegerFor("Width"));
+  }
+}
+
+// A soft mask's /Matte names a colour of its image's colour space, which
+// PDFium takes back out of the image's colours. A CMYK image decoded and
+// written as RGB gets its matte as RGB: one left in CMYK doesn't fit, so it
+// would be ignored and the colours drawn darker.
+TEST_F(EPDFRedactEmbedderTest, ADecodedImagesMatteIsWrittenInItsNewColorSpace) {
+  const std::string input = ImagePage(
+      StreamObject("/Type /XObject /Subtype /Image /Width 20 /Height 10 "
+                   "/ColorSpace /DeviceCMYK /BitsPerComponent 8 /Filter "
+                   "/FlateDecode /SMask 6 0 R",
+                   Flate(Samples(4, 8,
+                                 [](int x, int, int component) {
+                                   return component == 1 || component == 2
+                                              ? 60u + x * 5
+                                              : 120u;
+                                 }))),
+      "0 0 1 rg 50 100 200 100 re f",
+      {StreamObject("/Type /XObject /Subtype /Image /Width 40 /Height 20 "
+                    "/ColorSpace /DeviceGray /BitsPerComponent 8 "
+                    "/Matte [0 0 0 1] /Filter [/ASCIIHexDecode /JPXDecode]",
+                    std::string(kGrayJpx) + ">")});
+  for (bool layer : {false, true}) {
+    SCOPED_TRACE(layer ? "layer transaction" : "document");
+    OpenedPdf opened = OpenPdf(input, layer);
+    ASSERT_TRUE(opened.doc);
+    ScopedFPDFPage page(FPDF_LoadPage(opened.doc.get(), 0));
+    ASSERT_TRUE(page);
+    auto before = Render(page.get());
+    ASSERT_NO_FATAL_FAILURE(
+        MarkAndApply(opened.doc.get(), page.get(), layer, {50, 200, 90, 100}));
+    auto after = Render(page.get());
+    EXPECT_TRUE(AtLeast(Pixel(after.get(), 130, 300), 0xf0));
+    ExpectSamePixels(before.get(), after.get(), 350, 200, 500, 400);
+    RetainPtr<const CPDF_Stream> kept = OnlyImage(opened.doc.get());
+    ASSERT_TRUE(kept);
+    EXPECT_EQ("DeviceRGB", kept->GetDict()->GetNameFor("ColorSpace"));
+    CPDF_Document* pdf = CPDFDocumentFromFPDFDocument(opened.doc.get());
+    CPDF_DocumentViewScope document_view(pdf);
+    RetainPtr<const CPDF_Stream> mask = kept->GetDict()->GetStreamFor("SMask");
+    ASSERT_TRUE(mask);
+    RetainPtr<const CPDF_Array> matte = mask->GetDict()->GetArrayFor("Matte");
+    ASSERT_TRUE(matte);
+    EXPECT_EQ(3u, matte->size());
   }
 }

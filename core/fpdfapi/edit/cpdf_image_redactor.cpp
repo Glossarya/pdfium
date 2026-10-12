@@ -401,9 +401,9 @@ struct Content {
   // Samples written at zlib's fastest level: a decoded picture's, compressed
   // again on every further apply to the image.
   bool fast = false;
-  // For a soft mask whose image's colours are blended with white: the number
-  // of components of that white (/Matte, ISO 32000-1 §11.6.5.3).
-  int white_matte = 0;
+  // For a soft mask: the colour its image's colours are blended with, in
+  // that image's colour space (/Matte, ISO 32000-1 §11.6.5.3).
+  std::vector<float> matte;
 };
 
 // A new image stream holding `content`, with `keys` copied from `source` (and
@@ -426,10 +426,10 @@ RetainPtr<CPDF_Stream> WriteContent(CPDF_Document* doc,
     dict->SetNewFor<CPDF_Name>("ColorSpace", content.color_space);
     dict->SetNewFor<CPDF_Number>("BitsPerComponent", 8);
   }
-  if (content.white_matte > 0) {
+  if (!content.matte.empty()) {
     RetainPtr<CPDF_Array> matte = dict->SetNewFor<CPDF_Array>("Matte");
-    for (int i = 0; i < content.white_matte; ++i) {
-      matte->AppendNew<CPDF_Number>(1);
+    for (float value : content.matte) {
+      matte->AppendNew<CPDF_Number>(value);
     }
   }
   DataVector<uint8_t> data;
@@ -712,9 +712,12 @@ constexpr int kJpegQuality = 90;
 // drawn. The writer sets the colour space and bits.
 constexpr const char* kDecodedKeys[] = {"Intent", "Interpolate", "OC",
                                         "StructParent"};
-// What a decoded soft mask keeps: the colour its image's samples were
-// premultiplied with.
-constexpr const char* kDecodedSoftMaskKeys[] = {"Matte"};
+// What a decoded image's soft mask keeps, when it keeps its format and when
+// it is decoded too. Not its /Matte: that named a colour of the image's old
+// colour space, and is written in the new one (MatteOf()).
+constexpr const char* kKeptSoftMaskOfDecodedKeys[] = {
+    "ColorSpace", "BitsPerComponent", "Decode", "Interpolate"};
+constexpr const char* kDecodedSoftMaskKeys[] = {"Interpolate"};
 
 // What CPDF_DIB shows of an image: 8-bit gray or RGB, rows from the top, and
 // its alpha (a colour key's, a palette's, a JPEG 2000's own, a stencil's) when
@@ -735,6 +738,10 @@ struct Picture {
 struct Decoded {
   RetainPtr<CFX_DIBBase> image;
   RetainPtr<CFX_DIBBase> inline_alpha;
+  // The colour (0x00RRGGBB) the image's colours are blended with, from its
+  // soft mask's /Matte, when CPDF_DIB reads one: the renderer takes it out
+  // again.
+  std::optional<uint32_t> matte;
 };
 
 // `stream` decoded as CPDF_DIB decodes it to draw it (its /ColorSpace name
@@ -746,11 +753,15 @@ std::optional<Decoded> Decode(CPDF_Document* doc,
   RetainPtr<const CPDF_Dictionary> dict = stream->GetDict();
   const bool inline_alpha = dict->GetIntegerFor("SMaskInData") == 1 &&
                             !dict->KeyExist("SMask") && !dict->KeyExist("Mask");
+  RetainPtr<const CPDF_Stream> soft_mask = dict->GetStreamFor("SMask");
+  const bool matte = soft_mask && soft_mask->GetDict()->KeyExist("Matte");
+  // CPDF_DIB reads both only when it loads the image's mask.
+  const bool load_mask = inline_alpha || matte;
   auto dib = pdfium::MakeRetain<CPDF_DIB>(doc, std::move(stream));
   CPDF_DIB::LoadState state =
-      dib->StartLoadDIBBase(inline_alpha, resources, page_resources,
+      dib->StartLoadDIBBase(load_mask, resources, page_resources,
                             /*bStdCS=*/false, CPDF_ColorSpace::Family::kUnknown,
-                            /*bLoadMask=*/inline_alpha, CFX_Size());
+                            /*bLoadMask=*/load_mask, CFX_Size());
   while (state == CPDF_DIB::LoadState::kContinue) {
     state = dib->ContinueLoadDIBBase(nullptr);
   }
@@ -760,6 +771,10 @@ std::optional<Decoded> Decode(CPDF_Document* doc,
   Decoded decoded;
   if (inline_alpha) {
     decoded.inline_alpha = dib->DetachMask();
+  }
+  // 0xFFFFFFFF: none, or none that fits the image's colour space.
+  if (matte && dib->GetMatteColor() != 0xFFFFFFFF) {
+    decoded.matte = dib->GetMatteColor();
   }
   decoded.image = std::move(dib);
   return decoded;
@@ -782,9 +797,11 @@ std::optional<Picture> DecodePicture(const Decoded& decoded,
     return std::nullopt;
   }
   const pdfium::span<const uint32_t> palette = dib->GetPaletteSpan();
-  // Gray when every colour it can show is.
-  const bool gray = !stencil && (bpp == 1 || bpp == 8) &&
-                    std::ranges::all_of(palette, IsGray);
+  // Gray when every colour it can show is, and the colour it's blended with.
+  const bool gray =
+      !stencil && (bpp == 1 || bpp == 8) &&
+      std::ranges::all_of(palette, IsGray) &&
+      (!decoded.matte.has_value() || IsGray(decoded.matte.value()));
   const bool palette_alpha = std::ranges::any_of(
       palette, [](uint32_t argb) { return argb >> 24 != 0xff; });
   const bool has_alpha = stencil || palette_alpha ||
@@ -943,13 +960,25 @@ std::optional<Content> PictureContent(const Picture& picture, bool lossy) {
   return content;
 }
 
+// `rgb` (0x00RRGGBB) as a /Matte of `picture`'s gray or RGB.
+std::vector<float> MatteOf(const Picture& picture, uint32_t rgb) {
+  const float red = (rgb >> 16 & 0xff) / 255.0f;
+  const float green = (rgb >> 8 & 0xff) / 255.0f;
+  const float blue = (rgb & 0xff) / 255.0f;
+  // A gray picture's matte is gray (DecodePicture()).
+  return picture.components == 1 ? std::vector<float>{blue}
+                                 : std::vector<float>{red, green, blue};
+}
+
 // `picture`'s alpha as a soft mask.
 Content AlphaContent(const Picture& picture) {
   Content content;
   content.width = picture.width;
   content.height = picture.height;
   content.color_space = "DeviceGray";
-  content.white_matte = picture.white_blended ? picture.components : 0;
+  if (picture.white_blended) {
+    content.matte = MatteOf(picture, 0xffffff);
+  }
   Samples samples;
   samples.width = picture.width;
   samples.height = picture.height;
@@ -1056,6 +1085,9 @@ RedactResult RedactDecodedImage(CPDF_Page* page,
       return {.succeeded = false};
     }
   }
+  if (soft_mask_content.has_value() && decoded->matte.has_value()) {
+    soft_mask_content->matte = MatteOf(picture.value(), decoded->matte.value());
+  }
   std::optional<Content> content =
       PictureContent(picture.value(), IsLossy(*dict));
   if (!content.has_value()) {
@@ -1072,8 +1104,9 @@ RedactResult RedactDecodedImage(CPDF_Page* page,
   if (soft_mask) {
     written = WriteMask(
         doc, replacement_dict.Get(), "SMask", *soft_mask->GetDict(),
-        soft_mask_kept ? pdfium::span<const char* const>(kSoftMaskKeys)
-                       : pdfium::span<const char* const>(kDecodedSoftMaskKeys),
+        soft_mask_kept
+            ? pdfium::span<const char* const>(kKeptSoftMaskOfDecodedKeys)
+            : pdfium::span<const char* const>(kDecodedSoftMaskKeys),
         soft_mask_content.value());
   } else if (mask) {
     written = WriteMask(doc, replacement_dict.Get(), "Mask", *mask->GetDict(),

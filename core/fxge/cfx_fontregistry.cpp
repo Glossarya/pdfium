@@ -310,7 +310,7 @@ CFX_FontRegistry::FontId RegisterLoadedFontSource(
       permission != CFX_FontRegistry::EmbeddingPermission::kPreviewAndPrint;
   registered_font->no_subsetting = (fs_type & kFsTypeNoSubsetting) != 0;
   registered_font->instanced = instanced;
-  registered_font->source_hash = CRYPT_SHA256Generate(data);
+  registered_font->source_hash = CryptSha256Generate(data);
   registered_font->base_font_name = NormalizeBaseFontName(
       family_name.IsEmpty() ? font->GetBaseFontName() : family_name);
   // The persistent identity (descriptor /FontFamily, rich text families):

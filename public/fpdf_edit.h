@@ -465,6 +465,22 @@ FPDF_EXPORT FPDF_PAGEOBJECTMARK FPDF_CALLCONV
 FPDFPageObj_AddMark(FPDF_PAGEOBJECT page_object, FPDF_BYTESTRING name);
 
 // Experimental API.
+// Add an existing content mark to a |page_object|. If consecutive page objects
+// have the same |mark|, the generated PDF will contain a single mark that spans
+// all of them. If the page objects are not consecutive, multiple copies of the
+// |mark| are inserted in the PDF.
+//
+//   page_object - handle to a page object.
+//   mark        - handle to a mark object.
+//
+// Returns true on success, or false on failure. The handles are all owned by
+// the library. The |page_object| and |mark| params must be associated with the
+// same document.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+FPDFPageObj_AddExistingMark(FPDF_PAGEOBJECT page_object,
+                            FPDF_PAGEOBJECTMARK mark);
+
+// Experimental API.
 // Removes a content |mark| from a |page_object|.
 // The mark handle will be invalid after the removal.
 //
@@ -1422,6 +1438,19 @@ FPDFText_LoadCidType2Font(FPDF_DOCUMENT document,
 // Returns TRUE on success.
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
 FPDFTextObj_GetFontSize(FPDF_PAGEOBJECT text, float* size);
+
+// Experimental API.
+// Set the font size of a text object.
+//
+//   text - handle to a text page object.
+//   size - the new font size, measured in points (1/72 inch). Must be
+//          non-negative; zero is permitted to mirror
+//          FPDFPageObj_NewTextObj() with size 0.
+//
+// Returns TRUE on success. Returns FALSE when |text| is not a text
+// page object, or when |size| is negative.
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+FPDFTextObj_SetFontSize(FPDF_PAGEOBJECT text, float size);
 
 // Close a loaded PDF font.
 //

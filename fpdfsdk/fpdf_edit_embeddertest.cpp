@@ -2432,6 +2432,128 @@ TEST_F(FPDFEditEmbedderTest, InsertObjectAtIndex) {
   EXPECT_FALSE(FPDFPage_InsertObjectAtIndex(nullptr, img6, 0));
 }
 
+TEST_F(FPDFEditEmbedderTest, InsertObjectAtIndexPersistsOrder) {
+  ASSERT_TRUE(OpenDocument("hello_world.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+
+  // hello_world.pdf has 2 existing text objects.
+  ASSERT_EQ(2, FPDFPage_CountObjects(page.get()));
+  ASSERT_EQ(FPDF_PAGEOBJ_TEXT,
+            FPDFPageObj_GetType(FPDFPage_GetObject(page.get(), 0)));
+  ASSERT_EQ(FPDF_PAGEOBJ_TEXT,
+            FPDFPageObj_GetType(FPDFPage_GetObject(page.get(), 1)));
+
+  // Insert a red rectangle at index 0 (drawn underneath both texts) and a
+  // green rectangle at index 2 (drawn between the two texts).
+  FPDF_PAGEOBJECT red_rect = FPDFPageObj_CreateNewRect(20, 100, 50, 50);
+  EXPECT_TRUE(FPDFPageObj_SetFillColor(red_rect, 255, 0, 0, 255));
+  EXPECT_TRUE(FPDFPath_SetDrawMode(red_rect, FPDF_FILLMODE_ALTERNATE, 0));
+  EXPECT_TRUE(FPDFPage_InsertObjectAtIndex(page.get(), red_rect, 0));
+
+  FPDF_PAGEOBJECT green_rect = FPDFPageObj_CreateNewRect(20, 50, 80, 80);
+  EXPECT_TRUE(FPDFPageObj_SetFillColor(green_rect, 0, 255, 0, 255));
+  EXPECT_TRUE(FPDFPath_SetDrawMode(green_rect, FPDF_FILLMODE_ALTERNATE, 0));
+  EXPECT_TRUE(FPDFPage_InsertObjectAtIndex(page.get(), green_rect, 2));
+
+  // In-memory ordering: [red_rect, text, green_rect, text].
+  ASSERT_EQ(4, FPDFPage_CountObjects(page.get()));
+  EXPECT_EQ(FPDF_PAGEOBJ_PATH,
+            FPDFPageObj_GetType(FPDFPage_GetObject(page.get(), 0)));
+  EXPECT_EQ(FPDF_PAGEOBJ_TEXT,
+            FPDFPageObj_GetType(FPDFPage_GetObject(page.get(), 1)));
+  EXPECT_EQ(FPDF_PAGEOBJ_PATH,
+            FPDFPageObj_GetType(FPDFPage_GetObject(page.get(), 2)));
+  EXPECT_EQ(FPDF_PAGEOBJ_TEXT,
+            FPDFPageObj_GetType(FPDFPage_GetObject(page.get(), 3)));
+
+  EXPECT_TRUE(FPDFPage_GenerateContent(page.get()));
+  EXPECT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
+
+  ScopedSavedDoc saved_document = OpenScopedSavedDocument();
+  ASSERT_TRUE(saved_document);
+  ScopedSavedPage saved_page = LoadScopedSavedPage(0);
+  ASSERT_TRUE(saved_page);
+
+  // After save+reopen, /Contents must reflect the same z-order.
+  ASSERT_EQ(4, FPDFPage_CountObjects(saved_page.get()));
+  EXPECT_EQ(FPDF_PAGEOBJ_PATH,
+            FPDFPageObj_GetType(FPDFPage_GetObject(saved_page.get(), 0)));
+  EXPECT_EQ(FPDF_PAGEOBJ_TEXT,
+            FPDFPageObj_GetType(FPDFPage_GetObject(saved_page.get(), 1)));
+  EXPECT_EQ(FPDF_PAGEOBJ_PATH,
+            FPDFPageObj_GetType(FPDFPage_GetObject(saved_page.get(), 2)));
+  EXPECT_EQ(FPDF_PAGEOBJ_TEXT,
+            FPDFPageObj_GetType(FPDFPage_GetObject(saved_page.get(), 3)));
+}
+
+TEST_F(FPDFEditEmbedderTest, InsertObjectAtIndexAcrossContentStreams) {
+  // hello_world_split_streams.pdf has /Contents [stream0, stream1]:
+  //   stream0: text "Hello, world!", text "Goodbye, world!"
+  //   stream1: text "Greetings, world!"
+  ASSERT_TRUE(OpenDocument("hello_world_split_streams.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+
+  ASSERT_EQ(3, FPDFPage_CountObjects(page.get()));
+  CPDF_Page* cpdf_page = CPDFPageFromFPDFPage(page.get());
+  ASSERT_EQ(0, cpdf_page->GetPageObjectByIndex(0)->GetContentStream());
+  ASSERT_EQ(0, cpdf_page->GetPageObjectByIndex(1)->GetContentStream());
+  ASSERT_EQ(1, cpdf_page->GetPageObjectByIndex(2)->GetContentStream());
+
+  // Insert into the first stream (index 0 -> adopts stream 0)...
+  FPDF_PAGEOBJECT red_rect = FPDFPageObj_CreateNewRect(20, 100, 50, 50);
+  EXPECT_TRUE(FPDFPageObj_SetFillColor(red_rect, 255, 0, 0, 255));
+  EXPECT_TRUE(FPDFPath_SetDrawMode(red_rect, FPDF_FILLMODE_ALTERNATE, 0));
+  EXPECT_TRUE(FPDFPage_InsertObjectAtIndex(page.get(), red_rect, 0));
+
+  // ...and into the second stream (now index 3 -> adopts stream 1).
+  FPDF_PAGEOBJECT green_rect = FPDFPageObj_CreateNewRect(20, 50, 80, 80);
+  EXPECT_TRUE(FPDFPageObj_SetFillColor(green_rect, 0, 255, 0, 255));
+  EXPECT_TRUE(FPDFPath_SetDrawMode(green_rect, FPDF_FILLMODE_ALTERNATE, 0));
+  EXPECT_TRUE(FPDFPage_InsertObjectAtIndex(page.get(), green_rect, 3));
+
+  // Each insert must adopt the neighbor's stream, not muddle the two streams.
+  ASSERT_EQ(5, FPDFPage_CountObjects(page.get()));
+  EXPECT_EQ(0, cpdf_page->GetPageObjectByIndex(0)->GetContentStream());
+  EXPECT_EQ(0, cpdf_page->GetPageObjectByIndex(1)->GetContentStream());
+  EXPECT_EQ(0, cpdf_page->GetPageObjectByIndex(2)->GetContentStream());
+  EXPECT_EQ(1, cpdf_page->GetPageObjectByIndex(3)->GetContentStream());
+  EXPECT_EQ(1, cpdf_page->GetPageObjectByIndex(4)->GetContentStream());
+
+  EXPECT_TRUE(FPDFPage_GenerateContent(page.get()));
+  EXPECT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
+
+  ScopedSavedDoc saved_document = OpenScopedSavedDocument();
+  ASSERT_TRUE(saved_document);
+  ScopedSavedPage saved_page = LoadScopedSavedPage(0);
+  ASSERT_TRUE(saved_page);
+
+  // After save+reopen, /Contents still has 2 streams, with the inserted rects
+  // at the head of each stream:
+  //   stream0: red_rect, text, text
+  //   stream1: green_rect, text
+  ASSERT_EQ(5, FPDFPage_CountObjects(saved_page.get()));
+  CPDF_Page* saved_cpdf_page = CPDFPageFromFPDFPage(saved_page.get());
+  // stream0: [red_rect (path), text, text]
+  EXPECT_EQ(FPDF_PAGEOBJ_PATH,
+            FPDFPageObj_GetType(FPDFPage_GetObject(saved_page.get(), 0)));
+  EXPECT_EQ(0, saved_cpdf_page->GetPageObjectByIndex(0)->GetContentStream());
+  EXPECT_EQ(FPDF_PAGEOBJ_TEXT,
+            FPDFPageObj_GetType(FPDFPage_GetObject(saved_page.get(), 1)));
+  EXPECT_EQ(0, saved_cpdf_page->GetPageObjectByIndex(1)->GetContentStream());
+  EXPECT_EQ(FPDF_PAGEOBJ_TEXT,
+            FPDFPageObj_GetType(FPDFPage_GetObject(saved_page.get(), 2)));
+  EXPECT_EQ(0, saved_cpdf_page->GetPageObjectByIndex(2)->GetContentStream());
+  // stream1: [green_rect (path), text]
+  EXPECT_EQ(FPDF_PAGEOBJ_PATH,
+            FPDFPageObj_GetType(FPDFPage_GetObject(saved_page.get(), 3)));
+  EXPECT_EQ(1, saved_cpdf_page->GetPageObjectByIndex(3)->GetContentStream());
+  EXPECT_EQ(FPDF_PAGEOBJ_TEXT,
+            FPDFPageObj_GetType(FPDFPage_GetObject(saved_page.get(), 4)));
+  EXPECT_EQ(1, saved_cpdf_page->GetPageObjectByIndex(4)->GetContentStream());
+}
+
 TEST_F(FPDFEditEmbedderTest, InsertAndRemoveLargeFile) {
   const int kOriginalObjectCount = 600;
 
@@ -2797,6 +2919,65 @@ TEST_F(FPDFEditEmbedderTest, AddStandardFontText) {
 
   // TODO(npm): Why are there issues with text rotated by 90 degrees?
   // TODO(npm): FPDF_SaveAsCopy not giving the desired result after this.
+}
+
+TEST_F(FPDFEditEmbedderTest, SetFontSize) {
+  ScopedFPDFPage page(FPDFPage_New(CreateNewDocument(), 0, 612, 792));
+  ScopedFPDFPageObject text_object(
+      FPDFPageObj_NewTextObj(document(), "Arial", 12.0f));
+  ASSERT_TRUE(text_object);
+
+  // Round-trip: Get -> Set -> Get returns the new value.
+  {
+    float size = -1;
+    ASSERT_TRUE(FPDFTextObj_GetFontSize(text_object.get(), &size));
+    EXPECT_EQ(12.0f, size);
+
+    EXPECT_TRUE(FPDFTextObj_SetFontSize(text_object.get(), 24.0f));
+    ASSERT_TRUE(FPDFTextObj_GetFontSize(text_object.get(), &size));
+    EXPECT_EQ(24.0f, size);
+
+    // Zero is permitted (mirrors FPDFPageObj_NewTextObj at size 0).
+    EXPECT_TRUE(FPDFTextObj_SetFontSize(text_object.get(), 0.0f));
+    ASSERT_TRUE(FPDFTextObj_GetFontSize(text_object.get(), &size));
+    EXPECT_EQ(0.0f, size);
+  }
+
+  // Rejection: negative and null leave the prior value alone.
+  {
+    EXPECT_TRUE(FPDFTextObj_SetFontSize(text_object.get(), 18.0f));
+    float size = -1;
+    ASSERT_TRUE(FPDFTextObj_GetFontSize(text_object.get(), &size));
+    EXPECT_EQ(18.0f, size);
+
+    EXPECT_FALSE(FPDFTextObj_SetFontSize(text_object.get(), -1.0f));
+    ASSERT_TRUE(FPDFTextObj_GetFontSize(text_object.get(), &size));
+    EXPECT_EQ(18.0f, size);
+
+    EXPECT_FALSE(FPDFTextObj_SetFontSize(nullptr, 32.0f));
+  }
+
+  // Persistence: the new size survives FPDF_SaveAsCopy + reload.
+  {
+    ScopedFPDFWideString text = GetFPDFWideString(L"hello");
+    EXPECT_TRUE(FPDFText_SetText(text_object.get(), text.get()));
+    FPDFPageObj_Transform(text_object.get(), 1, 0, 0, 1, 100, 100);
+    EXPECT_TRUE(FPDFTextObj_SetFontSize(text_object.get(), 36.0f));
+    EXPECT_TRUE(FPDFPage_InsertObject(page.get(), text_object.release()));
+    EXPECT_TRUE(FPDFPage_GenerateContent(page.get()));
+    EXPECT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
+
+    ScopedSavedDoc saved_document = OpenScopedSavedDocument();
+    ASSERT_TRUE(saved_document);
+    ScopedSavedPage saved_page = LoadScopedSavedPage(0);
+    ASSERT_TRUE(saved_page);
+    ASSERT_EQ(1, FPDFPage_CountObjects(saved_page.get()));
+    FPDF_PAGEOBJECT saved_object = FPDFPage_GetObject(saved_page.get(), 0);
+    ASSERT_TRUE(saved_object);
+    float saved_size = -1;
+    ASSERT_TRUE(FPDFTextObj_GetFontSize(saved_object, &saved_size));
+    EXPECT_EQ(36.0f, saved_size);
+  }
 }
 
 TEST_F(FPDFEditEmbedderTest, AddStandardFontTextOfSizeZero) {
@@ -3955,6 +4136,81 @@ TEST_F(FPDFEditEmbedderTest, AddMarkCompressedStream) {
     CompareBitmapWithExpectationSuffix(page_bitmap.get(), kHelloWorldPng);
   }
   CheckMarkCounts(saved_page.get(), 0, 2, 0, 0, 0, 1);
+}
+
+TEST_F(FPDFEditEmbedderTest, AddExistingMarkBadInputs) {
+  EXPECT_FALSE(FPDFPageObj_AddExistingMark(nullptr, nullptr));
+
+  ASSERT_TRUE(OpenDocument("hello_world.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+  FPDF_PAGEOBJECT page_object1 = FPDFPage_GetObject(page.get(), 0);
+
+  // Null mark should error
+  EXPECT_FALSE(FPDFPageObj_AddExistingMark(page_object1, nullptr));
+
+  FPDF_PAGEOBJECTMARK mark = FPDFPageObj_AddMark(page_object1, "Prime");
+  EXPECT_TRUE(mark);
+  EXPECT_TRUE(FPDFPageObjMark_SetStringParam(document(), page_object1, mark,
+                                             "Test", "Hello"));
+
+  // Null object valid mark should error
+  EXPECT_FALSE(FPDFPageObj_AddExistingMark(nullptr, mark));
+}
+
+TEST_F(FPDFEditEmbedderTest, AddExistingMarkCompressedStream) {
+  // Load document with some text in a compressed stream.
+  ASSERT_TRUE(OpenDocument("hello_world_compressed_stream.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+
+  // Render and check there are no marks.
+  {
+    ScopedFPDFBitmap page_bitmap = RenderPage(page.get());
+    CompareBitmapWithExpectationSuffix(page_bitmap.get(), kHelloWorldPng);
+  }
+  CheckMarkCounts(page.get(), 0, 2, 0, 0, 0, 0);
+
+  // Add a mark to the first page object
+  FPDF_PAGEOBJECT page_object1 = FPDFPage_GetObject(page.get(), 0);
+  FPDF_PAGEOBJECTMARK mark = FPDFPageObj_AddMark(page_object1, "Prime");
+  EXPECT_TRUE(mark);
+  EXPECT_TRUE(FPDFPageObjMark_SetStringParam(document(), page_object1, mark,
+                                             "Test", "Hello"));
+
+  // Render and check there is 1 mark.
+  {
+    ScopedFPDFBitmap page_bitmap = RenderPage(page.get());
+    CompareBitmapWithExpectationSuffix(page_bitmap.get(), kHelloWorldPng);
+  }
+  CheckMarkCounts(page.get(), 0, 2, 1, 0, 0, 0);
+
+  // Add the same bounds mark to the second object.
+  FPDF_PAGEOBJECT page_object2 = FPDFPage_GetObject(page.get(), 1);
+  EXPECT_TRUE(FPDFPageObj_AddExistingMark(page_object2, mark));
+
+  // Render and check there are 2 marks.
+  {
+    ScopedFPDFBitmap page_bitmap = RenderPage(page.get());
+    CompareBitmapWithExpectationSuffix(page_bitmap.get(), kHelloWorldPng);
+  }
+  CheckMarkCounts(page.get(), 0, 2, 2, 0, 0, 0);
+
+  // Save the file.
+  EXPECT_TRUE(FPDFPage_GenerateContent(page.get()));
+  EXPECT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
+
+  // Re-open the file and check the new mark is present.
+  ScopedSavedDoc saved_document = OpenScopedSavedDocument();
+  ASSERT_TRUE(saved_document);
+  ScopedSavedPage saved_page = LoadScopedSavedPage(0);
+  ASSERT_TRUE(saved_page);
+
+  {
+    ScopedFPDFBitmap page_bitmap = RenderPage(saved_page.get());
+    CompareBitmapWithExpectationSuffix(page_bitmap.get(), kHelloWorldPng);
+  }
+  CheckMarkCounts(saved_page.get(), 0, 2, 2, 0, 0, 0);
 }
 
 TEST_F(FPDFEditEmbedderTest, SetMarkParam) {

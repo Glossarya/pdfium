@@ -1026,10 +1026,6 @@ bool CFX_SkiaDeviceDriver::RenderCapGetBits() const {
   return true;
 }
 
-bool CFX_SkiaDeviceDriver::RenderCapAlphaPath() const {
-  return true;
-}
-
 bool CFX_SkiaDeviceDriver::RenderCapAlphaImage() const {
   return true;
 }

@@ -25,7 +25,7 @@ class XFAJSEmbedderTest : public JSEmbedderTest {
   void SetUp() override;
   void TearDown() override;
   bool OpenDocumentWithOptions(const std::string& filename,
-                               const char* password,
+                               const ByteString& password,
                                LinearizeOption linearize_option,
                                JavaScriptOption javascript_option) override;
 

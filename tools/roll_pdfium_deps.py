@@ -10,7 +10,7 @@ import sys
 
 ALL_DEPS_ENTRIES = (
     'abseil_revision',
-    'android_toolchain_version',
+    'android_ndk_version',
     'brotli_revision',
     'build_revision',
     'buildtools_revision',

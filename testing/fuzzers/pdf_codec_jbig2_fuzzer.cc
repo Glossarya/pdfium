@@ -4,9 +4,9 @@
 
 #include <stdint.h>
 
-#include "core/fxcodec/jbig2/JBig2_Context.h"
-#include "core/fxcodec/jbig2/JBig2_DocumentContext.h"
+#include "core/fxcodec/jbig2/jbig2_context.h"
 #include "core/fxcodec/jbig2/jbig2_decoder.h"
+#include "core/fxcodec/jbig2/jbig2_document_context.h"
 #include "core/fxcrt/compiler_specific.h"
 #include "core/fxcrt/fx_safe_types.h"
 #include "core/fxcrt/span.h"

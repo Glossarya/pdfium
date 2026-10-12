@@ -61,6 +61,7 @@ third-party | p[A-Z]* | ICU: allocator and trace hooks, set before use.
 third-party | utrace_level | ICU: trace level.
 third-party | _cms* | lcms: the context pool behind _cmsContextPoolHeadMutex, plugin chunks and constants.
 third-party | globalContext | lcms: the default context (see the June thread-safety fixes).
+third-party | DefaultCurves | lcms 2.19: built-in parametric curves list, only read (plugins chain onto the context's list).
 third-party | DefaultIntents | lcms: built-in intents list.
 third-party | DefaultOptimization | lcms: built-in optimizations list.
 third-party | SupportedMPEtypes | lcms: built-in type table.

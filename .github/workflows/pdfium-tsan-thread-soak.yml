@@ -1,6 +1,13 @@
 # Copyright 2026 CloudPDF LTD
 # SPDX-License-Identifier: Apache-2.0
 
+# The ThreadSanitizer gate for the thread-confined runtime
+# (docs/embedpdf/fork-ledger.md, rule thread-confined-globals). Every worker
+# thread runs what a server worker does: a base and a layer, reads, edits in a
+# transaction, redaction, a delta save and reopen, an encrypted save. Any data
+# race fails the job. It runs on demand, on every upstream sync PR
+# (embedpdf/sync/* branches) and, through workflow_call, from other workflows.
+
 name: CloudPDF Runtime TSAN Thread Soak
 
 on:
@@ -10,41 +17,72 @@ on:
         description: Git ref to test
         required: false
         default: embedpdf/main
-      pdf_path:
-        description: PDF fixture to render during the soak
+      pdf_paths:
+        description: PDF fixtures, space-separated (workers take them in turn)
         required: false
-        default: testing/resources/hello_world.pdf
+        default: ''
       threads:
         description: Number of worker threads
         required: false
-        default: '2'
+        default: '4'
       iterations:
         description: Iterations per worker thread
         required: false
-        default: '2'
+        default: '3'
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
+        default: ''
+      pdf_paths:
+        type: string
+        required: false
+        default: ''
+      threads:
+        type: string
+        required: false
+        default: '4'
+      iterations:
+        type: string
+        required: false
+        default: '3'
+  pull_request:
+    branches: [embedpdf/main]
 
 permissions:
   contents: read
 
+env:
+  DEFAULT_PDF_PATHS: >-
+    testing/resources/hello_world.pdf
+    testing/resources/text_form.pdf
+    testing/resources/freetext_rich_text_acrobat_lines.pdf
+    testing/resources/embedded_images.pdf
+    testing/resources/annotation_stamp_with_ap.pdf
+    testing/resources/bug_42270471.pdf
+
 jobs:
   tsan-thread-soak:
     name: Linux x64 TSAN thread soak
+    # On pull requests, only upstream syncs (upstream-sync plan, decision D9).
+    if: github.event_name != 'pull_request' || startsWith(github.head_ref, 'embedpdf/sync/')
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 120
     env:
       PDF_RUNTIME_SYNC: auto
       PDF_RUNTIME_TARGET_OS_LIST: linux
       EMBEDPDF_TLS_GLOBALS: true
       EMBEDPDF_TSAN: 1
-      PDF_PATH: ${{ inputs.pdf_path }}
-      SOAK_THREADS: ${{ inputs.threads }}
-      SOAK_ITERATIONS: ${{ inputs.iterations }}
+      PDF_PATHS: ${{ inputs.pdf_paths }}
+      SOAK_THREADS: ${{ inputs.threads || '4' }}
+      SOAK_ITERATIONS: ${{ inputs.iterations || '3' }}
       SOAK_OUT: out/embedpdf-runtime-thread-soak-linux-x64
 
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.ref || github.ref_name }}
+          ref: ${{ inputs.ref || github.head_ref || github.ref_name }}
 
       - name: Install depot_tools
         shell: bash
@@ -63,9 +101,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$SOAK_OUT"
+          read -r -a pdfs <<< "${PDF_PATHS:-$DEFAULT_PDF_PATHS}"
           scripts/embedpdf-runtime/thread-soak-target.sh \
             linux-x64 \
-            "$PDF_PATH" \
+            "${pdfs[@]}" \
             -- \
             --threads="$SOAK_THREADS" \
             --iterations="$SOAK_ITERATIONS" \

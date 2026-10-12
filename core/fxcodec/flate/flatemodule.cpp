@@ -67,11 +67,12 @@ uint32_t FlateGetPossiblyTruncatedTotalIn(z_stream* context) {
 }
 
 size_t FlateCompress(pdfium::span<const uint8_t> src_span,
-                     pdfium::span<uint8_t> dest_span) {
+                     pdfium::span<uint8_t> dest_span,
+                     int level) {
   const auto src_size = pdfium::checked_cast<unsigned long>(src_span.size());
   auto dest_size = pdfium::checked_cast<unsigned long>(dest_span.size());
-  if (compress(dest_span.data(), &dest_size, src_span.data(), src_size) !=
-      Z_OK) {
+  if (compress2(dest_span.data(), &dest_size, src_span.data(), src_size,
+                level) != Z_OK) {
     return 0;
   }
   return pdfium::checked_cast<size_t>(dest_size);
@@ -956,11 +957,17 @@ FlateModule::SinkDecodeStatus FlateModule::FlateDecodeToSink(
 
 // static
 DataVector<uint8_t> FlateModule::Encode(pdfium::span<const uint8_t> src_span) {
+  return Encode(src_span, Z_DEFAULT_COMPRESSION);
+}
+
+// static
+DataVector<uint8_t> FlateModule::Encode(pdfium::span<const uint8_t> src_span,
+                                        int level) {
   FX_SAFE_SIZE_T safe_dest_size = src_span.size();
   safe_dest_size += src_span.size() / 1000;
   safe_dest_size += 12;
   DataVector<uint8_t> dest_buf(safe_dest_size.ValueOrDie());
-  size_t compressed_size = FlateCompress(src_span, dest_buf);
+  size_t compressed_size = FlateCompress(src_span, dest_buf, level);
   dest_buf.resize(compressed_size);
   return dest_buf;
 }

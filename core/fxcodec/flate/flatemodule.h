@@ -118,6 +118,9 @@ class FlateModule {
       uint64_t* total_out);
 
   static DataVector<uint8_t> Encode(pdfium::span<const uint8_t> src_span);
+  // EmbedPDF: the same at zlib `level` (1, fastest, to 9, smallest).
+  static DataVector<uint8_t> Encode(pdfium::span<const uint8_t> src_span,
+                                    int level);
 
   FlateModule() = delete;
   FlateModule(const FlateModule&) = delete;

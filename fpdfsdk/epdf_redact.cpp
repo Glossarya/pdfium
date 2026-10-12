@@ -24,13 +24,13 @@
 #include "core/fpdfdoc/cpdf_appearancegenerator.h"
 #include "core/fpdfdoc/cpdf_interactiveform.h"
 #include "core/fxcrt/bytestring.h"
+#include "core/fxcrt/compiler_specific.h"
 #include "core/fxcrt/containers/contains.h"
 #include "core/fxcrt/numerics/safe_conversions.h"
+#include "core/fxcrt/span.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
-#include "fpdfsdk/epdf_annot_helpers.h"
+#include "fpdfsdk/epdf_object_helpers.h"
 #include "fpdfsdk/epdf_page_content_helpers.h"
-
-using epdf::GetAnnotDictFromFPDFAnnotation;
 
 namespace {
 
@@ -363,90 +363,56 @@ RetainPtr<const CPDF_Stream> ResolveRedactOverlay(
   return CPDF_AppearanceGenerator::BuildRedactOverlayForm(doc, redact_dict);
 }
 
-bool ApplySingleRedactionCore(CPDF_Page* page,
-                              const CPDF_Dictionary* redact_dict,
-                              uint32_t* out_removed_annot_count) {
-  if (!page || !redact_dict) {
-    return false;
-  }
-
-  // The caller may hand us a never-rendered page. Redaction MUST see the full
-  // object model: an unparsed page would silently remove nothing (a security
-  // failure, not a cosmetic one) and would let content regeneration reason
-  // from an empty object list.
-  page->ParseContent();
-
-  std::vector<RedactRegion> regions = GetRedactRegionsFromAnnotDict(redact_dict);
-  if (regions.empty()) {
-    return false;
-  }
-
-  std::vector<RemovedAnnotCandidate> removals;
-  RetainPtr<const CPDF_Array> annots = page->GetAnnotsArray();
-  if (annots) {
-    for (size_t i = 0; i < annots->size(); ++i) {
+// The indexes in the page's /Annots of the REDACT annotations to apply:
+// `marks`, each a REDACT annotation of the page, or every one on the page
+// when `marks` is empty. In /Annots order, each once. Nullopt when a mark
+// isn't a REDACT annotation of the page (another page's, or another
+// document's under the same object number).
+std::optional<std::vector<size_t>> MarkIndexes(
+    CPDF_Page* page,
+    pdfium::span<const FPDF_ANNOTATION> marks) {
+  std::vector<size_t> indexes;
+  if (marks.empty()) {
+    RetainPtr<const CPDF_Array> annots = page->GetAnnotsArray();
+    for (size_t i = 0; annots && i < annots->size(); ++i) {
       RetainPtr<const CPDF_Dictionary> annot_dict =
           ToDictionary(annots->GetDirectObjectAt(i));
-      if (!annot_dict) {
-        continue;
-      }
-      if (annot_dict->GetNameFor(pdfium::annotation::kSubtype) == "Redact") {
-        continue;
-      }
-      if (AnnotIntersectsAny(annot_dict.Get(), pdfium::span(regions))) {
-        AddRemovalCandidate(page, i, &removals);
+      if (annot_dict &&
+          annot_dict->GetNameFor(pdfium::annotation::kSubtype) == "Redact") {
+        indexes.push_back(i);
       }
     }
-
-    const int redact_index =
-        FindAnnotIndexOnPageByObjNumOrDict(page, redact_dict);
-    if (redact_index >= 0) {
-      AddRemovalCandidate(page, static_cast<size_t>(redact_index), &removals);
+    return indexes;
+  }
+  for (FPDF_ANNOTATION mark : marks) {
+    CPDF_AnnotContext* context = CPDFAnnotContextFromFPDFAnnotation(mark);
+    if (!context || !epdf::IsAnnotationOfPage(page, context)) {
+      return std::nullopt;
     }
-
-    // After the mark joins the removals, so its own popup goes too.
-    AddPopupCascade(page, &removals);
+    const CPDF_Dictionary* annot_dict = context->GetAnnotDict();
+    if (!annot_dict ||
+        annot_dict->GetNameFor(pdfium::annotation::kSubtype) != "Redact") {
+      return std::nullopt;
+    }
+    const int index = FindAnnotIndexOnPageByObjNumOrDict(page, annot_dict);
+    if (index < 0) {
+      return std::nullopt;
+    }
+    indexes.push_back(static_cast<size_t>(index));
   }
-
-  SortCandidatesByOriginalIndex(&removals);
-
-  const RedactResult redact_result = RedactTextInRegions(
-      page, pdfium::span(regions),
-      /*recurse_forms=*/true,
-      /*draw_black_boxes=*/false);
-  if (!redact_result.succeeded) {
-    return false;
-  }
-
-  RetainPtr<const CPDF_Stream> overlay =
-      ResolveRedactOverlay(page->GetDocument(), redact_dict);
-  if (overlay) {
-    CFX_FloatRect annot_rect =
-        redact_dict->GetRectFor(pdfium::annotation::kRect);
-    annot_rect.Normalize();
-    EpdfAppendFormXObjectToPage(page, overlay, annot_rect);
-  }
-
-  DetachWidgetsFromAcroForm(page, removals);
-  if (out_removed_annot_count) {
-    *out_removed_annot_count = CountRemovedNonRedactAnnots(removals);
-  }
-  RemoveCandidatesFromPage(page, removals);
-  return true;
+  std::sort(indexes.begin(), indexes.end());
+  indexes.erase(std::unique(indexes.begin(), indexes.end()), indexes.end());
+  return indexes;
 }
 
-bool ApplyAllRedactionsCore(CPDF_Page* page,
-                            uint32_t* out_removed_annot_count) {
-  if (!page) {
-    return false;
-  }
-
-  // See ApplySingleRedactionCore: redaction must never run on an unparsed
-  // object model.
-  page->ParseContent();
-
+// Applies the REDACT annotations at `indexes` of the page's /Annots
+// together: their regions are redacted in one pass, so each image under them
+// is read and written once, and their overlays are drawn in /Annots order.
+bool ApplyRedactionsCore(CPDF_Page* page,
+                         pdfium::span<const size_t> indexes,
+                         uint32_t* out_removed_annot_count) {
   RetainPtr<const CPDF_Array> annots = page->GetAnnotsArray();
-  if (!annots || annots->IsEmpty()) {
+  if (!annots || indexes.empty()) {
     return false;
   }
 
@@ -455,11 +421,10 @@ bool ApplyAllRedactionsCore(CPDF_Page* page,
       overlays;
   std::vector<RemovedAnnotCandidate> removals;
 
-  for (size_t i = 0; i < annots->size(); ++i) {
+  for (size_t i : indexes) {
     RetainPtr<const CPDF_Dictionary> annot_dict =
         ToDictionary(annots->GetDirectObjectAt(i));
-    if (!annot_dict ||
-        annot_dict->GetNameFor(pdfium::annotation::kSubtype) != "Redact") {
+    if (!annot_dict) {
       continue;
     }
 
@@ -485,6 +450,7 @@ bool ApplyAllRedactionsCore(CPDF_Page* page,
     return false;
   }
 
+  // Annotations the regions touch go too; other REDACT annotations stay.
   for (size_t i = 0; i < annots->size(); ++i) {
     RetainPtr<const CPDF_Dictionary> annot_dict =
         ToDictionary(annots->GetDirectObjectAt(i));
@@ -525,37 +491,32 @@ bool ApplyAllRedactionsCore(CPDF_Page* page,
 }  // namespace
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
-EPDFAnnot_ApplyRedaction(FPDF_PAGE page,
-                         FPDF_ANNOTATION annot,
+EPDFPage_ApplyRedactions(FPDF_PAGE page,
+                         const FPDF_ANNOTATION* marks,
+                         int count,
                          uint32_t* out_removed_annot_count) {
   if (out_removed_annot_count) {
     *out_removed_annot_count = 0;
   }
 
   CPDF_Page* pPage = CPDFPageFromFPDFPage(page);
-  if (!pPage) {
+  if (!pPage || count < 0 || (count > 0 && !marks) || (marks && count == 0)) {
     return false;
   }
+  // SAFETY: the caller passes `count` annotation handles at `marks`.
+  const pdfium::span<const FPDF_ANNOTATION> mark_span =
+      marks ? UNSAFE_BUFFERS(pdfium::span(marks, static_cast<size_t>(count)))
+            : pdfium::span<const FPDF_ANNOTATION>();
 
-  const CPDF_Dictionary* annot_dict = GetAnnotDictFromFPDFAnnotation(annot);
-  if (!annot_dict ||
-      annot_dict->GetNameFor(pdfium::annotation::kSubtype) != "Redact") {
+  // The caller may hand us a never-rendered page. Redaction MUST see the full
+  // object model: an unparsed page would silently remove nothing (a security
+  // failure, not a cosmetic one) and would let content regeneration reason
+  // from an empty object list.
+  pPage->ParseContent();
+
+  std::optional<std::vector<size_t>> indexes = MarkIndexes(pPage, mark_span);
+  if (!indexes.has_value()) {
     return false;
   }
-
-  return ApplySingleRedactionCore(pPage, annot_dict, out_removed_annot_count);
-}
-
-FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
-EPDFPage_ApplyRedactions(FPDF_PAGE page, uint32_t* out_removed_annot_count) {
-  if (out_removed_annot_count) {
-    *out_removed_annot_count = 0;
-  }
-
-  CPDF_Page* pPage = CPDFPageFromFPDFPage(page);
-  if (!pPage) {
-    return false;
-  }
-
-  return ApplyAllRedactionsCore(pPage, out_removed_annot_count);
+  return ApplyRedactionsCore(pPage, indexes.value(), out_removed_annot_count);
 }

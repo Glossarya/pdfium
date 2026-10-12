@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "core/fpdfapi/edit/cpdf_pagecontentgenerator.h"
+#include "core/fpdfapi/edit/cpdf_redaction_copies.h"
 #include "core/fpdfapi/edit/cpdf_resourceuse.h"
 #include "core/fpdfapi/edit/cpdf_tounicodecmap.h"
 #include "core/fpdfapi/font/cpdf_tounicodemap.h"
@@ -657,6 +658,9 @@ RetainPtr<const CPDF_Stream> Type3Subsetter::WriteForm(CPDF_Form* form) {
   if (!form->CloneBackingStreamForWrite()) {
     return nullptr;
   }
+  // The copy holds the redacted drawing, and none of the original's other
+  // copies of it.
+  RemoveContentCopies(form->GetMutableDict().Get());
   // Written in full, its resources keep only the names it uses.
   form->MarkStreamDirty(0);
   CPDF_PageContentGenerator(form).GenerateContent();
@@ -725,7 +729,7 @@ RetainPtr<const CPDF_Dictionary> Type3Subsetter::ShownFontDict(
       continue;
     }
     proc_reads[name] = owned.resources;
-    RetainPtr<CPDF_Stream> proc_copy = ToStream(proc->Clone());
+    RetainPtr<CPDF_Stream> proc_copy = CopyWithoutContentCopies(proc.Get());
     proc_copy->GetMutableDict()->SetFor("Resources",
                                         std::move(owned.resources));
     proc_copies[name] = document_->AddIndirectObject(proc_copy);
@@ -757,6 +761,15 @@ RetainPtr<const CPDF_Dictionary> Type3Subsetter::ShownFontDict(
   if (!changed) {
     shown_[key] = dict;
     return dict;
+  }
+  // A kept glyph of a font copied here is part of the copy, so it holds no
+  // other copy of what the font drew, whether or not its resources changed.
+  for (const auto& [name, proc] : kept) {
+    if (!proc_copies.contains(name) &&
+        HasContentCopies(proc->GetDict().Get())) {
+      proc_copies[name] =
+          document_->AddIndirectObject(CopyWithoutContentCopies(proc.Get()));
+    }
   }
   if (!copy) {
     copy = pdfium::MakeRetain<CPDF_Dictionary>();
@@ -814,7 +827,8 @@ Replacements Type3Subsetter::ReplaceUses(const ContentUses& uses) {
 
 uint32_t Type3Subsetter::CopyContent(const ContentUses::Content& content,
                                      RetainPtr<CPDF_Dictionary> resources) {
-  RetainPtr<CPDF_Stream> stream = ToStream(content.stream->Clone());
+  RetainPtr<CPDF_Stream> stream =
+      CopyWithoutContentCopies(content.stream.Get());
   stream->GetMutableDict()->SetFor("Resources", std::move(resources));
   const uint32_t stream_objnum = document_->AddIndirectObject(stream);
   if (!content.IsSoftMask()) {

@@ -2100,7 +2100,8 @@ EPDFAnnot_SetDefaultAppearance(FPDF_ANNOTATION annot,
 
   auto internal_font = static_cast<CPDF_Annot::StandardFont>(font);
   return CPDF_AppearanceGenerator::UpdateDefaultAppearance(
-      doc, annot_dict.Get(), internal_font, font_size, CFX_Color(R, G, B));
+      doc, annot_dict.Get(), internal_font, font_size,
+      CFX_Color::MakeRGBBytes(R, G, B));
 }
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
@@ -2142,7 +2143,8 @@ EPDFAnnot_SetDefaultAppearanceRegisteredFont(FPDF_ANNOTATION annot,
   }
 
   return CPDF_AppearanceGenerator::UpdateDefaultAppearanceRegisteredFont(
-      doc, annot_dict.Get(), font_id, font_size, CFX_Color(R, G, B));
+      doc, annot_dict.Get(), font_id, font_size,
+      CFX_Color::MakeRGBBytes(R, G, B));
 }
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV

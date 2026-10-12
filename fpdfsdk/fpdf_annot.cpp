@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "constants/annotation_common.h"
+#include "constants/catalog.h"
 #include "core/fpdfapi/edit/cpdf_pagecontentgenerator.h"
 #include "core/fpdfapi/page/cpdf_annotcontext.h"
 #include "core/fpdfapi/page/cpdf_form.h"
@@ -269,8 +270,7 @@ RetainPtr<CPDF_Dictionary> SetExtGStateInResourceDict(
     CPDF_Document* doc,
     const CPDF_Dictionary* pAnnotDict,
     const ByteString& sBlendMode) {
-  auto pGSDict =
-      pdfium::MakeRetain<CPDF_Dictionary>(pAnnotDict->GetByteStringPool());
+  auto pGSDict = doc->New<CPDF_Dictionary>();
 
   // ExtGState represents a graphics state parameter dictionary.
   pGSDict->SetNewFor<CPDF_Name>("Type", "ExtGState");
@@ -293,8 +293,7 @@ RetainPtr<CPDF_Dictionary> SetExtGStateInResourceDict(
   // BM represents Blend Mode
   pGSDict->SetNewFor<CPDF_Name>("BM", sBlendMode);
 
-  auto pExtGStateDict =
-      pdfium::MakeRetain<CPDF_Dictionary>(pAnnotDict->GetByteStringPool());
+  auto pExtGStateDict = doc->New<CPDF_Dictionary>();
 
   pExtGStateDict->SetFor("GS", pGSDict);
 
@@ -377,7 +376,7 @@ std::optional<CFX_Color::TypeAndARGB> GetFreetextFontColor(
   CPDF_Document* doc = form ? form->GetInteractiveForm()->document() : nullptr;
   const CPDF_Dictionary* root_dict = doc ? doc->GetRoot() : nullptr;
   RetainPtr<const CPDF_Dictionary> acroform_dict =
-      root_dict ? root_dict->GetDictFor("AcroForm") : nullptr;
+      root_dict ? root_dict->GetDictFor(pdfium::catalog::kAcroForm) : nullptr;
   CPDF_DefaultAppearance default_appearance(annot_dict, acroform_dict);
   // EmbedPDF(annot-appearance): a /DA without a colour reads as black, the
   // colour the appearance draws.
@@ -1283,7 +1282,7 @@ FPDFAnnot_SetAP(FPDF_ANNOTATION annot,
     return false;
   }
 
-  auto stream_dict = pdfium::MakeRetain<CPDF_Dictionary>();
+  auto stream_dict = doc->New<CPDF_Dictionary>();
   stream_dict->SetNewFor<CPDF_Name>(pdfium::annotation::kType, "XObject");
   stream_dict->SetNewFor<CPDF_Name>(pdfium::annotation::kSubtype, "Form");
   stream_dict->SetRectFor("BBox", rect);
@@ -1606,7 +1605,7 @@ FPDFAnnot_SetFontColor(FPDF_FORMHANDLE handle,
   CPDF_Document* doc = form->GetInteractiveForm()->document();
   // EmbedPDF(own-appearance-generator): our generator, not upstream's.
   bool updated = CPDF_AppearanceGenerator::GenerateDefaultAppearanceWithColor(
-      doc, annot_dict, CFX_Color(R, G, B));
+      doc, annot_dict, CFX_Color::MakeRGBBytes(R, G, B));
   if (!updated) {
     return false;
   }

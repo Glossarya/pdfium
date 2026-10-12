@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 #include "build/build_config.h"
-#include "core/fxge/cfx_defaultrenderdevice.h"
+#include "core/fxge/cfx_renderdevice.h"
 #include "public/fpdf_flatten.h"
 #include "public/fpdfview.h"
 #include "testing/embedder_test.h"
@@ -134,6 +134,53 @@ TEST_F(FPDFFlattenEmbedderTest, FlattenShouldRemoveAcroForm) {
   EXPECT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
   ScopedSavedDoc saved_doc = OpenScopedSavedDocument();
   ASSERT_TRUE(saved_doc);
-  // TODO(crbug.com/498010830): this should be FORMTYPE_NONE
-  EXPECT_EQ(FORMTYPE_ACRO_FORM, FPDF_GetFormType(saved_doc.get()));
+  EXPECT_EQ(FORMTYPE_NONE, FPDF_GetFormType(saved_doc.get()));
+}
+
+TEST_F(FPDFFlattenEmbedderTest, FlattenSharedAnnotArrayKeepsAcroForm) {
+  ASSERT_TRUE(OpenDocument("bug_498010830_shared_annots.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+  EXPECT_EQ(FPDFPage_Flatten(page.get(), FLAT_NORMALDISPLAY), FLATTEN_SUCCESS);
+
+  EXPECT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
+  {
+    ScopedSavedDoc saved_doc = OpenScopedSavedDocument();
+    ASSERT_TRUE(saved_doc);
+    EXPECT_EQ(FORMTYPE_ACRO_FORM, FPDF_GetFormType(saved_doc.get()));
+  }
+  ClearString();
+
+  ScopedPage page1 = LoadScopedPage(1);
+  ASSERT_TRUE(page1);
+  EXPECT_EQ(FPDFPage_Flatten(page1.get(), FLAT_NORMALDISPLAY), FLATTEN_SUCCESS);
+
+  EXPECT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
+  ScopedSavedDoc saved_doc = OpenScopedSavedDocument();
+  ASSERT_TRUE(saved_doc);
+  EXPECT_EQ(FORMTYPE_NONE, FPDF_GetFormType(saved_doc.get()));
+}
+
+TEST_F(FPDFFlattenEmbedderTest, FlattenSharedWidgetAnnotKeepsAcroForm) {
+  ASSERT_TRUE(OpenDocument("bug_498010830_shared_widget.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+  EXPECT_EQ(FPDFPage_Flatten(page.get(), FLAT_NORMALDISPLAY), FLATTEN_SUCCESS);
+
+  EXPECT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
+  {
+    ScopedSavedDoc saved_doc = OpenScopedSavedDocument();
+    ASSERT_TRUE(saved_doc);
+    EXPECT_EQ(FORMTYPE_ACRO_FORM, FPDF_GetFormType(saved_doc.get()));
+  }
+  ClearString();
+
+  ScopedPage page1 = LoadScopedPage(1);
+  ASSERT_TRUE(page1);
+  EXPECT_EQ(FPDFPage_Flatten(page1.get(), FLAT_NORMALDISPLAY), FLATTEN_SUCCESS);
+
+  EXPECT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
+  ScopedSavedDoc saved_doc = OpenScopedSavedDocument();
+  ASSERT_TRUE(saved_doc);
+  EXPECT_EQ(FORMTYPE_NONE, FPDF_GetFormType(saved_doc.get()));
 }

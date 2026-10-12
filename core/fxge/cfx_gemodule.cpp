@@ -17,7 +17,23 @@ namespace {
 // destroyed on that thread.
 EPDF_TLS CFX_GEModule* g_GEModule = nullptr;
 
+#if BUILDFLAG(IS_WIN)
+WindowsPrintMode g_print_mode = WindowsPrintMode::kEmf;
+#endif
+
 }  // namespace
+
+#if BUILDFLAG(IS_WIN)
+// static
+void CFX_GEModule::SetPrintMode(WindowsPrintMode mode) {
+  g_print_mode = mode;
+}
+
+// static
+WindowsPrintMode CFX_GEModule::GetPrintMode() {
+  return g_print_mode;
+}
+#endif
 
 // static
 void CFX_GEModule::Create(const char** pUserFontPaths,

@@ -277,6 +277,7 @@ static_library("redaction_pathops") {
     "//third_party/skia/src/base/SkContainers.cpp",
     "//third_party/skia/src/base/SkCubics.cpp",
     "//third_party/skia/src/base/SkFloatingPoint.cpp",
+    "//third_party/skia/src/base/SkLog.cpp",
     "//third_party/skia/src/base/SkMalloc.cpp",
     "//third_party/skia/src/base/SkQuads.cpp",
     "//third_party/skia/src/base/SkSafeMath.cpp",
@@ -320,6 +321,15 @@ static_library("redaction_pathops") {
     "ext/google_logging.cc",
   ]
   sources += skia_pathops_sources
+
+  # Skia's assertions log through SkLog(), which a platform port prints.
+  if (is_win) {
+    sources += [ "//third_party/skia/src/ports/SkLog_win.cpp" ]
+  } else if (is_android) {
+    sources += [ "//third_party/skia/src/ports/SkLog_android.cpp" ]
+  } else {
+    sources += [ "//third_party/skia/src/ports/SkLog_stdio.cpp" ]
+  }
 
   if (!is_debug) {
     configs -= [ "//build/config/compiler:default_optimization" ]

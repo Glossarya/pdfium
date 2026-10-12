@@ -87,6 +87,13 @@ source_set("fxcodec") {
     "//third_party:jpeg",
   ]
   defines = []
+  if (pdf_enable_brotli) {
+    sources += [
+      "brotli/brotli_decoder.cpp",
+      "brotli/brotli_decoder.h",
+    ]
+    deps += [ "//third_party/brotli:dec" ]
+  }
   if (pdf_enable_xfa) {
     sources += [
       "cfx_codec_memory.cpp",
@@ -184,4 +191,8 @@ pdfium_unittest_source_set("unittests") {
 pdfium_embeddertest_source_set("embeddertests") {
   sources = [ "jbig2/jbig2_embeddertest.cpp" ]
   pdfium_root_dir = "../../"
+  if (pdf_enable_brotli) {
+    sources += [ "brotli/brotli_embeddertest.cpp" ]
+    deps = [ "//third_party/brotli:dec" ]
+  }
 }

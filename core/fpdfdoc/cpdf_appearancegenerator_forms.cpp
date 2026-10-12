@@ -237,13 +237,12 @@ ByteString GenerateListBoxAP(const CPDF_Dictionary* annot_dict,
         CFX_FloatRect item_rect = CFX_FloatRect(
             body_rect.left, fy - item_height, body_rect.right, fy);
         body_stream << "q\n"
-                    << GenerateColorAP(
-                           CFX_Color(CFX_Color::Type::kRGB, 0, 51.0f / 255.0f,
-                                     113.0f / 255.0f),
-                           PaintOperation::kFill);
+                    << GenerateColorAP(CFX_Color::MakeRGB(0, 51.0f / 255.0f,
+                                                          113.0f / 255.0f),
+                                       PaintOperation::kFill);
         WriteRect(body_stream, item_rect) << " re f\nQ\n";
         body_stream << "BT\n"
-                    << GenerateColorAP(CFX_Color(CFX_Color::Type::kGray, 1),
+                    << GenerateColorAP(CFX_Color::MakeGray(1),
                                        PaintOperation::kFill)
                     << GenerateEditAP(provider.GetFontMap(), vt.GetIterator(),
                                       CFX_PointF(0.0f, fy), true, 0)
@@ -556,7 +555,7 @@ CFX_Color CheckSymbolColor(CPDF_Document* doc,
       CPDF_DefaultAppearance(annot_dict, acroform.Get()).GetColor();
   if (!color.has_value() ||
       color->nColorType == CFX_Color::Type::kTransparent) {
-    return CFX_Color(CFX_Color::Type::kRGB, 0, 0, 0);
+    return CFX_Color::MakeRGB(0, 0, 0);
   }
   return color.value();
 }

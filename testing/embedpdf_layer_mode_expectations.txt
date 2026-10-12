@@ -33,7 +33,6 @@ EPDFAttachmentEmbedderTest.SetNameKeepsTheRestOfTheFileSpec A base attachment mu
 # --- Layer behaviour by design.
 FPDFDocEmbedderTest.DeletePageAndSaveWithBookmarks A layer save appends: the base's bytes, deleted page included, stay in the file.
 FPDFDocEmbedderTest.DeletePageAndSaveWithCustomObject A layer save appends: the base's bytes, deleted page included, stay in the file.
-FPDFFlattenEmbedderTest.FlatWithBadFont A layer save appends: the base's bytes stay in the file.
 FPDFCatalogTest.SetLanguageExistingDocument The test holds the catalog pointer across a write; copy-up puts the new value in a new object (rule overlay-epoch).
 CPDFParserEmbedderTest.Bug828049 A layer's page lookup fails closed on a broken page tree instead of upstream's mutating repair (rule reads-dont-write); the page doesn't load.
 FPDFTextEmbedderTest.Bug782596 A layer's page lookup fails closed on a broken page tree instead of upstream's mutating repair (rule reads-dont-write); the page doesn't load.

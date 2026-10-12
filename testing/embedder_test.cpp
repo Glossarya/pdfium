@@ -30,6 +30,7 @@
 #include "public/fpdf_text.h"
 #include "public/fpdfview.h"
 #include "testing/embedder_test_environment.h"
+#include "testing/embedpdf_layer_mode.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/image_diff/image_diff_png.h"
 #include "testing/test_loader.h"
@@ -685,8 +686,10 @@ bool EmbedderTest::OpenDocumentHelper(const char* password,
       return false;
     }
     network_simulator->SetWholeFileAvailable();
-    document->reset(
-        FPDF_LoadCustomDocument(network_simulator->GetFileAccess(), password));
+    // EmbedPDF(layer-mode): EPDF_EMBEDDER_LAYER_MODE=1 opens a layer over a
+    // frozen base instead.
+    document->reset(embedpdf_test::LoadCustomDocumentForTest(
+        network_simulator->GetFileAccess(), password));
     document_ptr = document->get();
     if (!document_ptr) {
       return false;
@@ -704,6 +707,8 @@ bool EmbedderTest::OpenDocumentHelper(const char* password,
 
 void EmbedderTest::CloseDocument() {
   FORM_DoDocumentAAction(form_handle(), FPDFDOC_AACTION_WC);
+  // EmbedPDF(layer-mode): report what the test left in the layer.
+  embedpdf_test::NoteClosingDocument(document());
   form_handle_.reset();
   document_.reset();
   avail_.reset();
@@ -813,7 +818,9 @@ FPDF_PAGE EmbedderTest::LoadPageCommon(int page_index, bool do_events) {
     return nullptr;
   }
 
-  if (do_events) {
+  // EmbedPDF(layer-mode): the engine never drives the form-fill environment,
+  // so layer mode sends it no page events.
+  if (do_events && !embedpdf_test::IsLayerModeEnabled()) {
     FORM_OnAfterLoadPage(page, form_handle());
     FORM_DoPageAAction(page, form_handle(), FPDFPAGE_AACTION_OPEN);
   }
@@ -834,7 +841,9 @@ void EmbedderTest::UnloadPageCommon(FPDF_PAGE page, bool do_events) {
   int page_index = GetPageNumberForLoadedPage(page);
   CHECK_GE(page_index, 0);
 
-  if (do_events) {
+  // EmbedPDF(layer-mode): the engine never drives the form-fill environment,
+  // so layer mode sends it no page events.
+  if (do_events && !embedpdf_test::IsLayerModeEnabled()) {
     FORM_DoPageAAction(page, form_handle(), FPDFPAGE_AACTION_CLOSE);
     FORM_OnBeforeClosePage(page, form_handle());
   }
@@ -882,7 +891,11 @@ ScopedFPDFBitmap EmbedderTest::RenderPageWithFlags(FPDF_PAGE page,
     return nullptr;
   }
   FPDF_RenderPageBitmap(bitmap.get(), page, 0, 0, width, height, 0, flags);
-  FPDF_FFLDraw(handle, bitmap.get(), page, 0, 0, width, height, 0, flags);
+  // EmbedPDF(layer-mode): no form-fill drawing in layer mode, as in the
+  // engine; FPDF_FFLDraw would create the form-fill page view.
+  if (!embedpdf_test::IsLayerModeEnabled()) {
+    FPDF_FFLDraw(handle, bitmap.get(), page, 0, 0, width, height, 0, flags);
+  }
   return bitmap;
 }
 
@@ -998,6 +1011,8 @@ FPDF_DOCUMENT EmbedderTest::OpenSavedDocumentWithPassword(
 void EmbedderTest::CloseSavedDocument() {
   CHECK(saved_document());
 
+  // EmbedPDF(layer-mode): report what the test left in the layer.
+  embedpdf_test::NoteClosingDocument(saved_document());
   saved_form_handle_.reset();
   saved_document_.reset();
   saved_avail_.reset();
@@ -1018,8 +1033,12 @@ FPDF_PAGE EmbedderTest::LoadSavedPage(int page_index) {
     return nullptr;
   }
 
-  FORM_OnAfterLoadPage(page, saved_form_handle());
-  FORM_DoPageAAction(page, saved_form_handle(), FPDFPAGE_AACTION_OPEN);
+  // EmbedPDF(layer-mode): the engine never drives the form-fill environment,
+  // so layer mode sends it no page events.
+  if (!embedpdf_test::IsLayerModeEnabled()) {
+    FORM_OnAfterLoadPage(page, saved_form_handle());
+    FORM_DoPageAAction(page, saved_form_handle(), FPDFPAGE_AACTION_OPEN);
+  }
   saved_page_map_[page_index] = page;
   return page;
 }
@@ -1030,8 +1049,12 @@ void EmbedderTest::CloseSavedPage(FPDF_PAGE page) {
   int page_index = GetPageNumberForSavedPage(page);
   CHECK_GE(page_index, 0);
 
-  FORM_DoPageAAction(page, saved_form_handle(), FPDFPAGE_AACTION_CLOSE);
-  FORM_OnBeforeClosePage(page, saved_form_handle());
+  // EmbedPDF(layer-mode): the engine never drives the form-fill environment,
+  // so layer mode sends it no page events.
+  if (!embedpdf_test::IsLayerModeEnabled()) {
+    FORM_DoPageAAction(page, saved_form_handle(), FPDFPAGE_AACTION_CLOSE);
+    FORM_OnBeforeClosePage(page, saved_form_handle());
+  }
   FPDF_ClosePage(page);
 
   saved_page_map_.erase(page_index);

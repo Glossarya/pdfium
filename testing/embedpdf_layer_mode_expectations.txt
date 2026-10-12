@@ -1,0 +1,48 @@
+# Embedder tests that fail only in layer mode, read by
+# testing/tools/run_layer_mode.py: `<glob> <reason>` per line.
+# A reason starting with BUG names a fork bug still to fix; everything else is
+# a known, accepted difference. Triage of Oct 12 2026 (upstream-sync plan, P2).
+
+# --- The form-fill environment. Layer mode never drives it (the engine never
+# starts one), and it isn't layer-safe: it writes widget and annotation
+# dictionaries directly.
+CPWLEditEmbedderTest.* Drives the form-fill environment.
+CPWLEditMultilineEmbedderTest.* Drives the form-fill environment.
+CPWLComboBoxEditEmbedderTest.* Drives the form-fill environment.
+CPWLSpecialButtonEmbedderTest.* Drives the form-fill environment.
+CFFLComboBoxEmbedderTest.* Drives the form-fill environment.
+FPDFFormFill*.* Drives the form-fill environment.
+CPDFSDKBAAnnotTest.* Drives the form-fill environment.
+CPDFSDKAnnotIteratorTest.* Drives the form-fill environment.
+FPDFAnnotEmbedderTest.FocusableAnnotSubtypes Drives the form-fill environment.
+FPDFProgressiveRenderEmbedderTest.RenderFormWithColorScheme Drives the form-fill environment.
+FPDFAnnotEmbedderTest.GetFontSize* Needs the form-fill page view (FPDF_FORMHANDLE APIs).
+FPDFAnnotEmbedderTest.GetFontColor Needs the form-fill page view (FPDF_FORMHANDLE APIs).
+FPDFAnnotEmbedderTest.IsChecked* Needs the form-fill page view (FPDF_FORMHANDLE APIs).
+FPDFAnnotEmbedderTest.GetFormFieldExportValue* Needs the form-fill page view (FPDF_FORMHANDLE APIs).
+FPDFFlattenEmbedderTest.Bug890322 Pixel test of a form; layer mode doesn't draw with FPDF_FFLDraw.
+FPDFFlattenEmbedderTest.Bug896366 Pixel test of a form; layer mode doesn't draw with FPDF_FFLDraw.
+
+# --- Upstream write APIs the engine doesn't call; they write in place, past
+# the layer's copy-up door. Make one layer-safe before the engine uses it.
+FPDFAnnotEmbedderTest.SetFormFieldFlags FPDFAnnot_SetFormFieldFlags writes the field dictionary in place.
+FPDFEditEmbedderTest.TransformAnnot FPDFPage_TransformAnnots writes /Rect in place.
+FPDFTransformEmbedderTest.TransFormWithClipWithPatterns FPDFPage_TransFormWithClip writes pattern matrices in place.
+FPDFAttachmentEmbedderTest.SetNameKeepsTheRestOfTheFileSpec A base attachment must be opened for write first; the engine only describes attachments it added or opened with EPDFAnnot_GetFileAttachmentForWrite.
+
+# --- Layer behaviour by design.
+FPDFDocEmbedderTest.DeletePageAndSaveWithBookmarks A layer save appends: the base's bytes, deleted page included, stay in the file.
+FPDFDocEmbedderTest.DeletePageAndSaveWithCustomObject A layer save appends: the base's bytes, deleted page included, stay in the file.
+FPDFFlattenEmbedderTest.FlatWithBadFont A layer save appends: the base's bytes stay in the file.
+FPDFCatalogTest.SetLanguageExistingDocument The test holds the catalog pointer across a write; copy-up puts the new value in a new object (rule overlay-epoch).
+CPDFParserEmbedderTest.Bug828049 A layer's page lookup fails closed on a broken page tree instead of upstream's mutating repair (rule reads-dont-write); the page doesn't load.
+FPDFTextEmbedderTest.Bug782596 A layer's page lookup fails closed on a broken page tree instead of upstream's mutating repair (rule reads-dont-write); the page doesn't load.
+FPDFViewEmbedderTest.LayerDiagnosticsRejectPlainDocuments The test checks a plain document; in layer mode it opens a layer.
+FPDFViewEmbedderTest.UnSupportedOperationsLoadCustomDocument EPDF_LoadBaseDocument doesn't call the unsupported-feature handler; the engine doesn't set one.
+FPDFViewEmbedderTest.DocumentHasValidCrossReferenceTable FPDF_DocumentHasValidCrossReferenceTable reports false on a layer; the engine doesn't call it.
+FPDFViewEmbedderTest.LoadDocumentWithEmptyXRefConsistently FPDF_DocumentHasValidCrossReferenceTable reports false on a layer; the engine doesn't call it.
+
+# --- Fork bugs found by layer mode.
+EPDFRedactEmbedderTest.FullyRemovedSpanLeavesNoPropertyOrStructureResidue BUG (rule view-scope): EPDFPage_ApplyRedactions reads references without a CPDF_DocumentViewScope (ApplyAllRedactionsCore), so it can read the base's old version of an object the layer changed.
+FPDFAnnotEmbedderTest.ApplyRedactionFallsBackToRectForNonFiniteQuad BUG (rule view-scope): EPDFAnnot_ApplyRedaction reads references without a CPDF_DocumentViewScope (ApplySingleRedactionCore).
+RichTextParityTest.* BUG (rule view-scope): rich-text font lookup (ResolveRichFace -> DocumentFontDicts) reads references without a CPDF_DocumentViewScope.

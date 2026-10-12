@@ -1233,12 +1233,15 @@ ByteString EnsureFontInAcroFormDR(CPDF_Document* doc,
     }
   }
 
-  ByteString resource_key =
+  const ByteString base_key =
       ByteString::Format("FXF_%s", PDF_NameEncode(base_font_name).c_str());
-
-  while (font_res->KeyExist(resource_key.AsStringView())) {
-    static int suffix = 1;
-    resource_key = ByteString::Format("%s_%d", resource_key.c_str(), suffix++);
+  ByteString resource_key = base_key;
+  // The first free FXF_<name>_<n>, counted per call: a function-local static
+  // counter was shared by every thread and made names depend on earlier
+  // documents (rule thread-confined-globals).
+  for (int suffix = 1; font_res->KeyExist(resource_key.AsStringView());
+       ++suffix) {
+    resource_key = ByteString::Format("%s_%d", base_key.c_str(), suffix);
   }
 
   // Build a minimal Type1 font dictionary

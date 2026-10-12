@@ -35,7 +35,8 @@ upstream-sync plan lands (layer mode, the globals inventory).
 changes every session's document and every later save.
 **Where.** `CPDF_LayerDocument::GetMutableIndirectObject`, `PromoteFromBase`, the
 `CloneForHolder` family on the object classes, stream bytes shared through `CFX_SharedBytes`.
-**Guarded by.** `cpdf_layer_document_unittest.cpp`, `cpdf_layer_transaction_unittest.cpp`.
+**Guarded by.** `cpdf_layer_document_unittest.cpp`, `cpdf_layer_transaction_unittest.cpp`;
+layer mode (`testing/tools/run_layer_mode.py`), which runs upstream's tests over a frozen base.
 **When upstream touches this.** New code that writes an object it didn't create or get from the
 door: route it through the door, or open its owner. A new `Clone` variant needs a `CloneForHolder`
 twin.
@@ -116,7 +117,9 @@ edits, and the copy happens outside any transaction. On a frozen base it writes 
 (`CreateForReading`), `cpdf_linklist.cpp` and `cpdf_annotlist.cpp`; in-memory appearances in
 `cpdf_annot.cpp`.
 **Guarded by.** `cpdf_read_only_graph_guard_unittest.cpp`,
-`FPDFAnnotEmbedderTest.DrawingARedactionMarkWithoutAppearanceWritesNone`.
+`FPDFAnnotEmbedderTest.DrawingARedactionMarkWithoutAppearanceWritesNone`; layer mode's list of
+tests that write (`testing/embedpdf_layer_mode_writers.txt`): a test that only reads must leave
+nothing in a layer.
 **When upstream touches this.** A new read path that calls `GetMutable*` or the appearance
 generator: switch it to const access.
 
@@ -389,8 +392,8 @@ globals allowlist as a setting written once at start-up.
 **Why.** The native server runs PDFium on several threads in one process, each with its own copy of
 PDFium's globals.
 **Where.** `core/fxcrt/epdf_tls.h`, the `EPDF_TLS` globals, the lcms fixes.
-**Guarded by.** The ThreadSanitizer soak (`testing/tools/epdf_thread_soak.cpp`); the globals
-inventory (planned).
+**Guarded by.** The globals inventory (`scripts/embedpdf-runtime/check-globals.py` with
+`globals-allowlist.txt`); the ThreadSanitizer soak (`testing/tools/epdf_thread_soak.cpp`).
 **When upstream touches this.** A conflict block that contains `EPDF_TLS` is never resolved by
 taking upstream's side without putting `EPDF_TLS` back, on the variable renamed or not.
 
@@ -408,8 +411,24 @@ thread-local, or identical on every thread and on the allowlist.
 **Why.** PDFium's reference counts are plain integers; copying a shared one from two threads is a
 race.
 **Where.** Everywhere.
-**Guarded by.** The thread soak; the globals inventory (planned).
+**Guarded by.** The thread soak; the globals inventory (`check-globals.py`).
 **When upstream touches this.** A new function-local static of those types.
+
+## Tests
+
+### layer-mode
+**Rule.** With `EPDF_EMBEDDER_LAYER_MODE=1`, the embedder test harness opens every file as a fresh
+layer over a frozen base. Like the engine, it sends the form-fill environment no page events and
+doesn't draw with it.
+**Why.** Upstream's embedder tests then run through the layer's read and write paths, so a new
+upstream feature is tested on a layer without anyone writing a layer test.
+**Where.** `testing/embedpdf_layer_mode.{h,cpp}`, four hooks in `testing/embedder_test.cpp`,
+`testing/tools/run_layer_mode.py` with `testing/embedpdf_layer_mode_expectations.txt` and
+`testing/embedpdf_layer_mode_writers.txt`.
+**Guarded by.** `run_layer_mode.py` fails when no test leaves an object in a layer, which is what
+happens when a hook stops working.
+**When upstream touches this.** `EmbedderTest`'s document opening, page loading and page
+rendering: keep the hooks.
 
 ## Build
 

@@ -9,6 +9,8 @@ source_set("edit") {
   sources = [
     "cpdf_creator.cpp",
     "cpdf_creator.h",
+    "cpdf_image_redactor.cpp",
+    "cpdf_image_redactor.h",
     "cpdf_npagetooneexporter.cpp",
     "cpdf_npagetooneexporter.h",
     "cpdf_pagecontentgenerator.cpp",

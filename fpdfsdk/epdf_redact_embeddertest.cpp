@@ -3,6 +3,7 @@
 
 #include "public/epdf_redact.h"
 
+#include <functional>
 #include <memory>
 #include <set>
 #include <string>
@@ -20,6 +21,7 @@
 #include "core/fpdfapi/parser/cpdf_reference.h"
 #include "core/fpdfapi/parser/cpdf_stream.h"
 #include "core/fpdfapi/parser/cpdf_stream_acc.h"
+#include "core/fxcodec/flate/flatemodule.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "public/cpp/fpdf_scopers.h"
 #include "public/fpdf_annot.h"
@@ -240,6 +242,89 @@ std::vector<RetainPtr<const CPDF_Dictionary>> PageImages(CPDF_Document* doc,
     }
   }
   return images;
+}
+
+// A 20 x 10 checkerboard of 2 x 2 blocks, CCITT G4 coded, in hex.
+constexpr char kCheckerG4[] =
+    "2f97cbe5f0bff8410410410410417ff86104104104105ffc20820820820820bf"
+    "fc3082082082082ffe002002";
+
+// The same checkerboard as a JBIG2 generic region coded with MMR, in hex.
+constexpr char kCheckerJbig2[] =
+    "0000000030000100000013000000140000000a00000000000000000000000000"
+    "00012700010000003e000000140000000a000000000000000000012f97cbe5f0"
+    "bff8410410410410417ff86104104104105ffc20820820820820bffc30820820"
+    "82082ffe0020020000000231000100000000";
+
+// A 300 x 300 page drawing `image` (a 20 x 10 image's stream object) at
+// x 50..250, y 100..200 after `before`, with `more` objects from 6 on.
+// Rendered at 600 x 600, a sample is 20 pixels: the image is x 100..500,
+// y 200..400, and a mark over x 50..90 covers its first four columns.
+std::string ImagePage(const std::string& image,
+                      const std::string& before = "",
+                      const std::vector<std::string>& more = {}) {
+  std::vector<std::string> objects = {
+      "<< /Type /Catalog /Pages 2 0 R >>",
+      "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R "
+      "/Resources << /XObject << /Im 5 0 R >> >> >>",
+      StreamObject("", before + " q 200 0 0 100 50 100 cm /Im Do Q"),
+      image,
+  };
+  objects.insert(objects.end(), more.begin(), more.end());
+  return PdfOf(objects);
+}
+
+// 20 x 10 samples of `components` components, `bits` bits each, packed into
+// rows from the top: component c of sample (x, y) is `sample(x, y, c)`.
+std::string Samples(int components,
+                    int bits,
+                    const std::function<uint32_t(int, int, int)>& sample) {
+  const size_t pitch = (20 * components * bits + 7) / 8;
+  std::string data(pitch * 10, '\0');
+  for (int y = 0; y < 10; ++y) {
+    for (int x = 0; x < 20; ++x) {
+      for (int c = 0; c < components; ++c) {
+        const uint32_t value = sample(x, y, c);
+        const size_t index = static_cast<size_t>(x) * components + c;
+        if (bits == 16) {
+          data[y * pitch + index * 2] = static_cast<char>(value >> 8);
+          data[y * pitch + index * 2 + 1] = static_cast<char>(value);
+          continue;
+        }
+        const size_t bit = index * bits;
+        const int shift = 8 - bits - static_cast<int>(bit % 8);
+        data[y * pitch + bit / 8] = static_cast<char>(
+            static_cast<uint8_t>(data[y * pitch + bit / 8]) | (value << shift));
+      }
+    }
+  }
+  return data;
+}
+
+std::string Flate(const std::string& data) {
+  DataVector<uint8_t> compressed =
+      fxcodec::FlateModule::Encode(pdfium::as_byte_span(data));
+  return std::string(compressed.begin(), compressed.end());
+}
+
+// The only image page 0 names, whatever its name (content regeneration can
+// rename it).
+RetainPtr<const CPDF_Stream> OnlyImage(FPDF_DOCUMENT doc) {
+  CPDF_Document* pdf = CPDFDocumentFromFPDFDocument(doc);
+  CPDF_DocumentViewScope document_view(pdf);
+  RetainPtr<const CPDF_Dictionary> xobjects =
+      pdf->GetPageDictionary(0)->GetDictFor("Resources")->GetDictFor("XObject");
+  std::vector<RetainPtr<const CPDF_Stream>> images;
+  CPDF_DictionaryLocker locker(xobjects.Get());
+  for (const auto& [name, object] : locker) {
+    RetainPtr<const CPDF_Stream> stream = ToStream(object->GetDirect());
+    if (stream && stream->GetDict()->GetNameFor("Subtype") == "Image") {
+      images.push_back(std::move(stream));
+    }
+  }
+  EXPECT_EQ(1u, images.size());
+  return images.empty() ? nullptr : images[0];
 }
 
 }  // namespace
@@ -1134,5 +1219,207 @@ TEST_F(EPDFRedactEmbedderTest, CopiesOfAType3FontsContentHoldNoOtherCopies) {
       CloseSavedPage(reloaded);
       CloseSavedDocument();
     }
+  }
+}
+
+// A redacted image whose filters leave plain samples keeps them: its colour
+// space, bits per component and /Decode stay, it is written with Flate, the
+// samples under the mark become paper (white, or no ink) and every other
+// sample is the one it was.
+TEST_F(EPDFRedactEmbedderTest, ARedactedImageKeepsItsSamplesAndFormat) {
+  const std::string gray = "/ColorSpace /DeviceGray /BitsPerComponent ";
+  const std::string flate = " /Filter /FlateDecode";
+  struct ImageCase {
+    const char* name;
+    std::string entries;
+    std::string data;
+  };
+  const std::string checker = Samples(1, 1, [](int x, int y, int) {
+    return static_cast<uint32_t>((x / 2 + y / 2) % 2);
+  });
+  const std::string gradient = Samples(1, 8, [](int x, int y, int) {
+    return static_cast<uint32_t>(20 + x * 9 + y);
+  });
+  const ImageCase cases[] = {
+      {"gray, 8 bits", gray + "8" + flate, Flate(gradient)},
+      {"gray, 1 bit", gray + "1" + flate, Flate(checker)},
+      {"gray, 4 bits", gray + "4" + flate,
+       Flate(Samples(1, 4, [](int x, int, int) { return x % 12u; }))},
+      {"gray, 16 bits", gray + "16" + flate,
+       Flate(Samples(1, 16, [](int x, int, int) { return x * 3000u; }))},
+      {"RGB", "/ColorSpace /DeviceRGB /BitsPerComponent 8" + flate,
+       Flate(Samples(3, 8,
+                     [](int x, int, int c) {
+                       return c == 0 ? x * 12u : c == 1 ? 50u : 200u;
+                     }))},
+      {"CMYK", "/ColorSpace /DeviceCMYK /BitsPerComponent 8" + flate,
+       Flate(Samples(4, 8,
+                     [](int x, int, int c) {
+                       return c == 0 ? x * 10u : c == 2 ? 100u : 20u;
+                     }))},
+      {"Indexed, white at index 2",
+       "/ColorSpace [/Indexed /DeviceRGB 3 <000000FF0000FFFFFF00FF00>] "
+       "/BitsPerComponent 8" +
+           flate,
+       Flate(Samples(1, 8, [](int x, int, int) { return x % 2 ? 1u : 3u; }))},
+      {"Separation",
+       "/ColorSpace [/Separation /Spot /DeviceCMYK << /FunctionType 2 "
+       "/Domain [0 1] /C0 [0 0 0 0] /C1 [0 1 1 0] /N 1 >>] "
+       "/BitsPerComponent 8" +
+           flate,
+       Flate(Samples(1, 8, [](int x, int, int) { return 128u + x * 6; }))},
+      {"gray, inverted /Decode", gray + "8 /Decode [1 0]" + flate,
+       Flate(Samples(1, 8, [](int x, int, int) { return 150u + x * 5; }))},
+      {"gray through ASCIIHex", gray + "8 /Filter /ASCIIHexDecode",
+       [&] {
+         std::string hex;
+         for (unsigned char c : gradient) {
+           static constexpr char kDigits[] = "0123456789ABCDEF";
+           hex += kDigits[c >> 4];
+           hex += kDigits[c & 15];
+         }
+         return hex + ">";
+       }()},
+      {"CCITT G4",
+       gray + "1 /Filter [/ASCIIHexDecode /CCITTFaxDecode] /DecodeParms "
+              "[null << /K -1 /Columns 20 /Rows 10 >>]",
+       std::string(kCheckerG4) + ">"},
+      {"JBIG2", gray + "1 /Filter [/ASCIIHexDecode /JBIG2Decode]",
+       std::string(kCheckerJbig2) + ">"},
+      {"stencil", "/ImageMask true /BitsPerComponent 1" + flate,
+       Flate(checker)},
+  };
+  for (const ImageCase& image : cases) {
+    const std::string input = ImagePage(
+        StreamObject("/Type /XObject /Subtype /Image /Width 20 /Height 10 " +
+                         image.entries,
+                     image.data),
+        "1 0 0 rg");
+    ScopedFPDFDocument source_doc(
+        FPDF_LoadMemDocument64(input.data(), input.size(), nullptr));
+    ASSERT_TRUE(source_doc);
+    RetainPtr<const CPDF_Stream> source_image = OnlyImage(source_doc.get());
+    ASSERT_TRUE(source_image);
+    RetainPtr<const CPDF_Dictionary> source = source_image->GetDict();
+    for (bool layer : {false, true}) {
+      SCOPED_TRACE(std::string(image.name) +
+                   (layer ? ", layer transaction" : ", document"));
+      OpenedPdf opened = OpenPdf(input, layer);
+      ASSERT_TRUE(opened.doc);
+      ScopedFPDFPage page(FPDF_LoadPage(opened.doc.get(), 0));
+      ASSERT_TRUE(page);
+      auto before = Render(page.get());
+      ASSERT_NO_FATAL_FAILURE(MarkAndApply(opened.doc.get(), page.get(), layer,
+                                           {50, 200, 90, 100}));
+      auto after = Render(page.get());
+      const std::pair<int, int> hole[] = {{110, 210}, {150, 300}, {130, 390}};
+      for (const auto& [x, y] : hole) {
+        EXPECT_EQ(0xffffffu, Pixel(after.get(), x, y)) << x << ", " << y;
+      }
+      ExpectSamePixels(before.get(), after.get(), 200, 200, 500, 400);
+
+      RetainPtr<const CPDF_Stream> kept_image = OnlyImage(opened.doc.get());
+      ASSERT_TRUE(kept_image);
+      RetainPtr<const CPDF_Dictionary> kept = kept_image->GetDict();
+      EXPECT_EQ("FlateDecode", kept->GetNameFor("Filter"));
+      EXPECT_FALSE(kept->KeyExist("DecodeParms"));
+      for (const char* key : {"BitsPerComponent", "Width", "Height"}) {
+        EXPECT_EQ(source->GetIntegerFor(key), kept->GetIntegerFor(key)) << key;
+      }
+      EXPECT_EQ(source->GetBooleanFor("ImageMask", false),
+                kept->GetBooleanFor("ImageMask", false));
+      EXPECT_EQ(source->KeyExist("Decode"), kept->KeyExist("Decode"));
+      RetainPtr<const CPDF_Object> space =
+          source->GetDirectObjectFor("ColorSpace");
+      RetainPtr<const CPDF_Object> kept_space =
+          kept->GetDirectObjectFor("ColorSpace");
+      ASSERT_EQ(!!space, !!kept_space);
+      if (space && space->IsName()) {
+        EXPECT_EQ(space->GetString(), kept_space->GetString());
+      } else if (space) {
+        ASSERT_TRUE(kept_space->IsArray());
+        EXPECT_EQ(space->AsArray()->GetByteStringAt(0),
+                  kept_space->AsArray()->GetByteStringAt(0));
+        EXPECT_EQ(space->AsArray()->size(), kept_space->AsArray()->size());
+      }
+
+      ClearString();
+      ASSERT_TRUE(FPDF_SaveAsCopy(opened.doc.get(), this, FPDF_NO_INCREMENTAL));
+      ASSERT_TRUE(OpenSavedDocument());
+      FPDF_PAGE reloaded = LoadSavedPage(0);
+      ASSERT_TRUE(reloaded);
+      auto saved = Render(reloaded);
+      ExpectSamePixels(after.get(), saved.get(), 100, 200, 500, 400);
+      CloseSavedPage(reloaded);
+      CloseSavedDocument();
+    }
+  }
+}
+
+// Kept samples are the image's own: only those under the mark change.
+TEST_F(EPDFRedactEmbedderTest, KeptSamplesChangeOnlyUnderTheMark) {
+  const std::string samples = Samples(1, 8, [](int x, int y, int) {
+    return static_cast<uint32_t>(20 + x * 9 + y);
+  });
+  const std::string input = ImagePage(StreamObject(
+      "/Type /XObject /Subtype /Image /Width 20 /Height 10 /ColorSpace "
+      "/DeviceGray /BitsPerComponent 8 /Filter /FlateDecode",
+      Flate(samples)));
+  for (bool layer : {false, true}) {
+    SCOPED_TRACE(layer ? "layer transaction" : "document");
+    OpenedPdf opened = OpenPdf(input, layer);
+    ASSERT_TRUE(opened.doc);
+    ScopedFPDFPage page(FPDF_LoadPage(opened.doc.get(), 0));
+    ASSERT_TRUE(page);
+    ASSERT_NO_FATAL_FAILURE(
+        MarkAndApply(opened.doc.get(), page.get(), layer, {50, 200, 90, 100}));
+    RetainPtr<const CPDF_Stream> kept = OnlyImage(opened.doc.get());
+    ASSERT_TRUE(kept);
+    std::string expected = samples;
+    for (int y = 0; y < 10; ++y) {
+      for (int x = 0; x < 4; ++x) {
+        expected[y * 20 + x] = static_cast<char>(0xFF);
+      }
+    }
+    EXPECT_EQ(expected, StreamText(kept.Get()));
+  }
+}
+
+// A soft mask keeps its samples too, opaque under the mark: the hole shows
+// as paper, not as what lies under the image.
+TEST_F(EPDFRedactEmbedderTest,
+       ARedactedImagesSoftMaskIsKeptAndOpaqueInTheHole) {
+  const std::string input = ImagePage(
+      StreamObject("/Type /XObject /Subtype /Image /Width 20 /Height 10 "
+                   "/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter "
+                   "/FlateDecode /SMask 6 0 R",
+                   Flate(std::string(200, '\x28'))),
+      "0 0 1 rg 50 100 200 100 re f",
+      {StreamObject("/Type /XObject /Subtype /Image /Width 20 /Height 10 "
+                    "/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter "
+                    "/FlateDecode",
+                    Flate(Samples(1, 8, [](int x, int, int) {
+                      return x < 10 ? 255u : 96u;
+                    })))});
+  for (bool layer : {false, true}) {
+    SCOPED_TRACE(layer ? "layer transaction" : "document");
+    OpenedPdf opened = OpenPdf(input, layer);
+    ASSERT_TRUE(opened.doc);
+    ScopedFPDFPage page(FPDF_LoadPage(opened.doc.get(), 0));
+    ASSERT_TRUE(page);
+    auto before = Render(page.get());
+    ASSERT_NO_FATAL_FAILURE(
+        MarkAndApply(opened.doc.get(), page.get(), layer, {50, 200, 90, 100}));
+    auto after = Render(page.get());
+    EXPECT_EQ(0xffffffu, Pixel(after.get(), 130, 300));
+    ExpectSamePixels(before.get(), after.get(), 200, 200, 500, 400);
+    RetainPtr<const CPDF_Stream> kept = OnlyImage(opened.doc.get());
+    ASSERT_TRUE(kept);
+    CPDF_Document* pdf = CPDFDocumentFromFPDFDocument(opened.doc.get());
+    CPDF_DocumentViewScope document_view(pdf);
+    RetainPtr<const CPDF_Stream> mask = kept->GetDict()->GetStreamFor("SMask");
+    ASSERT_TRUE(mask);
+    EXPECT_EQ("FlateDecode", mask->GetDict()->GetNameFor("Filter"));
+    EXPECT_EQ("DeviceGray", mask->GetDict()->GetNameFor("ColorSpace"));
   }
 }

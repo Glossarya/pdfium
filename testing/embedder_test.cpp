@@ -594,32 +594,31 @@ void EmbedderTest::CreateEmptyDocumentWithoutFormFillEnvironment() {
 }
 
 bool EmbedderTest::OpenDocument(const std::string& filename) {
-  return OpenDocumentWithOptions(filename, nullptr,
+  return OpenDocumentWithOptions(filename, "",
                                  LinearizeOption::kDefaultLinearize,
                                  JavaScriptOption::kEnableJavaScript);
 }
 
 bool EmbedderTest::OpenDocumentLinearized(const std::string& filename) {
-  return OpenDocumentWithOptions(filename, nullptr,
-                                 LinearizeOption::kMustLinearize,
+  return OpenDocumentWithOptions(filename, "", LinearizeOption::kMustLinearize,
                                  JavaScriptOption::kEnableJavaScript);
 }
 
 bool EmbedderTest::OpenDocumentWithPassword(const std::string& filename,
-                                            const char* password) {
+                                            const ByteString& password) {
   return OpenDocumentWithOptions(filename, password,
                                  LinearizeOption::kDefaultLinearize,
                                  JavaScriptOption::kEnableJavaScript);
 }
 
 bool EmbedderTest::OpenDocumentWithoutJavaScript(const std::string& filename) {
-  return OpenDocumentWithOptions(filename, nullptr,
+  return OpenDocumentWithOptions(filename, "",
                                  LinearizeOption::kDefaultLinearize,
                                  JavaScriptOption::kDisableJavaScript);
 }
 
 bool EmbedderTest::OpenDocumentWithOptions(const std::string& filename,
-                                           const char* password,
+                                           const ByteString& password,
                                            LinearizeOption linearize_option,
                                            JavaScriptOption javascript_option) {
   std::string file_path = PathService::GetTestFilePath(filename);
@@ -647,7 +646,7 @@ bool EmbedderTest::OpenDocumentWithOptions(const std::string& filename,
                             &form_handle_);
 }
 
-bool EmbedderTest::OpenDocumentHelper(const char* password,
+bool EmbedderTest::OpenDocumentHelper(const ByteString& password,
                                       LinearizeOption linearize_option,
                                       JavaScriptOption javascript_option,
                                       FakeFileAccess* network_simulator,
@@ -671,7 +670,7 @@ bool EmbedderTest::OpenDocumentHelper(const char* password,
       return false;
     }
 
-    document->reset(FPDFAvail_GetDocument(avail_ptr, password));
+    document->reset(FPDFAvail_GetDocument(avail_ptr, password.c_str()));
     document_ptr = document->get();
     if (!document_ptr) {
       return false;
@@ -707,7 +706,7 @@ bool EmbedderTest::OpenDocumentHelper(const char* password,
     // EmbedPDF(layer-mode): EPDF_EMBEDDER_LAYER_MODE=1 opens a layer over a
     // frozen base instead.
     document->reset(embedpdf_test::LoadCustomDocumentForTest(
-        network_simulator->GetFileAccess(), password));
+        network_simulator->GetFileAccess(), password.c_str()));
     document_ptr = document->get();
     if (!document_ptr) {
       return false;
@@ -992,12 +991,12 @@ EmbedderTest::ScopedSavedDoc EmbedderTest::OpenScopedSavedDocument() {
 }
 
 EmbedderTest::ScopedSavedDoc EmbedderTest::OpenScopedSavedDocumentWithPassword(
-    const char* password) {
+    const ByteString& password) {
   return ScopedSavedDoc(this, password);
 }
 
 FPDF_DOCUMENT EmbedderTest::OpenSavedDocument() {
-  return OpenSavedDocumentWithPassword(nullptr);
+  return OpenSavedDocumentWithPassword("");
 }
 
 // static
@@ -1008,7 +1007,7 @@ int EmbedderTest::BytesPerPixelForFormat(int format) {
 }
 
 FPDF_DOCUMENT EmbedderTest::OpenSavedDocumentWithPassword(
-    const char* password) {
+    const ByteString& password) {
   // Copy data to prevent clearing it before saved document close.
   saved_document_file_data_ = data_string_;
   saved_file_access_ = {
@@ -1162,14 +1161,14 @@ std::string EmbedderTest::HashBitmap(FPDF_BITMAP bitmap) {
   auto span = pdfium::span(static_cast<uint8_t*>(FPDFBitmap_GetBuffer(bitmap)),
                            static_cast<size_t>(stride) * height);
 
-  CRYPT_md5_context context = CRYPT_MD5Start();
+  CryptMd5Context context = CryptMd5Start();
   for (int i = 0; i < height; ++i) {
-    CRYPT_MD5Update(&context,
-                    span.subspan(static_cast<size_t>(i * stride),
-                                 static_cast<size_t>(usable_bytes_per_row)));
+    CryptMd5Update(&context,
+                   span.subspan(static_cast<size_t>(i * stride),
+                                static_cast<size_t>(usable_bytes_per_row)));
   }
   uint8_t digest[16];
-  CRYPT_MD5Finish(&context, digest);
+  CryptMd5Finish(&context, digest);
   return CryptToBase16(digest);
 }
 
@@ -1291,7 +1290,7 @@ EmbedderTest::ScopedSavedDoc::ScopedSavedDoc(EmbedderTest* test)
     : test_(test), doc_(test->OpenSavedDocument()) {}
 
 EmbedderTest::ScopedSavedDoc::ScopedSavedDoc(EmbedderTest* test,
-                                             const char* password)
+                                             const ByteString& password)
     : test_(test), doc_(test->OpenSavedDocumentWithPassword(password)) {}
 
 EmbedderTest::ScopedSavedDoc::ScopedSavedDoc(ScopedSavedDoc&& that) noexcept

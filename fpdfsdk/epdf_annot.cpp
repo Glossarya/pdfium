@@ -3353,7 +3353,7 @@ static bool SetContentFileIdentifier(CPDF_Document* doc) {
   }
   const auto bytes = text.str();
   std::array<uint8_t, 16> digest;
-  CRYPT_MD5Generate(pdfium::as_byte_span(bytes), digest);
+  CryptMd5Generate(pdfium::as_byte_span(bytes), digest);
   auto identifier = pdfium::MakeRetain<CPDF_Array>();
   identifier->AppendNew<CPDF_String>(digest, CPDF_String::DataType::kIsHex);
   identifier->AppendNew<CPDF_String>(digest, CPDF_String::DataType::kIsHex);

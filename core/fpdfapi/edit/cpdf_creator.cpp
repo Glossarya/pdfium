@@ -65,10 +65,10 @@ constexpr Mask<CPDF_Creator::CreateFlags> kConflictingFlags{
 // EmbedPDF(layer-save): the largest offset a cross-reference entry can hold.
 constexpr FX_FILESIZE kMaxFourByteXrefOffset = 0xffffffff;
 
-class CFX_FileBufferArchive final : public IFX_ArchiveStream {
+class FileBufferArchive final : public IFX_ArchiveStream {
  public:
-  explicit CFX_FileBufferArchive(RetainPtr<IFX_RetainableWriteStream> file);
-  ~CFX_FileBufferArchive() override;
+  explicit FileBufferArchive(RetainPtr<IFX_RetainableWriteStream> file);
+  ~FileBufferArchive() override;
 
   bool WriteBlock(pdfium::span<const uint8_t> buffer) override;
   FX_FILESIZE CurrentOffset() const override { return offset_; }
@@ -85,25 +85,24 @@ class CFX_FileBufferArchive final : public IFX_ArchiveStream {
   RetainPtr<IFX_RetainableWriteStream> const backing_file_;
 };
 
-CFX_FileBufferArchive::CFX_FileBufferArchive(
-    RetainPtr<IFX_RetainableWriteStream> file)
+FileBufferArchive::FileBufferArchive(RetainPtr<IFX_RetainableWriteStream> file)
     : buffer_(FixedSizeDataVector<uint8_t>::Uninit(kArchiveBufferSize)),
       available_(buffer_.span()),
       backing_file_(std::move(file)) {
   DCHECK(backing_file_);
 }
 
-CFX_FileBufferArchive::~CFX_FileBufferArchive() {
+FileBufferArchive::~FileBufferArchive() {
   Flush();
 }
 
-bool CFX_FileBufferArchive::Flush() {
+bool FileBufferArchive::Flush() {
   size_t used = buffer_.size() - available_.size();
   available_ = buffer_.span();
   return used == 0 || backing_file_->WriteBlock(available_.first(used));
 }
 
-bool CFX_FileBufferArchive::WriteBlock(pdfium::span<const uint8_t> buffer) {
+bool FileBufferArchive::WriteBlock(pdfium::span<const uint8_t> buffer) {
   if (buffer.empty()) {
     return true;
   }
@@ -126,14 +125,6 @@ bool CFX_FileBufferArchive::WriteBlock(pdfium::span<const uint8_t> buffer) {
 
   offset_ = safe_offset.ValueOrDie();
   return true;
-}
-
-std::array<uint32_t, 4> GenerateFileID(uint32_t dwSeed1, uint32_t dwSeed2) {
-  FX_Random random1(dwSeed1);
-  FX_Random random2(dwSeed2);
-  std::array<uint32_t, 4> buffer = {random1.Generate(), random1.Generate(),
-                                    random2.Generate(), random2.Generate()};
-  return buffer;
 }
 
 // EmbedPDF(save-generations): a cross-reference stream entry carries its
@@ -244,7 +235,7 @@ CPDF_Creator::CPDF_Creator(CPDF_Document* doc,
       encrypt_dict_(parser_ ? parser_->GetEncryptDict() : nullptr),
       security_handler_(parser_ ? parser_->GetSecurityHandler() : nullptr),
       last_obj_num_(document_->GetLastObjNum()),
-      archive_(std::make_unique<CFX_FileBufferArchive>(std::move(archive))) {}
+      archive_(std::make_unique<FileBufferArchive>(std::move(archive))) {}
 
 CPDF_Creator::~CPDF_Creator() = default;
 
@@ -909,7 +900,7 @@ bool CPDF_Creator::Create(Mask<CreateFlags> flags, int32_t file_version) {
   is_original_ = !(flags & CreateFlags::kNoOriginal);
   subset_new_fonts_ = !!(flags & CreateFlags::kSubsetNewFonts);
   if (is_incremental_append_only_ && parser_) {
-    static_cast<CFX_FileBufferArchive*>(archive_.get())
+    static_cast<FileBufferArchive*>(archive_.get())
         ->SetNotionalStartOffset(document_->GetLayerAppendBaseOffset());
   }
 
@@ -992,8 +983,8 @@ void CPDF_Creator::InitID() {
   if (pID1) {
     id_array_->Append(pID1->Clone());
   } else {
-    std::array<uint32_t, 4> file_id =
-        GenerateFileID((uint32_t)(uintptr_t)this, last_obj_num_);
+    std::array<uint32_t, 4> file_id;
+    FX_Random::Fill(file_id);
     id_array_->AppendNew<CPDF_String>(pdfium::as_byte_span(file_id),
                                       CPDF_String::DataType::kIsHex);
   }
@@ -1010,8 +1001,8 @@ void CPDF_Creator::InitID() {
       id_array_->Append(pID2->Clone());
       return;
     }
-    std::array<uint32_t, 4> file_id =
-        GenerateFileID((uint32_t)(uintptr_t)this, last_obj_num_);
+    std::array<uint32_t, 4> file_id;
+    FX_Random::Fill(file_id);
     id_array_->AppendNew<CPDF_String>(pdfium::as_byte_span(file_id),
                                       CPDF_String::DataType::kIsHex);
     return;

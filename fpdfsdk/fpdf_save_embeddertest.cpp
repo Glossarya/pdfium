@@ -239,7 +239,7 @@ TEST_F(FPDFSaveEmbedderTest, Bug905142) {
   EXPECT_THAT(GetString(), HasSubstr("/Length 0"));
 }
 
-// Should not trigger a DCHECK() failure in CFX_FileBufferArchive.
+// Should not trigger a DCHECK() failure in FileBufferArchive.
 // Fails because the PDF is malformed.
 TEST_F(FPDFSaveEmbedderTest, Bug1328389) {
   ASSERT_TRUE(OpenDocument("bug_1328389.pdf"));

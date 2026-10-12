@@ -13,7 +13,6 @@
 #include "fxjs/fxv8.h"
 #include "fxjs/xfa/cfxjse_engine.h"
 #include "fxjs/xfa/cfxjse_isolatetracker.h"
-#include "fxjs/xfa/cfxjse_value.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "v8/include/v8-container.h"
 #include "v8/include/v8-local-handle.h"
@@ -59,7 +58,7 @@ v8::Local<v8::Value> XFAJSEmbedderTest::GetValue() const {
 
 bool XFAJSEmbedderTest::OpenDocumentWithOptions(
     const std::string& filename,
-    const char* password,
+    const ByteString& password,
     LinearizeOption linearize_option,
     JavaScriptOption javascript_option) {
   // JS required for XFA.
@@ -115,7 +114,8 @@ bool XFAJSEmbedderTest::ExecuteHelper(ByteStringView input) {
   CFXJSE_Context::ExecutionResult exec_result = script_context_->RunScript(
       CXFA_Script::Type::Formcalc, WideString::FromUTF8(input).AsStringView(),
       GetXFADocument()->GetRoot());
-  value_.Reset(isolate(), exec_result.value->GetValue(isolate()));
+  value_.Reset(isolate(),
+               v8::Local<v8::Value>::New(isolate(), exec_result.value));
   return exec_result.status;
 }
 

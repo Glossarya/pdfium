@@ -1108,7 +1108,7 @@ void CPDF_RenderShading::Draw(CFX_RenderDevice* pDevice,
   if (options.ColorModeIs(CPDF_RenderOptions::kAlpha)) {
     pBitmap->SetRedFromAlpha();
   } else if (options.ColorModeIs(CPDF_RenderOptions::kGray)) {
-    pBitmap->ConvertColorScale(0, 0xffffff);
+    pBitmap->ConvertColorScale(/*is_white_on_black=*/false);
   }
 
   buffer.OutputToDevice();

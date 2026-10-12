@@ -849,6 +849,7 @@ RetainPtr<CFX_DIBitmap> CFX_DIBBase::CloneAlphaMask() const {
   return pMask;
 }
 
+#if BUILDFLAG(IS_WIN) || defined(PDF_ENABLE_XFA)
 RetainPtr<CFX_DIBitmap> CFX_DIBBase::FlipImage(bool bXFlip, bool bYFlip) const {
   auto pFlipped = pdfium::MakeRetain<CFX_DIBitmap>();
   if (!pFlipped->Create(GetWidth(), GetHeight(), GetFormat())) {
@@ -944,6 +945,7 @@ RetainPtr<CFX_DIBitmap> CFX_DIBBase::FlipImage(bool bXFlip, bool bYFlip) const {
   }
   return pFlipped;
 }
+#endif  // BUILDFLAG(IS_WIN) || defined(PDF_ENABLE_XFA)
 
 RetainPtr<CFX_DIBitmap> CFX_DIBBase::ConvertTo(FXDIB_Format dest_format) const {
   CHECK(dest_format == FXDIB_Format::kBgr ||

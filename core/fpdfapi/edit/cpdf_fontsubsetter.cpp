@@ -35,12 +35,12 @@
 #include "core/fxcrt/data_vector.h"
 #include "core/fxcrt/fx_extension.h"
 #include "core/fxcrt/fx_random.h"
+#include "core/fxcrt/fx_string.h"
 #include "core/fxcrt/retain_ptr.h"
 #include "core/fxcrt/span.h"
 #include "core/fxcrt/widestring.h"
 #include "core/fxge/cfx_face.h"
 #include "core/fxge/cfx_font.h"
-#include "core/fxge/cfx_fontmapper.h"
 #include "core/fxge/fx_font.h"
 
 namespace {
@@ -152,12 +152,7 @@ CPDF_FontSubsetter::GenerateObjectOverrides(
 
     // OpenType fonts containing CFF data have an "OTTO" tag at the start of the
     // file.
-    bool is_opentype_cff = false;
-    if (original_stream_span.size() > 4) {
-      // OpenType fonts use big-endian order.
-      uint32_t tag = fxcrt::GetUInt32MSBFirst(original_stream_span.first<4>());
-      is_opentype_cff = tag == CFX_FontMapper::MakeTag('O', 'T', 'T', 'O');
-    }
+    bool is_opentype_cff = IsOpenTypeCFF(original_stream_span);
     // EmbedPDF(fonts): as a CIDFontType0, a CID-keyed CFF selects glyphs by
     // CID through its charset (ISO 32000-2 9.7.4.2), but the text holds glyph
     // indices. Keep such a font the CIDFontType2 in FontFile2 it was embedded

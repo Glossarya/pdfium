@@ -59,6 +59,7 @@
 .gclient_entries
 .gdb_history
 .gdbinit
+.jetskicli
 *.aps
 *.filters
 *.opensdf

@@ -1612,7 +1612,7 @@ FX_ARGB CPDF_RenderStatus::GetBackgroundColor(
 
 FXDIB_Format CPDF_RenderStatus::GetCompatibleArgbFormat() const {
 #if defined(PDF_USE_SKIA)
-  if (device_->RenderCapPremultipliedAlpha()) {
+  if (device_->CanUseARGBPremul()) {
     return FXDIB_Format::kBgraPremul;
   }
 #endif

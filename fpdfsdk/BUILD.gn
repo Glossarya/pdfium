@@ -195,6 +195,10 @@ pdfium_embeddertest_source_set("embeddertests") {
     "epdf_form_embeddertest.cpp",
     # EmbedPDF: covers the annotation API (public/epdf_annot.h).
     "epdf_annot_embeddertest.cpp",
+    # EmbedPDF: covers base documents and layers (public/epdf_layer.h).
+    "epdf_layer_embeddertest.cpp",
+    # EmbedPDF: covers what we add to public/fpdfview.h (public/epdf_view.h).
+    "epdf_view_embeddertest.cpp",
     # EmbedPDF: covers annotation calls that read a page's dictionaries
     # without loading the page.
     "epdf_annot_raw_embeddertest.cpp",

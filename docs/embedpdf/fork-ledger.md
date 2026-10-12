@@ -255,7 +255,7 @@ API finishes an in-progress load before it returns page data.
 **Rule.** A page render can stop between slices and be cancelled.
 **Why.** Large renders must not block a worker, and a cancelled render must stop.
 **Where.** `CPDF_ProgressiveRenderer`, `CPDF_RenderStatus`, `EPDF_RenderPageBitmapWithMatrix_Start`.
-**Guarded by.** The slicing tests in `fpdf_view_embeddertest.cpp`.
+**Guarded by.** The slicing tests in `epdf_view_embeddertest.cpp`.
 **When upstream touches this.** The progressive renderer.
 
 ### decoded-image-store
@@ -263,7 +263,7 @@ API finishes an in-progress load before it returns page data.
 page's image cache would decode. Renders stay byte-identical.
 **Why.** Heavy images decoded again on every page load cost seconds.
 **Where.** `cpdf_decodedimagestore`, `CPDF_PageImageCache`, `CPDF_DIB`.
-**Guarded by.** The decoded-image tests in `fpdf_view_embeddertest.cpp`.
+**Guarded by.** The decoded-image tests in `epdf_view_embeddertest.cpp`.
 **When upstream touches this.** The page image cache and image decoding.
 
 ### render-speedup

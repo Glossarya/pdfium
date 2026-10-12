@@ -37,7 +37,7 @@ FPDFFlattenEmbedderTest.FlatWithBadFont A layer save appends: the base's bytes s
 FPDFCatalogTest.SetLanguageExistingDocument The test holds the catalog pointer across a write; copy-up puts the new value in a new object (rule overlay-epoch).
 CPDFParserEmbedderTest.Bug828049 A layer's page lookup fails closed on a broken page tree instead of upstream's mutating repair (rule reads-dont-write); the page doesn't load.
 FPDFTextEmbedderTest.Bug782596 A layer's page lookup fails closed on a broken page tree instead of upstream's mutating repair (rule reads-dont-write); the page doesn't load.
-FPDFViewEmbedderTest.LayerDiagnosticsRejectPlainDocuments The test checks a plain document; in layer mode it opens a layer.
+EPDFLayerEmbedderTest.LayerDiagnosticsRejectPlainDocuments The test checks a plain document; in layer mode it opens a layer.
 FPDFViewEmbedderTest.UnSupportedOperationsLoadCustomDocument EPDF_LoadBaseDocument doesn't call the unsupported-feature handler; the engine doesn't set one.
 FPDFViewEmbedderTest.DocumentHasValidCrossReferenceTable FPDF_DocumentHasValidCrossReferenceTable reports false on a layer; the engine doesn't call it.
 FPDFViewEmbedderTest.LoadDocumentWithEmptyXRefConsistently FPDF_DocumentHasValidCrossReferenceTable reports false on a layer; the engine doesn't call it.

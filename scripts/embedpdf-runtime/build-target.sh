@@ -58,7 +58,10 @@ case "$TARGET" in
   linuxmusl-arm64)
     GN_TARGET_OS="linux"
     GN_TARGET_CPU="arm64"
-    EXTRA_ARGS=$'\nis_musl=true\nis_clang=false\nuse_sysroot=false\nuse_custom_libcxx=false\nuse_custom_libcxx_for_host=false\nuse_glib=false'
+    # No libyuv: its arm64 sources use dot-product, SVE2 and SME instructions,
+    # and the musl GCC toolchain's assembler rejects them. PDFium keeps its own
+    # loops for pdf_use_libyuv=false.
+    EXTRA_ARGS=$'\nis_musl=true\nis_clang=false\nuse_sysroot=false\nuse_custom_libcxx=false\nuse_custom_libcxx_for_host=false\nuse_glib=false\npdf_use_libyuv=false'
     ;;
   win32-x64)
     GN_TARGET_OS="win"

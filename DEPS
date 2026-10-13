@@ -130,7 +130,7 @@ vars = {
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling depot_tools
   # and whatever else without interference from each other.
-  'depot_tools_revision': '36a8df4ad006eaa0572fb446edb8145fe5403592',
+  'depot_tools_revision': 'a03dfbf7f2d1cefa2795d81d59ca4f16c8616a8f',
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling dragonbox
   # and whatever else without interference from each other.
@@ -260,7 +260,7 @@ vars = {
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling tools_memory
   # and whatever else without interference from each other.
-  'tools_memory_revision': '0732f7097d066a81e673f90862994f76886fc638',
+  'tools_memory_revision': '3d4610fc0dd49053c0395bc2825dfc6ac72ab64e',
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling tools_rust
   # and whatever else without interference from each other.

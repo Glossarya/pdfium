@@ -117,15 +117,8 @@ std::unique_ptr<CPDF_Annot> CreatePopupAnnot(CPDF_Document* document,
   pAnnotDict->SetRectFor(pdfium::annotation::kRect, popupRect);
   pAnnotDict->SetNewFor<CPDF_Number>(pdfium::annotation::kF, 0);
 
-  // EmbedPDF(reads-dont-write): a closed popup gets its appearance only when
-  // drawn.
-  // The popup is closed, so it is drawn only once opened, and drawing
-  // generates its appearance. Generating it here would build one, with a font
-  // and two new objects in the document, for every popup of every list, and
-  // rendering a page builds a list each time.
-  auto pPopupAnnot = std::make_unique<CPDF_Annot>(
-      std::move(pAnnotDict), document,
-      CPDF_Annot::MissingAppearance::kGenerateWhenDrawn);
+  auto pPopupAnnot =
+      std::make_unique<CPDF_Annot>(std::move(pAnnotDict), document);
   pAnnot->SetPopupAnnot(pPopupAnnot.get());
   return pPopupAnnot;
 }

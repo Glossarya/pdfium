@@ -103,8 +103,6 @@ source_set("fxge") {
     "fontdata/chromefontdata/FoxitSerifMM.cpp",
     "fontdata/chromefontdata/FoxitSymbol.cpp",
     "fontdata/chromefontdata/chromefontdata.h",
-    "freetype/fx_freetype.cpp",
-    "freetype/fx_freetype.h",
     "fx_font.cpp",
     "fx_font.h",
     "fx_fontencoding.h",
@@ -121,19 +119,25 @@ source_set("fxge") {
     "../../:pdfium_strict_config",
     "../../:pdfium_noshorten_config",
   ]
-
+  public_deps = [ "../fxcrt" ]
   deps = [
     # EmbedPDF: CFX_FontRegistry instances variable fonts at registration
     # (HarfBuzz subset instancer) and records a SHA-256 source hash.
     "../../third_party/harfbuzz",
     "../fdrm",
-    "../fxcrt",
+    "//third_party/abseil-cpp:absl",
   ]
-
-  public_deps = []
   defines = []
 
-  if (is_component_build || use_system_freetype) {
+  if (pdf_enable_freetype) {
+    sources += [
+      "freetype/fx_freetype.cpp",
+      "freetype/fx_freetype.h",
+    ]
+    public_deps += [ "../../:freetype_common" ]
+  }
+
+  if (pdf_enable_freetype && (is_component_build || use_system_freetype)) {
     # ft_adobe_glyph_list is not exported from the Freetype shared library so we
     # need it defined in component builds and builds using system freetype.
     defines += [ "DEFINE_PS_TABLES_DATA" ]
@@ -151,6 +155,10 @@ source_set("fxge") {
       "agg/cfx_agg_imagerenderer.h",
     ]
     deps += [ "../../third_party:fx_agg" ]
+  }
+
+  if (pdf_use_libyuv) {
+    deps += [ "//third_party/libyuv" ]
   }
 
   if (pdf_use_skia) {
@@ -268,9 +276,23 @@ if (pdf_enable_fontations) {
   }
 }
 
+source_set("test_support") {
+  testonly = true
+  sources = [
+    "display_list_device_driver.cpp",
+    "display_list_device_driver.h",
+  ]
+  configs += [ "../../:pdfium_strict_config" ]
+  deps = [
+    ":fxge",
+    "../fxcrt",
+  ]
+}
+
 pdfium_unittest_source_set("unittests") {
   sources = [
     "cfx_color_unittest.cpp",
+    "cfx_face_unittest.cpp",
     "cfx_folderfontinfo_unittest.cpp",
     "cfx_font_unittest.cpp",
     "cfx_fontmapper_unittest.cpp",
@@ -289,6 +311,9 @@ pdfium_unittest_source_set("unittests") {
   ]
   deps = [
     ":fxge",
+    ":test_support",
+    "../../testing:path_service",
+    "../../testing:test_support",
     "../fpdfapi/page",
     "../fpdfapi/parser",
     "../fxcrt:test_support",

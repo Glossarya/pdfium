@@ -198,14 +198,13 @@ class CPDF_Annot {
                                           size_t nIndex);
   static size_t QuadPointCount(const CPDF_Array* pArray);
 
-  // EmbedPDF(reads-dont-write): a popup PDFium makes for a markup annotation
-  // gets its appearance only when drawn, so building the annotation list for
-  // a render writes none for the closed ones.
+  // EmbedPDF(reads-dont-write): an annotation made to answer a question about
+  // its drawing, such as where it draws, gets its appearance only when drawn,
+  // so asking writes nothing.
   // When an annotation without an appearance gets one generated.
   enum class MissingAppearance {
     kGenerateNow,
-    // Only once it is drawn: for annotations PDFium makes itself, such as the
-    // popup of a markup annotation, which is drawn only once opened.
+    // Only once it is drawn.
     kGenerateWhenDrawn,
   };
 

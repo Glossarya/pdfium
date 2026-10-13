@@ -93,6 +93,7 @@
 
 #if BUILDFLAG(IS_WIN)
 #include "core/fpdfapi/render/cpdf_progressiverenderer.h"
+#include "core/fxge/win32/cgdi_device_driver.h"
 #include "public/fpdf_edit.h"
 
 #if defined(PDF_USE_SKIA)
@@ -239,24 +240,31 @@ FPDF_InitLibraryWithConfig(const FPDF_LIBRARY_CONFIG* config) {
 #endif
   }
 
+#if defined(PDF_ENABLE_FONTATIONS) && defined(PDF_ENABLE_FREETYPE)
   CFX_FontMgr::FontBackend backend = CFX_FontMgr::FontBackend::kFreeType;
   if (config && config->version >= 5) {
-#if defined(PDF_ENABLE_FONTATIONS)
     CHECK(config->m_FontLibraryType == FPDF_FONTBACKENDTYPE_FREETYPE ||
           config->m_FontLibraryType == FPDF_FONTBACKENDTYPE_FONTATIONS);
     if (config->m_FontLibraryType == FPDF_FONTBACKENDTYPE_FONTATIONS) {
       backend = CFX_FontMgr::FontBackend::kFontations;
     }
-#else
-    // Builds without Fontations should always use
-    // `FPDF_FONTBACKENDTYPE_FREETYPE`.
+  }
+#elif defined(PDF_ENABLE_FONTATIONS)
+  CFX_FontMgr::FontBackend backend = CFX_FontMgr::FontBackend::kFontations;
+  if (config && config->version >= 5) {
+    CHECK_EQ(config->m_FontLibraryType, FPDF_FONTBACKENDTYPE_FONTATIONS);
+  }
+#elif defined(PDF_ENABLE_FREETYPE)
+  CFX_FontMgr::FontBackend backend = CFX_FontMgr::FontBackend::kFreeType;
+  if (config && config->version >= 5) {
     CHECK_EQ(config->m_FontLibraryType, FPDF_FONTBACKENDTYPE_FREETYPE);
+  }
+#else
+#error "Neither FreeType nor Fontations enabled"
 #endif
-  }
 #if defined(PDF_ENABLE_BROTLI)
-  if (config && config->version >= 6) {
-    BrotliDecoder::SetBrotliEnabled(config->m_BrotliEnabled);
-  }
+  BrotliDecoder::SetBrotliEnabled(config && config->version >= 6 &&
+                                  config->m_BrotliEnabled);
 #endif
 
   std::optional<pdfium::span<const char* const>> user_font_paths_opt;
@@ -1153,8 +1161,8 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDF_RenderPage(HDC dc,
   const bool bHasMask = pPage->HasImageMask() && !bNewBitmap;
   auto* render_data = CPDF_DocRenderData::FromDocument(pPage->GetDocument());
   if (!bNewBitmap && !bHasMask) {
-    context->device_ = CFX_RenderDevice::CreateForWindowsDC(
-        dc, render_data->GetPSFontTracker());
+    context->device_ = CFX_RenderDevice::CreateWithDriver(
+        CGdiDeviceDriver::CreateDriver(dc, render_data->GetPSFontTracker()));
     if (!context->device_) {
       return false;
     }
@@ -1192,8 +1200,8 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDF_RenderPage(HDC dc,
 
   if (!bHasMask) {
     std::unique_ptr<CFX_RenderDevice> win_dc =
-        CFX_RenderDevice::CreateForWindowsDC(dc,
-                                             render_data->GetPSFontTracker());
+        CFX_RenderDevice::CreateWithDriver(CGdiDeviceDriver::CreateDriver(
+            dc, render_data->GetPSFontTracker()));
     if (!win_dc) {
       return false;
     }
@@ -1233,8 +1241,8 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDF_RenderPage(HDC dc,
   owned_context = std::make_unique<CPDF_PageRenderContext>();
   context = owned_context.get();
   pPage->SetRenderContext(std::move(owned_context));
-  context->device_ =
-      CFX_RenderDevice::CreateForWindowsDC(dc, render_data->GetPSFontTracker());
+  context->device_ = CFX_RenderDevice::CreateWithDriver(
+      CGdiDeviceDriver::CreateDriver(dc, render_data->GetPSFontTracker()));
   if (!context->device_) {
     return false;
   }
@@ -1291,7 +1299,8 @@ FPDF_EXPORT void FPDF_CALLCONV FPDF_RenderPageBitmap(FPDF_BITMAP bitmap,
   CFX_DIBitmap::ScopedPremultiplier scoped_premultiplier(pBitmap);
 #endif
   auto device = CFX_RenderDevice::CreateForBitmap(
-      std::move(pBitmap), !!(flags & FPDF_REVERSE_BYTE_ORDER));
+      std::move(pBitmap), /*backdrop_bitmap=*/nullptr,
+      !!(flags & FPDF_REVERSE_BYTE_ORDER));
   if (!device) {
     return;
   }
@@ -1331,7 +1340,8 @@ FPDF_RenderPageBitmapWithMatrix(FPDF_BITMAP bitmap,
   CFX_DIBitmap::ScopedPremultiplier scoped_premultiplier(pBitmap);
 #endif
   auto device = CFX_RenderDevice::CreateForBitmap(
-      std::move(pBitmap), !!(flags & FPDF_REVERSE_BYTE_ORDER));
+      std::move(pBitmap), /*backdrop_bitmap=*/nullptr,
+      !!(flags & FPDF_REVERSE_BYTE_ORDER));
   if (!device) {
     return;
   }
@@ -1413,7 +1423,8 @@ EPDF_RenderAnnotBitmap(FPDF_BITMAP bitmap,
 #endif
 
   auto device = CFX_RenderDevice::CreateForBitmap(
-      std::move(pBitmap), !!(flags & FPDF_REVERSE_BYTE_ORDER));
+      std::move(pBitmap), /*backdrop_bitmap=*/nullptr,
+      !!(flags & FPDF_REVERSE_BYTE_ORDER));
   if (!device) {
     return false;
   }
@@ -1526,7 +1537,8 @@ EPDF_RenderAnnotBitmapUnrotated(FPDF_BITMAP bitmap,
 #endif
 
   auto device = CFX_RenderDevice::CreateForBitmap(
-      std::move(pBitmap), !!(flags & FPDF_REVERSE_BYTE_ORDER));
+      std::move(pBitmap), /*backdrop_bitmap=*/nullptr,
+      !!(flags & FPDF_REVERSE_BYTE_ORDER));
   if (!device) {
     return false;
   }
@@ -2382,9 +2394,9 @@ FPDF_EXPORT FPDF_DEST FPDF_CALLCONV FPDF_GetNamedDest(FPDF_DOCUMENT document,
     ByteStringView bsName;
     CPDF_DictionaryLocker locker(pDest);
     for (const auto& it : locker) {
-      bsName = it.first.AsStringView();
-      pDestObj = it.second;
       if (i == index) {
+        bsName = it.first.AsStringView();
+        pDestObj = it.second->GetDirect();
         break;
       }
       i++;

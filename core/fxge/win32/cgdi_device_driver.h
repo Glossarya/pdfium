@@ -9,16 +9,23 @@
 
 #include <windows.h>
 
+#include <memory>
 #include <optional>
 
 #include "core/fxcrt/retain_ptr.h"
 #include "core/fxge/renderdevicedriver_iface.h"
 
 class CFX_DIBBase;
+class CFX_PSFontTracker;
 
 class CGdiDeviceDriver : public RenderDeviceDriverIface {
+ public:
+  static std::unique_ptr<RenderDeviceDriverIface> CreateDriver(
+      HDC hdc,
+      CFX_PSFontTracker* ps_font_tracker);
+
  protected:
-  CGdiDeviceDriver(HDC hDC, DeviceType device_type);
+  CGdiDeviceDriver(HDC hdc, DeviceType device_type);
   ~CGdiDeviceDriver() override;
 
   // RenderDeviceDriverIface:
@@ -43,6 +50,7 @@ class CGdiDeviceDriver : public RenderDeviceDriverIface {
                 const CFX_GraphStateData* pGraphState,
                 uint32_t fill_color,
                 uint32_t stroke_color,
+                bool group_knockout,
                 const CFX_FillRenderOptions& fill_options) override;
   bool FillRect(const FX_RECT& rect, uint32_t fill_color) override;
   bool DrawCosmeticLine(const CFX_PointF& ptMoveTo,

@@ -100,6 +100,7 @@ source_set("fuzzer_init") {
 
 if (pdf_enable_xfa) {
   assert(pdf_enable_v8)
+
   source_set("fuzzer_xfa_process_state") {
     testonly = !is_component_build
     sources = [
@@ -107,9 +108,10 @@ if (pdf_enable_xfa) {
       "xfa_process_state.h",
     ]
     configs += [ ":fuzzer_config" ]
+    public_deps = [ "../../fxjs:gc" ]
     deps = [
-      "../../fxjs:gc",
       "//v8",
+      "//v8:v8_libplatform_headers",
     ]
   }
 }
@@ -131,6 +133,7 @@ source_set("fuzzer_init_public") {
       "../:test_support",
       "../../fxjs",
       "//v8",
+      "//v8:v8_config_headers",
       "//v8:v8_libplatform",
     ]
     if (pdf_enable_xfa) {
@@ -163,8 +166,8 @@ source_set("fuzzer_helper") {
     "pdfium_fuzzer_helper.h",
   ]
   configs += [ ":fuzzer_config" ]
+  public_deps = [ "../../:pdfium_public_headers" ]
   deps = [
-    "../../:pdfium_public_headers",
     "../../core/fxcrt",
     "../../fpdfsdk",
   ]
@@ -179,7 +182,7 @@ source_set("fuzzer_utils") {
     "pdfium_fuzzer_util.cc",
     "pdfium_fuzzer_util.h",
   ]
-  deps = [ "../../:pdfium_public_headers" ]
+  public_deps = [ "../../:pdfium_public_headers" ]
   include_dirs = [ "../.." ]
 }
 
@@ -201,6 +204,7 @@ template("pdfium_fuzzer") {
 
     impl_name = target_name + "_impl"
     template_target_name = target_name
+
     source_set("${target_name}_src") {
       testonly = true
       sources = [ "component_fuzzer_template.cc" ]
@@ -214,6 +218,7 @@ template("pdfium_fuzzer") {
   } else {
     impl_name = target_name + "_src"
   }
+
   source_set(impl_name) {
     testonly = true
     sources = invoker.sources
@@ -254,6 +259,7 @@ if (pdf_enable_v8) {
       "../../fxjs",
     ]
   }
+
   pdfium_fuzzer("pdf_fx_date_helpers_fuzzer") {
     sources = [ "pdf_fx_date_helpers_fuzzer.cc" ]
     deps = [
@@ -267,13 +273,15 @@ if (pdf_enable_v8) {
     pdfium_fuzzer("pdf_bidi_fuzzer") {
       sources = [ "pdf_bidi_fuzzer.cc" ]
       deps = [
-        "../../:freetype_common",
         "../../core/fxcrt",
         "../../core/fxge",
         "../../xfa/fgas/font",
         "../../xfa/fgas/layout",
         "//third_party/icu:icuuc",
       ]
+      if (pdf_enable_freetype) {
+        deps += [ "../../:freetype_common" ]
+      }
     }
 
     pdfium_fuzzer("pdf_cfgas_stringformatter_fuzzer") {
@@ -286,6 +294,7 @@ if (pdf_enable_v8) {
         "../../xfa/fgas/crt",
         "../../xfa/fxfa",
         "../../xfa/fxfa/parser",
+        "//v8:cppgc_headers",
       ]
       public_fuzzer = true
     }
@@ -459,6 +468,7 @@ if (is_clang) {
       ]
       public_fuzzer = true
     }
+
     pdfium_fuzzer("pdf_xfa_raw_fuzzer") {
       sources = [ "pdf_xfa_raw_fuzzer.cc" ]
       deps = [
@@ -467,6 +477,7 @@ if (is_clang) {
       ]
       public_fuzzer = true
     }
+
     pdfium_fuzzer("pdf_xfa_xdp_fdp_fuzzer") {
       sources = [ "pdf_xfa_xdp_fdp_fuzzer.cc" ]
       deps = [
@@ -481,11 +492,13 @@ if (is_clang) {
 pdfium_fuzzer("pdf_cmap_fuzzer") {
   sources = [ "pdf_cmap_fuzzer.cc" ]
   deps = [
-    "../../:freetype_common",
     "../../core/fpdfapi/font",
     "../../core/fxcrt",
     "../../core/fxge",
   ]
+  if (pdf_enable_freetype) {
+    deps += [ "../../:freetype_common" ]
+  }
 }
 
 pdfium_fuzzer("pdf_codec_a85_fuzzer") {

@@ -2008,6 +2008,8 @@ TEST_F(FPDFAnnotEmbedderTest, GetFormAnnotAndCheckFlagsComboBox) {
 }
 
 TEST_F(FPDFAnnotEmbedderTest, Bug1206) {
+  static constexpr size_t kExpectedMinimumOriginalSize = 1000;
+
   ASSERT_TRUE(OpenDocument("bug_1206.pdf"));
 
   ScopedPage page = LoadScopedPage(0);
@@ -2015,7 +2017,7 @@ TEST_F(FPDFAnnotEmbedderTest, Bug1206) {
 
   ASSERT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
   const size_t original_size = GetString().size();
-  ASSERT_GT(original_size, 0u);
+  EXPECT_LE(kExpectedMinimumOriginalSize, original_size);  // Sanity check.
   ClearString();
 
   for (size_t i = 0; i < 10; ++i) {

@@ -1292,11 +1292,9 @@ void CFX_AggDeviceDriver::SetPathMemoEnabledForTesting(bool enabled) {
 CFX_AggDeviceDriver::CFX_AggDeviceDriver(
     RetainPtr<CFX_DIBitmap> pBitmap,
     bool bRgbByteOrder,
-    RetainPtr<CFX_DIBitmap> pBackdropBitmap,
-    bool bGroupKnockout)
+    RetainPtr<CFX_DIBitmap> pBackdropBitmap)
     : bitmap_(std::move(pBitmap)),
       rgb_byte_order_(bRgbByteOrder),
-      group_knockout_(bGroupKnockout),
       backdrop_bitmap_(std::move(pBackdropBitmap)) {
   CHECK(bitmap_);
   CHECK_NE(bitmap_->GetFormat(), FXDIB_Format::k1bppMask);
@@ -1542,6 +1540,7 @@ bool CFX_AggDeviceDriver::DrawPath(const CFX_Path& path,
                                    const CFX_GraphStateData* pGraphState,
                                    uint32_t fill_color,
                                    uint32_t stroke_color,
+                                   bool group_knockout,
                                    const CFX_FillRenderOptions& fill_options) {
   if (bitmap_->GetBuffer().empty()) {
     return true;
@@ -1553,7 +1552,7 @@ bool CFX_AggDeviceDriver::DrawPath(const CFX_Path& path,
   // itself moved to DrawPathPasses().
   if (!g_path_memo_enabled || path.GetPoints().size() > kMemoMaxPoints) {
     DrawPathPasses(path, pObject2Device, pGraphState, fill_color, stroke_color,
-                   fill_options, nullptr);
+                   group_knockout, fill_options, nullptr);
     return true;
   }
 
@@ -1563,7 +1562,7 @@ bool CFX_AggDeviceDriver::DrawPath(const CFX_Path& path,
   if (!path_memo_->SameObjectAsLast(path)) {
     path_memo_->Restart(path);
     DrawPathPasses(path, pObject2Device, pGraphState, fill_color, stroke_color,
-                   fill_options, nullptr);
+                   group_knockout, fill_options, nullptr);
     return true;
   }
   const bool fill_pass =
@@ -1585,7 +1584,7 @@ bool CFX_AggDeviceDriver::DrawPath(const CFX_Path& path,
     path_memo_->Remember(inputs);
     path_memo_->BeginRecording();
     DrawPathPasses(path, pObject2Device, pGraphState, fill_color, stroke_color,
-                   fill_options, path_memo_.get());
+                   group_knockout, fill_options, path_memo_.get());
     path_memo_->FinishRecording();
     return true;
   }
@@ -1598,13 +1597,13 @@ bool CFX_AggDeviceDriver::DrawPath(const CFX_Path& path,
     }
     if (stroke_pass) {
       ReplayPass(path_memo_->stroke(), stroke_color, fill_options.full_cover,
-                 group_knockout_);
+                 group_knockout);
     }
     return true;
   }
   // Its passes were too large to record.
   DrawPathPasses(path, pObject2Device, pGraphState, fill_color, stroke_color,
-                 fill_options, nullptr);
+                 group_knockout, fill_options, nullptr);
   return true;
 }
 
@@ -1616,6 +1615,7 @@ void CFX_AggDeviceDriver::DrawPathPasses(
     const CFX_GraphStateData* pGraphState,
     uint32_t fill_color,
     uint32_t stroke_color,
+    bool group_knockout,
     const CFX_FillRenderOptions& fill_options,
     PathMemo* record) {
   const float device_width = static_cast<float>(GetPixelWidth());
@@ -1649,7 +1649,7 @@ void CFX_AggDeviceDriver::DrawPathPasses(
     RasterizeStroke(&rasterizer, &path_data, workspace.solid_stroke(), nullptr,
                     pGraphState, 1, fill_options.stroke_text_mode);
     RenderRasterizer(rasterizer, stroke_color, fill_options.full_cover,
-                     group_knockout_, record ? &record->stroke() : nullptr);
+                     group_knockout, record ? &record->stroke() : nullptr);
     ReleaseLargeWorkspace();
     return;
   }
@@ -1675,7 +1675,7 @@ void CFX_AggDeviceDriver::DrawPathPasses(
   RasterizeStroke(&rasterizer, &path_data, workspace.solid_stroke(), &matrix2,
                   pGraphState, matrix1.a, fill_options.stroke_text_mode);
   RenderRasterizer(rasterizer, stroke_color, fill_options.full_cover,
-                   group_knockout_, record ? &record->stroke() : nullptr);
+                   group_knockout, record ? &record->stroke() : nullptr);
   ReleaseLargeWorkspace();
   return;
 }
@@ -1846,28 +1846,11 @@ bool CFX_AggDeviceDriver::ContinueDIBits(
 
 bool CFX_RenderDevice::AttachAggImpl(RetainPtr<CFX_DIBitmap> pBitmap,
                                      bool bRgbByteOrder,
-                                     RetainPtr<CFX_DIBitmap> pBackdropBitmap,
-                                     bool bGroupKnockout) {
-  // Unlike the Skia version, all callers pass in a non-null `pBitmap`.
+                                     RetainPtr<CFX_DIBitmap> pBackdropBitmap) {
   CHECK(pBitmap);
   SetBitmap(pBitmap);
   SetDeviceDriver(std::make_unique<pdfium::CFX_AggDeviceDriver>(
-      std::move(pBitmap), bRgbByteOrder, std::move(pBackdropBitmap),
-      bGroupKnockout));
+      std::move(pBitmap), bRgbByteOrder, std::move(pBackdropBitmap)));
   return true;
 }
 
-bool CFX_RenderDevice::CreateAgg(int width,
-                                 int height,
-                                 FXDIB_Format format,
-                                 RetainPtr<CFX_DIBitmap> pBackdropBitmap) {
-  auto pBitmap = pdfium::MakeRetain<CFX_DIBitmap>();
-  if (!pBitmap->Create(width, height, format)) {
-    return false;
-  }
-
-  SetBitmap(pBitmap);
-  SetDeviceDriver(std::make_unique<pdfium::CFX_AggDeviceDriver>(
-      std::move(pBitmap), false, std::move(pBackdropBitmap), false));
-  return true;
-}

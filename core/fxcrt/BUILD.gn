@@ -165,9 +165,9 @@ source_set("fxcrt") {
     "//third_party/fast_float",
   ]
   public_deps = [
-    "../../:freetype_common",
     "//third_party/abseil-cpp:absl",
     "//third_party/icu:icuuc",
+    "//third_party/icu:icuuc_public",
   ]
   if (pdf_use_partition_alloc) {
     sources += [ "fx_memory_pa.cpp" ]
@@ -222,10 +222,10 @@ source_set("unit_test_support") {
     "fake_time_test.h",
   ]
   configs += [ "../../:pdfium_strict_config" ]
+  public_deps = [ "//testing/gtest" ]
   deps = [
     ":fxcrt",
     ":test_support",
-    "//testing/gtest",
   ]
 }
 
@@ -291,6 +291,7 @@ pdfium_unittest_source_set("unittests") {
   deps = [
     ":test_support",
     ":unit_test_support",
+    "../../testing:test_support",
   ]
   pdfium_root_dir = "../../"
   if (pdf_use_partition_alloc) {

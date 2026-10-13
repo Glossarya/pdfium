@@ -96,8 +96,9 @@ FPDF_RenderPageBitmapWithColorScheme_Start(FPDF_BITMAP bitmap,
   }
 #endif
 
-  auto device = CFX_RenderDevice::CreateForBitmap(
-      pBitmap, !!(flags & FPDF_REVERSE_BYTE_ORDER));
+  auto device =
+      CFX_RenderDevice::CreateForBitmap(pBitmap, /*backdrop_bitmap=*/nullptr,
+                                        !!(flags & FPDF_REVERSE_BYTE_ORDER));
   if (!device) {
 #if defined(PDF_USE_SKIA)
     if (CFX_GEModule::IsSkiaRenderer() && !context->return_premultiplied_) {
@@ -234,7 +235,8 @@ EPDF_RenderPageBitmapWithMatrix_Start(FPDF_BITMAP bitmap,
 #endif
 
   auto device = CFX_RenderDevice::CreateForBitmap(
-      pBitmap, !!(flags & FPDF_REVERSE_BYTE_ORDER));
+      pBitmap, /*backdrop_bitmap=*/nullptr,
+      !!(flags & FPDF_REVERSE_BYTE_ORDER));
   if (!device) {
 #if defined(PDF_USE_SKIA)
     if (CFX_GEModule::Get()->UseSkiaRenderer() &&

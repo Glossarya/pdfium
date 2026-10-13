@@ -93,14 +93,20 @@ class CFDETextOutTest : public testing::Test {
 TEST_F(CFDETextOutTest, DrawLogicTextBasic) {
   text_out().DrawLogicText(device(), L"foo", CFX_RectF(0, 0, 2100, 100));
   const char* checksum = []() {
-#if defined(PDF_USE_SKIA) && BUILDFLAG(IS_WIN)
+#if defined(PDF_USE_SKIA)
     if (CFX_GEModule::IsSkiaRenderer()) {
+#if BUILDFLAG(IS_WIN)
       return "02c55ce12d3c31ae32fa08fe59c38996";
+#elif defined(PDF_ENABLE_FONTATIONS)
+      if (CFX_GEModule::IsFontations()) {
+        return "8a6b320f8a4ae1febfc6e50513506dcf";
+      }
+#endif
     }
 #endif
 #if defined(PDF_ENABLE_FONTATIONS)
     if (CFX_GEModule::IsFontations()) {
-      return "59f4a2cfb7938032f144954642babe58";
+      return "0064590d0532663140d521a2ea6780b1";
     }
 #endif
     return "c143f8450f661a489cc9423de7cc1acc";
@@ -138,12 +144,17 @@ class CFDETextOutLargeBitmapTest : public CFDETextOutTest {
   const char* GetLargeTextBlobChecksum() {
 #if defined(PDF_USE_SKIA)
     if (CFX_GEModule::IsSkiaRenderer()) {
+#if defined(PDF_ENABLE_FONTATIONS)
+      if (CFX_GEModule::IsFontations()) {
+        return "8b657167ef063bca5adb38f6a5d5ae54";
+      }
+#endif
       return "e9aaffff1ea680bd5dc40a7b8904788d";
     }
 #endif
 #if defined(PDF_ENABLE_FONTATIONS)
     if (CFX_GEModule::IsFontations()) {
-      return "89adff3e02833425d42a2f89ef8fd7e3";
+      return "78842f43dce9b89af92f17b56d9ceaab";
     }
 #endif
     return "add7cf2819b3e1397d8a60a9ec436a86";

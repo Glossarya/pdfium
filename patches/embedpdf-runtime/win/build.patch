@@ -37,3 +37,17 @@ diff --git a/toolchain/win/setup_toolchain.py b/toolchain/win/setup_toolchain.py
  MSVC_DIR = re.compile('^.*/VC/Tools/MSVC/[^/]+/include$')
  WINDOWS_KITS_DIR = re.compile(r'^(.*/Windows Kits/\d+/Include/[^/]+)/.*')
  
+diff --git a/config/win/BUILD.gn b/config/win/BUILD.gn
+--- a/config/win/BUILD.gn
++++ b/config/win/BUILD.gn
+@@ -305,7 +305,9 @@
+ # manually override this config for their compiles.
+ config("winver") {
+   defines = [
+-    "NTDDI_VERSION=NTDDI_WIN11_BR",
++    # EmbedPDF: NTDDI_WIN11_BR needs SDK 10.0.28000, which CI runners lack; target
++    # the version older SDKs know too (what S6's build/ targeted).
++    "NTDDI_VERSION=NTDDI_WIN11_GE",
+ 
+     # We can't say `=_WIN32_WINNT_WIN10` here because some files do
+     # `#if WINVER < 0x0600` without including windows.h before,

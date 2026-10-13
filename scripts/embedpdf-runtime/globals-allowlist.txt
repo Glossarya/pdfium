@@ -78,6 +78,7 @@ third-party | langs | HarfBuzz: the language list, behind atomics.
 third-party | endchar_str | HarfBuzz CFF: a constant.
 third-party | only_cleanup_pass_is_decoded | openjpeg: a one-time warning flag, set under a mutex.
 third-party | Cr_z_arm_cpu_enable_* | zlib: CPU features, detected once.
+third-party | cpu_info_ | libyuv: CPU features, detected on first use; read and written with relaxed atomics, and every thread detects the same value.
 third-party | SkFibonacci47 | Skia path ops: a constant table.
 third-party | SkMatrix::I()::identity | Skia path ops: a constant.
 third-party | SkPath::PeekErrorSingleton()::gErrorSingleton | Skia path ops: a once-built singleton.

@@ -6,6 +6,8 @@
 
 #include "core/fpdfapi/render/cpdf_scaledrenderbuffer.h"
 
+#include <utility>
+
 #include "build/build_config.h"
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
 #include "core/fpdfapi/render/cpdf_devicebuffer.h"
@@ -38,8 +40,9 @@ bool CPDF_ScaledRenderBuffer::Initialize(CPDF_RenderContext* context,
         matrix_.TransformRect(CFX_FloatRect(rect_)).GetOuterRect();
     int32_t width = bitmap_rect.Width();
     int32_t height = bitmap_rect.Height();
+
     // Set to 0 to make CalculatePitchAndSize() calculate it.
-    static constexpr uint32_t kNoPitch = 0;
+    constexpr uint32_t kNoPitch = 0;
     std::optional<CFX_DIBitmap::PitchAndSize> pitch_size =
         CFX_DIBitmap::CalculatePitchAndSize(width, height, dibFormat, kNoPitch);
     if (!pitch_size.has_value()) {
@@ -47,13 +50,20 @@ bool CPDF_ScaledRenderBuffer::Initialize(CPDF_RenderContext* context,
     }
 
     if (pitch_size.value().size <= kImageSizeLimitBytes) {
-      bitmap_device_ =
-          CFX_RenderDevice::CreateForNewBitmap(width, height, dibFormat);
-      if (bitmap_device_) {
-        context->GetBackgroundToDevice(bitmap_device_.get(), pObj, &options,
-                                       matrix_);
-        return true;
+      auto bitmap = pdfium::MakeRetain<CFX_DIBitmap>();
+      if (bitmap->Create(width, height, dibFormat)) {
+        bitmap_device_ = CFX_RenderDevice::CreateForBitmap(std::move(bitmap));
+        if (bitmap_device_) {
+          context->GetBackgroundToDevice(bitmap_device_.get(), pObj, &options,
+                                         matrix_);
+          return true;
+        }
       }
+    }
+
+    // Once dimensions are at a minimum, further scaling cannot help.
+    if (width <= 1 && height <= 1) {
+      return false;
     }
     matrix_.Scale(0.5f, 0.5f);
   }

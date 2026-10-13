@@ -44,10 +44,12 @@ source_set("test_support") {
   data = [ "resources/" ]
   public_deps = [
     ":path_service",
+    "../:pdfium_public_headers",
+    "../core/fxcrt",
+    "../core/fxge:test_support",
     "//third_party/test_fonts",
   ]
   deps = [
-    "../:pdfium_public_headers",
     "../core/fdrm",
     "../core/fxcrt",
     "../core/fxge",
@@ -57,7 +59,7 @@ source_set("test_support") {
   configs += [
     "../:pdfium_strict_config",
     "../:pdfium_noshorten_config",
-    ":pdfium_test_config",
+    ":pdfium_test_allocator_config",
   ]
   visibility = [ "../*" ]
   if (is_posix) {
@@ -81,6 +83,7 @@ source_set("test_support") {
     deps += [
       "//v8",
       "//v8:v8_libplatform",
+      "//v8:v8_libplatform_headers",
     ]
     configs += [ "//v8:external_startup_data" ]
   }
@@ -135,11 +138,13 @@ source_set("test_environments") {
     "pdf_test_environment.cpp",
     "pdf_test_environment.h",
   ]
-  deps = [
+  public_deps = [
     ":test_support",
+    "//testing/gtest",
+  ]
+  deps = [
     "../core/fxcrt",
     "../core/fxge",
-    "//testing/gtest",
   ]
   configs += [
     "../:pdfium_strict_config",
@@ -150,10 +155,12 @@ source_set("test_environments") {
       "v8_test_environment.cpp",
       "v8_test_environment.h",
     ]
+    public_deps += [ "../fxjs" ]
     deps += [
-      "../fxjs",
       "//v8",
+      "//v8:v8_config_headers",
       "//v8:v8_libplatform",
+      "//v8:v8_libplatform_headers",
     ]
     configs += [ "//v8:external_startup_data" ]
   }
@@ -172,7 +179,7 @@ source_set("test_environments") {
 source_set("unit_test_support") {
   testonly = true
   sources = []
-  deps = [ "//testing/gtest" ]
+  deps = []
   configs += [
     "../:pdfium_strict_config",
     "../:pdfium_noshorten_config",
@@ -180,27 +187,32 @@ source_set("unit_test_support") {
   public_deps = [
     ":test_environments",
     ":test_support",
+    "//testing/gtest",
   ]
   if (is_posix) {
     sources += [
       "temporary_file_test.cpp",
       "temporary_file_test.h",
     ]
-    deps += [ "../core/fxcrt" ]
+    public_deps += [ "../core/fxcrt" ]
   }
   if (pdf_enable_v8) {
     sources += [
       "fxv8_unittest.cpp",
       "fxv8_unittest.h",
     ]
-    deps += [ "../fxjs" ]
+    deps += [
+      "../fxjs",
+      "//v8:v8_headers",
+    ]
     configs += [ "//v8:external_startup_data" ]
     if (pdf_enable_xfa) {
       sources += [
         "fxgc_unittest.cpp",
         "fxgc_unittest.h",
       ]
-      deps += [ "../fxjs:gc" ]
+      public_deps += [ "../fxjs:gc" ]
+      deps += [ "//v8:v8_libplatform_headers" ]
     }
   }
 }
@@ -228,21 +240,23 @@ source_set("embedder_test_support") {
     "utils/compare_coordinates.cc",
     "utils/compare_coordinates.h",
   ]
-  deps = [
+  public_deps = [
     ":pixel_diff_utils",
+    ":test_environments",
+    ":test_support",
     "../:pdfium_public_headers",
+    "../core/fxcrt",
+    "//testing/gmock",
+    "//testing/gtest",
+  ]
+  deps = [
+    ":path_service",
     "../core/fdrm",
     "../core/fxge",
     "../fpdfsdk",
+    "../fpdfsdk:test_support",
     "png_codec",
-    "//testing/gmock",
-    "//testing/gtest",
     "//third_party/simdutf",
-  ]
-  public_deps = [
-    ":test_environments",
-    ":test_support",
-    "../core/fxcrt",
   ]
   configs += [
     "../:pdfium_strict_config",
@@ -256,6 +270,7 @@ source_set("embedder_test_support") {
       "js_embedder_test.cpp",
       "js_embedder_test.h",
     ]
+    public_deps += [ "//v8:v8_headers" ]
     deps += [
       "../fxjs",
       "//v8",
@@ -284,12 +299,9 @@ config("pdfium_in_chromium_config") {
   }
 }
 
-config("pdfium_test_config") {
+config("pdfium_test_allocator_config") {
   defines = []
   include_dirs = [ ".." ]
-  if (pdf_use_skia) {
-    defines += [ "PDF_ENABLE_SKIA" ]
-  }
   if (is_asan) {
     defines += [ "PDF_ENABLE_ASAN" ]
   }

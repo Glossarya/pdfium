@@ -19,14 +19,11 @@
 #include <string>
 #include <vector>
 
-#if defined(PDF_ENABLE_SKIA) && !defined(PDF_USE_SKIA)
-#define PDF_USE_SKIA
-#endif
-
 #include "core/fxcrt/check_op.h"
 #include "core/fxcrt/compiler_specific.h"
 #include "core/fxcrt/fx_memcpy_wrappers.h"
 #include "core/fxcrt/span.h"
+#include "fpdfsdk/display_list_renderer.h"
 #include "public/cpp/fpdf_scopers.h"
 #include "public/fpdf_annot.h"
 #include "public/fpdf_attachment.h"
@@ -69,7 +66,7 @@
 #include "testing/allocator_shim_config.h"
 #endif
 
-#ifdef PDF_ENABLE_SKIA
+#ifdef PDF_USE_SKIA
 #include "third_party/skia/include/core/SkCanvas.h"           // nogncheck
 #include "third_party/skia/include/core/SkColor.h"            // nogncheck
 #include "third_party/skia/include/core/SkDocument.h"         // nogncheck
@@ -92,7 +89,7 @@
 #ifdef BUILD_WITH_CHROMIUM
 #include "testing/chromium_support/discardable_memory_allocator.h"  // nogncheck
 #endif
-#endif  // PDF_ENABLE_SKIA
+#endif  // PDF_USE_SKIA
 
 #ifdef PDF_ENABLE_V8
 #include "testing/v8_initializer.h"
@@ -128,13 +125,25 @@ namespace {
 
 enum class RendererType {
   kDefault,
+#if defined(PDF_USE_AGG)
   kAgg,
+#endif  // defined(PDF_USE_AGG)
 #ifdef _WIN32
   kGdi,
 #endif  // _WIN32
-#if defined(PDF_ENABLE_SKIA)
+#if defined(PDF_USE_SKIA)
   kSkia,
-#endif  // defined(PDF_ENABLE_SKIA)
+#endif  // defined(PDF_USE_SKIA)
+};
+
+enum class FontLibraryType {
+  kDefault,
+#if defined(PDF_ENABLE_FREETYPE)
+  kFreetype,
+#endif  // defined(PDF_ENABLE_FREETYPE)
+#if defined(PDF_ENABLE_FONTATIONS)
+  kFontations,
+#endif  // defined(PDF_ENABLE_FONTATIONS)
 };
 
 enum class OutputFormat {
@@ -145,6 +154,7 @@ enum class OutputFormat {
   kPpm,
   kPng,
   kAnnot,
+  kDisplayList,
 #ifdef _WIN32
   kBmp,
   kEmf,
@@ -152,12 +162,12 @@ enum class OutputFormat {
   kPs3,
   kPs3Type42,
 #endif
-#ifdef PDF_ENABLE_SKIA
+#ifdef PDF_USE_SKIA
   kSkp,
 #ifdef _WIN32
   kXps,
 #endif  // _WIN32
-#endif  // PDF_ENABLE_SKIA
+#endif  // PDF_USE_SKIA
 };
 
 struct Options {
@@ -188,9 +198,7 @@ struct Options {
   bool save_thumbnails_decoded = false;
   bool save_thumbnails_raw = false;
   RendererType use_renderer_type = RendererType::kDefault;
-#if defined(PDF_ENABLE_FONTATIONS)
-  bool use_fontations_backend = false;
-#endif  // defined(PDF_ENABLE_FONTATIONS)
+  FontLibraryType use_font_library_type = FontLibraryType::kDefault;
 #ifdef PDF_ENABLE_V8
   bool disable_javascript = false;
   std::string js_flags;  // Extra flags to pass to v8 init.
@@ -573,27 +581,44 @@ bool ParseCommandLine(const std::vector<std::string>& args,
         fprintf(stderr, "Duplicate --use-renderer argument\n");
         return false;
       }
+#if defined(PDF_USE_AGG)
       if (value == "agg") {
         options->use_renderer_type = RendererType::kAgg;
+      }
+#endif  // defined(PDF_USE_AGG)
 #ifdef _WIN32
-      } else if (value == "gdi") {
+      if (value == "gdi") {
         options->use_renderer_type = RendererType::kGdi;
+      }
 #endif  // _WIN32
-#if defined(PDF_ENABLE_SKIA)
-      } else if (value == "skia") {
+#if defined(PDF_USE_SKIA)
+      if (value == "skia") {
         options->use_renderer_type = RendererType::kSkia;
-#endif  // defined(PDF_ENABLE_SKIA)
-      } else {
+      }
+#endif  // defined(PDF_USE_SKIA)
+      if (options->use_renderer_type == RendererType::kDefault) {
         fprintf(stderr, "Invalid --use-renderer argument\n");
         return false;
       }
-#if defined(PDF_ENABLE_SKIA)
+#if defined(PDF_USE_SKIA)
     } else if (cur_arg == "--render-premultiplied") {
       options->render_premultiplied_alpha = true;
-#endif  // defined(PDF_ENABLE_SKIA)
+#endif  // defined(PDF_USE_SKIA)
+#if defined(PDF_ENABLE_FREETYPE)
+    } else if (cur_arg == "--freetype") {
+      if (options->use_font_library_type != FontLibraryType::kDefault) {
+        fprintf(stderr, "Duplicate or conflicting --freetype argument\n");
+        return false;
+      }
+      options->use_font_library_type = FontLibraryType::kFreetype;
+#endif  // defined(PDF_ENABLE_FONTATIONS)
 #if defined(PDF_ENABLE_FONTATIONS)
     } else if (cur_arg == "--fontations") {
-      options->use_fontations_backend = true;
+      if (options->use_font_library_type != FontLibraryType::kDefault) {
+        fprintf(stderr, "Duplicate or conflicting --fontations argument\n");
+        return false;
+      }
+      options->use_font_library_type = FontLibraryType::kFontations;
 #endif  // defined(PDF_ENABLE_FONTATIONS)
 #ifdef PDF_ENABLE_V8
     } else if (cur_arg == "--disable-javascript") {
@@ -647,7 +672,13 @@ bool ParseCommandLine(const std::vector<std::string>& args,
         return false;
       }
       options->output_format = OutputFormat::kAnnot;
-#ifdef PDF_ENABLE_SKIA
+    } else if (cur_arg == "--dump") {
+      if (options->output_format != OutputFormat::kNone) {
+        fprintf(stderr, "Duplicate or conflicting --dump argument\n");
+        return false;
+      }
+      options->output_format = OutputFormat::kDisplayList;
+#ifdef PDF_USE_SKIA
     } else if (cur_arg == "--skp") {
       if (options->output_format != OutputFormat::kNone) {
         fprintf(stderr, "Duplicate or conflicting --skp argument\n");
@@ -662,7 +693,7 @@ bool ParseCommandLine(const std::vector<std::string>& args,
       }
       options->output_format = OutputFormat::kXps;
 #endif  // _WIN32
-#endif  // PDF_ENABLE_SKIA
+#endif  // PDF_USE_SKIA
     } else if (ParseSwitchKeyValue(cur_arg, "--font-dir=", &value)) {
       if (!options->font_directory.empty()) {
         fprintf(stderr, "Duplicate --font-dir argument\n");
@@ -801,14 +832,14 @@ bool ParseCommandLine(const std::vector<std::string>& args,
     }
   }
 
-#if defined(PDF_ENABLE_SKIA)
+#if defined(PDF_USE_SKIA)
   if (options->render_premultiplied_alpha &&
       options->use_renderer_type != RendererType::kSkia) {
     fprintf(stderr,
             "Cannot use --render_premultiplied with selected renderer\n");
     return false;
   }
-#endif  // defined(PDF_ENABLE_SKIA)
+#endif  // defined(PDF_USE_SKIA)
   return true;
 }
 
@@ -1323,7 +1354,7 @@ class GdiDisplayPageRenderer : public BitmapPageRenderer {
 };
 #endif  // _WIN32
 
-#ifdef PDF_ENABLE_SKIA
+#ifdef PDF_USE_SKIA
 class SkCanvasPageRenderer : public PageRenderer {
  public:
   bool Start() override {
@@ -1470,7 +1501,36 @@ class SkDocumentPageRenderer final : public SkCanvasPageRenderer {
   SkCanvas* canvas_ = nullptr;
   bool has_output_ = false;
 };
-#endif  // PDF_ENABLE_SKIA
+#endif  // PDF_USE_SKIA
+
+class DisplayListPageRenderer final : public PageRenderer {
+ public:
+  DisplayListPageRenderer(FPDF_PAGE page, int width, int height, int flags)
+      : PageRenderer(page, width, height, flags),
+        renderer_(page, width, height, flags) {}
+
+  bool HasOutput() const override { return has_output_; }
+
+  bool Start() override { return renderer_.Start(); }
+
+  void Finish(FPDF_FORMHANDLE form) override {
+    renderer_.Finish(form);
+    has_output_ = true;
+  }
+
+  bool Write(const std::string& name, int page_index, bool /*md5*/) override {
+    if (!has_output_) {
+      return false;
+    }
+    std::string filename =
+        WriteDisplayList(name.c_str(), page_index, renderer_.GetDisplayList());
+    return !filename.empty();
+  }
+
+ private:
+  DisplayListRenderer renderer_;
+  bool has_output_ = false;
+};
 
 bool PdfProcessor::ProcessPage(const int page_index) {
   FPDF_PAGE page = GetPage(page_index);
@@ -1533,7 +1593,7 @@ bool PdfProcessor::ProcessPage(const int page_index) {
 
     case OutputFormat::kPng: {
       auto func = WriteStraightAlphaBufferToPng;
-#ifdef PDF_ENABLE_SKIA
+#ifdef PDF_USE_SKIA
       if (options().render_premultiplied_alpha) {
         func = WritePremultipliedAlphaBufferToPng;
       }
@@ -1559,7 +1619,7 @@ bool PdfProcessor::ProcessPage(const int page_index) {
       break;
 #endif  // _WIN32
 
-#ifdef PDF_ENABLE_SKIA
+#ifdef PDF_USE_SKIA
     case OutputFormat::kSkp:
       renderer = std::make_unique<SkPicturePageRenderer>(
           page, /*width=*/width, /*height=*/height, /*flags=*/flags);
@@ -1597,7 +1657,12 @@ bool PdfProcessor::ProcessPage(const int page_index) {
       break;
     }
 #endif  // _WIN32
-#endif  // PDF_ENABLE_SKIA
+#endif  // PDF_USE_SKIA
+
+    case OutputFormat::kDisplayList:
+      renderer = std::make_unique<DisplayListPageRenderer>(
+          page, /*width=*/width, /*height=*/height, /*flags=*/flags);
+      break;
 
     default:
       // Other formats won't write the output to a file, but still rasterize.
@@ -1856,7 +1921,7 @@ void ShowConfig() {
 #ifdef PDF_ENABLE_ASAN
   append_config("ASAN");
 #endif
-#ifdef PDF_ENABLE_SKIA
+#ifdef PDF_USE_SKIA
   append_config("SKIA");
 #endif
 #ifdef _WIN32
@@ -1912,7 +1977,7 @@ constexpr char kUsageString[] =
     "  --save-thumbs-raw      - write page thumbnails' raw stream data"
     "<pdf-name>.thumbnail.raw.<page-number>.png\n"
 
-#if defined(PDF_ENABLE_SKIA)
+#if defined(PDF_USE_SKIA)
 #ifdef _WIN32
     "  --use-renderer         - renderer to use, one of [agg | gdi | skia]\n"
 #else
@@ -1926,7 +1991,7 @@ constexpr char kUsageString[] =
 #else
     "  --use-renderer         - renderer to use, one of [agg]\n"
 #endif  // _WIN32
-#endif  // defined(PDF_ENABLE_SKIA)
+#endif  // defined(PDF_USE_SKIA)
 #if defined(PDF_ENABLE_FONTATIONS)
     "  --fontations           - Use fontations back-end library\n"
 #endif
@@ -1968,12 +2033,14 @@ constexpr char kUsageString[] =
     "  --png   - write page images <pdf-name>.<page-number>.png\n"
     "  --ppm   - write page images <pdf-name>.<page-number>.ppm\n"
     "  --annot - write annotation info <pdf-name>.<page-number>.annot.txt\n"
-#ifdef PDF_ENABLE_SKIA
+    "  --dump  - write page drawing commands "
+    "<pdf-name>.<page-number>.dump.txt\n"
+#ifdef PDF_USE_SKIA
     "  --skp   - write page images <pdf-name>.<page-number>.skp\n"
 #ifdef _WIN32
     "  --xps   - write page images <pdf-name>.<page-number>.xps\n"
 #endif  // _WIN32
-#endif  // PDF_ENABLE_SKIA
+#endif  // PDF_USE_SKIA
     "  --md5   - write output image paths and their md5 hashes to stdout.\n"
     "  --time=<number> - Seconds since the epoch to set system time.\n"
     "";
@@ -2025,7 +2092,6 @@ int main(int argc, const char* argv[]) {
   config.m_pIsolate = nullptr;
   config.m_v8EmbedderSlot = 0;
   config.m_pPlatform = nullptr;
-  config.m_FontLibraryType = FPDF_FONTBACKENDTYPE_FREETYPE;
 #ifdef PDF_ENABLE_BROTLI
   config.m_BrotliEnabled = options.enable_brotli;
 #else
@@ -2042,31 +2108,41 @@ int main(int argc, const char* argv[]) {
     case RendererType::kDefault:
       config.m_RendererType = GetDefaultRendererType();
       break;
-
+#if defined(PDF_USE_AGG)
     case RendererType::kAgg:
       config.m_RendererType = FPDF_RENDERERTYPE_AGG;
       break;
-
+#endif  // defined(PDF_USE_AGG)
 #ifdef _WIN32
     case RendererType::kGdi:
       // GDI renderer uses `FPDF_RenderPage()`, rather than a renderer type.
       config.m_RendererType = GetDefaultRendererType();
       break;
 #endif  // _WIN32
-
-#if defined(PDF_ENABLE_SKIA)
+#if defined(PDF_USE_SKIA)
     case RendererType::kSkia:
       config.m_RendererType = FPDF_RENDERERTYPE_SKIA;
       break;
-#endif  // defined(PDF_ENABLE_SKIA)
+#endif  // defined(PDF_USE_SKIA)
   }
 
+  switch (options.use_font_library_type) {
+    case FontLibraryType::kDefault:
+      config.m_FontLibraryType = GetDefaultFontLibraryType();
+      break;
+#if defined(PDF_ENABLE_FREETYPE)
+    case FontLibraryType::kFreetype:
+      config.m_FontLibraryType = FPDF_FONTBACKENDTYPE_FREETYPE;
+      break;
+#endif  // defined(PDF_ENABLE_FREETYPE)
 #if defined(PDF_ENABLE_FONTATIONS)
-  if (options.use_fontations_backend) {
-    config.m_FontLibraryType = FPDF_FONTBACKENDTYPE_FONTATIONS;
-  }
+    case FontLibraryType::kFontations:
+      config.m_FontLibraryType = FPDF_FONTBACKENDTYPE_FONTATIONS;
+      break;
 #endif  // defined(PDF_ENABLE_FONTATIONS)
-#if defined(PDF_ENABLE_SKIA)
+  }
+
+#if defined(PDF_USE_SKIA)
 #if defined(BUILD_WITH_CHROMIUM)
   // Needed to support Chromium's copy of Skia, which uses a
   // `DiscardableMemoryAllocator`.
@@ -2074,7 +2150,7 @@ int main(int argc, const char* argv[]) {
     chromium_support::InitializeDiscardableMemoryAllocator();
   }
 #endif  // defined(BUILD_WITH_CHROMIUM)
-#endif  // defined(PDF_ENABLE_SKIA)
+#endif  // defined(PDF_USE_SKIA)
 
   std::function<void(FPDF_FORMHANDLE)> idler = [](FPDF_FORMHANDLE) {};
 #ifdef PDF_ENABLE_V8

@@ -167,7 +167,7 @@ CPDF_Annot::CPDF_Annot(RetainPtr<CPDF_Dictionary> dict,
           annot_dict_->GetBooleanFor(kPDFiumKey_HasGeneratedAP, false) ||
           (CanGenerateEphemeralAP() && ShouldGenerateAP())) {
   // EmbedPDF(reads-dont-write): construction writes no appearance for a kind
-  // drawn from memory, or for a popup PDFium makes.
+  // drawn from memory.
   // Drawing generates a missing appearance too: see DrawAppearance() and
   // DrawInContext().
   if (missing_appearance == MissingAppearance::kGenerateNow &&
@@ -203,7 +203,9 @@ bool CPDF_Annot::ShouldGenerateAP() const {
     return false;
   }
 
-  return !IsHidden();
+  // Closed popups are recreated on every render. Generate their appearance
+  // only when opened; DrawAppearance() and DrawInContext() retry at that point.
+  return ShouldDrawAnnotation();
 }
 
 // EmbedPDF(reads-dont-write): a missing appearance is built in memory, not

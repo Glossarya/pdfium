@@ -38,7 +38,7 @@ if (pdf_enable_xfa) {
   }
 }
 
-if (pdf_bundle_freetype) {
+if (pdf_enable_freetype && pdf_bundle_freetype) {
   config("freetype_public_includes_config") {
     # The relative freetype/include path points to PDFium's custom config.
     # The absolute path points to whatever copy of FreeType is in
@@ -259,7 +259,7 @@ if (pdf_use_agg) {
       "agg23/agg_vcgen_stroke.h",
       "agg23/agg_vertex_sequence.h",
     ]
-    deps = [ "../core/fxcrt" ]
+    public_deps = [ "../core/fxcrt" ]
   }
 }
 
@@ -354,6 +354,11 @@ if (!build_with_chromium) {
     } else {
       public_deps = [ "//third_party/libjpeg" ]
     }
+  }
+
+  # Stub target for //third_party/libyuv, which references
+  # //third_party:jpeg_includes when libyuv_disable_jpeg is false.
+  group("jpeg_includes") {
   }
 }
 

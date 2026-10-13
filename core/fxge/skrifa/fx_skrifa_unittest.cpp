@@ -236,6 +236,7 @@ TEST(FxSkrifaTest, TestType1Face) {
   ASSERT_TRUE(path);
   EXPECT_EQ(path->GetPoints().size(), 12u);
 
+#if defined(PDF_ENABLE_FREETYPE)
   auto glyph_bitmap =
       face->RenderGlyph(gid_x, /*is_cid_font=*/false, /*is_vertical=*/false,
                         CFX_Matrix(12.0f, 0, 0, 12.0f, 0, 0), /*dest_width=*/0,
@@ -261,7 +262,42 @@ TEST(FxSkrifaTest, TestType1Face) {
   ASSERT_TRUE(glyph_mono);
   EXPECT_TRUE(glyph_mono->GetBitmap());
   EXPECT_EQ(glyph_mono->GetBitmap()->GetWidth(), 6);
-  EXPECT_EQ(glyph_mono->GetBitmap()->GetHeight(), 7);
+  EXPECT_EQ(glyph_mono->GetBitmap()->GetHeight(), 6);
+#endif  // defined(PDF_ENABLE_FREETYPE)
+}
+
+TEST(FxSkrifaTest, TestBareCffFace) {
+  if (!CFX_GEModule::IsFontations()) {
+    GTEST_SKIP();
+  }
+
+  auto stream = pdfium::MakeRetain<CFX_ReadOnlySpanStream>(kFoxitSansFontData);
+  auto face = CFX_Face::New(nullptr, stream, 0);
+  ASSERT_TRUE(face);
+
+  EXPECT_EQ(face->GetFontFormat(), "CFF");
+  EXPECT_FALSE(face->IsTtOt());
+  EXPECT_EQ(face->GetCharMapCount(), 2u);
+  EXPECT_EQ(face->GetCharMapPlatformIdByIndex(0), kPlatformAppleUnicode);
+  EXPECT_EQ(face->GetCharMapIdPairByIndex(0).encoding_id,
+            kAppleUnicodeEncodingUnicode2_0);
+  EXPECT_EQ(face->GetCharMapEncodingByIndex(0), fxge::FontEncoding::kUnicode);
+  EXPECT_EQ(face->GetCharMapPlatformIdByIndex(1), kPlatformAdobe);
+  EXPECT_EQ(face->GetCharMapIdPairByIndex(1).encoding_id, kAdobeEncodingCustom);
+  EXPECT_EQ(face->GetCharMapEncodingByIndex(1),
+            fxge::FontEncoding::kAdobeCustom);
+
+  EXPECT_TRUE(face->SelectCharMap(fxge::FontEncoding::kAdobeCustom));
+  int gid_x = face->GetCharIndex(120);
+  EXPECT_EQ(gid_x, 222);
+
+  EXPECT_TRUE(face->SelectCharMap(fxge::FontEncoding::kUnicode));
+  EXPECT_EQ(face->GetCharIndex(L'x'), gid_x);
+
+  std::unique_ptr<CFX_Path> path =
+      face->LoadGlyphPath(gid_x, 0, false, nullptr);
+  ASSERT_TRUE(path);
+  EXPECT_EQ(path->GetPoints().size(), 12u);
 }
 
 TEST(FxSkrifaTest, TestGetSfntTable) {
@@ -284,4 +320,36 @@ TEST(FxSkrifaTest, TestGetSfntTable) {
   // Missing table tag returns 0.
   constexpr uint32_t kMissingTag = 0x78797a77;
   EXPECT_EQ(0u, font->get_sfnt_table(kMissingTag, rust::Slice<uint8_t>()));
+}
+
+TEST(FxSkrifaTest, TestCharmaps) {
+  std::string font_path = PathService::GetTestFilePath("fonts/ahem/Ahem.ttf");
+  std::vector<uint8_t> bytes = GetFileContents(font_path.c_str());
+
+  auto font = skrifa::new_font(rust::Slice<const uint8_t>(bytes), 0);
+  ASSERT_TRUE(font->is_ok());
+
+  size_t count = font->get_charmap_count();
+  EXPECT_EQ(count, 2u);
+
+  // Verify charmap info and map characters to glyph IDs.
+  size_t found_unicode_times = 0;
+  for (size_t i = 0; i < count; ++i) {
+    skrifa::CharMapInfo info;
+    EXPECT_TRUE(font->get_charmap_info(i, info));
+    if (info.platform_id == kPlatformWindows &&
+        info.encoding_id == kWindowsEncodingUnicode) {
+      ++found_unicode_times;
+      // In Ahem, space (32) maps to glyph ID 3.
+      EXPECT_EQ(3u, font->cmap_char_to_gid(i, 32));
+      // 'A' (65) should map to non-zero glyph ID.
+      EXPECT_EQ(35u, font->cmap_char_to_gid(i, 65));
+    }
+  }
+  EXPECT_EQ(found_unicode_times, 1u);
+
+  // Out-of-bounds queries.
+  skrifa::CharMapInfo dummy_info;
+  EXPECT_FALSE(font->get_charmap_info(count, dummy_info));
+  EXPECT_EQ(0u, font->cmap_char_to_gid(count, 32));
 }

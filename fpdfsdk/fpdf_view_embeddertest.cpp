@@ -18,11 +18,13 @@
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "fpdfsdk/fpdf_view_c_api_test.h"
 #include "public/cpp/fpdf_scopers.h"
+#include "public/fpdf_doc.h"
 #include "public/fpdfview.h"
 #include "testing/embedder_test.h"
 #include "testing/embedder_test_constants.h"
 #include "testing/embedder_test_environment.h"
 #include "testing/fx_string_testhelpers.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/utils/file_util.h"
 #include "testing/utils/hash.h"
@@ -919,6 +921,57 @@ TEST_F(FPDFViewEmbedderTest, NamedDestsOldStyle) {
   ASSERT_TRUE(FPDF_GetNamedDest(document(), 1, buffer, &size));
   ASSERT_EQ(static_cast<int>(sizeof(kLastAlternate) * 2), size);
   EXPECT_EQ(kLastAlternate,
+            GetPlatformString(reinterpret_cast<FPDF_WIDESTRING>(buffer)));
+}
+
+TEST_F(FPDFViewEmbedderTest, NamedDestsOldStyleIndirect) {
+  ASSERT_TRUE(OpenDocument("named_dests_old_style_indirect.pdf"));
+  EXPECT_EQ(3u, FPDF_CountNamedDests(document()));
+
+  static constexpr char kIndirectArray[] = "IndirectArray";
+  static constexpr char kIndirectDangling[] = "IndirectDangling";
+  static constexpr char kIndirectDict[] = "IndirectDict";
+
+  char buffer[512];
+  static constexpr long kBufferSize = sizeof(buffer);
+  long size = kBufferSize;
+
+  // The first entry is an indirect destination array for the second page.
+  // Looking it up by index must give the same destination as by name.
+  FPDF_DEST dest = FPDF_GetNamedDestByName(document(), kIndirectArray);
+  ASSERT_TRUE(dest);
+  EXPECT_EQ(1, FPDFDest_GetDestPageIndex(document(), dest));
+  EXPECT_EQ(dest, FPDF_GetNamedDest(document(), 0, nullptr, &size));
+  ASSERT_EQ(static_cast<int>(sizeof(kIndirectArray) * 2), size);
+  ASSERT_EQ(dest, FPDF_GetNamedDest(document(), 0, buffer, &size));
+  ASSERT_EQ(static_cast<int>(sizeof(kIndirectArray) * 2), size);
+  EXPECT_EQ(kIndirectArray,
+            GetPlatformString(reinterpret_cast<FPDF_WIDESTRING>(buffer)));
+
+  // The second entry is a dangling reference, so neither lookup finds a
+  // destination, and FPDF_GetNamedDest() does not report the name.
+  EXPECT_FALSE(FPDF_GetNamedDestByName(document(), kIndirectDangling));
+  size = kBufferSize;
+  EXPECT_FALSE(FPDF_GetNamedDest(document(), 1, nullptr, &size));
+  EXPECT_EQ(0, size);
+  static constexpr char kPattern = 'X';
+  std::ranges::fill(buffer, kPattern);
+  size = kBufferSize;
+  EXPECT_FALSE(FPDF_GetNamedDest(document(), 1, buffer, &size));
+  EXPECT_EQ(kBufferSize, size);  // unmodified.
+  EXPECT_THAT(buffer, testing::Each(kPattern));
+
+  // The third entry is an indirect destination dictionary, whose /D array is
+  // for the third page.
+  dest = FPDF_GetNamedDestByName(document(), kIndirectDict);
+  ASSERT_TRUE(dest);
+  EXPECT_EQ(2, FPDFDest_GetDestPageIndex(document(), dest));
+  size = kBufferSize;
+  EXPECT_EQ(dest, FPDF_GetNamedDest(document(), 2, nullptr, &size));
+  ASSERT_EQ(static_cast<int>(sizeof(kIndirectDict) * 2), size);
+  ASSERT_EQ(dest, FPDF_GetNamedDest(document(), 2, buffer, &size));
+  ASSERT_EQ(static_cast<int>(sizeof(kIndirectDict) * 2), size);
+  EXPECT_EQ(kIndirectDict,
             GetPlatformString(reinterpret_cast<FPDF_WIDESTRING>(buffer)));
 }
 
@@ -1994,12 +2047,13 @@ TEST_F(FPDFViewEmbedderTest, RenderXfaPageToSkp) {
   // Should always be blank, as we're not testing `FPDF_FFLRecord()` here.
   TestRenderPageSkp(page.get(), pdfium::kBlankPage612By792Png);
 }
+#endif  // defined(PDF_USE_SKIA)
 
+#if defined(PDF_USE_AGG) && defined(PDF_USE_SKIA)
 TEST_F(FPDFViewEmbedderTest, Bug2087) {
   FPDF_DestroyLibrary();
 
   std::string agg_checksum;
-#if defined(PDF_USE_AGG)
   const FPDF_LIBRARY_CONFIG kAggConfig = {
       .version = 5,
       .m_pUserFontPaths = nullptr,
@@ -2018,7 +2072,6 @@ TEST_F(FPDFViewEmbedderTest, Bug2087) {
   }
   CloseDocument();
   FPDF_DestroyLibrary();
-#endif  // PDF_USE_AGG
 
   std::string skia_checksum;
   const FPDF_LIBRARY_CONFIG kSkiaConfig = {
@@ -2041,7 +2094,7 @@ TEST_F(FPDFViewEmbedderTest, Bug2087) {
   EmbedderTestEnvironment::GetInstance()->TearDown();
   EmbedderTestEnvironment::GetInstance()->SetUp();
 }
-#endif  // defined(PDF_USE_SKIA)
+#endif  // defined(PDF_USE_AGG) && defined(PDF_USE_SKIA)
 
 TEST_F(FPDFViewEmbedderTest, BadIsolatePerDocumentConfig) {
   FPDF_DestroyLibrary();
@@ -2177,4 +2230,95 @@ TEST_F(FPDFViewEmbedderTest, DocumentVersionInCatalog) {
   int version;
   EXPECT_TRUE(FPDF_GetFileVersion(document(), &version));
   EXPECT_EQ(16, version);
+}
+
+TEST_F(FPDFViewEmbedderTest, RenderPageToDisplayList) {
+  static const char kExpectedDisplayList[] =
+      "SaveState\n"
+      "SetBaseClip [0,0,200,300]\n"
+      "SetClip_PathFill rule=winding matrix=none "
+      "points=[move(0.0000,300.0000) line(0.0000,0.0000) line(200.0000,0.0000) "
+      "line(200.0000,300.0000) line(0.0000,300.0000,close)]\n"
+      "SaveState\n"
+      "DrawPath fill=0xff000000 stroke=0xff000000 rule=even-odd "
+      "stroke_state=[width=1.0000 cap=butt join=miter miter=10.0000] "
+      "matrix=[1.0000,0.0000,0.0000,-1.0000,0.0000,300.0000] "
+      "points=[move(0.0000,290.0000) line(10.0000,290.0000) "
+      "line(10.0000,300.0000) "
+      "line(0.0000,300.0000) line(0.0000,290.0000,close)]\n"
+      "DrawPath fill=0xff000000 stroke=0xff000000 rule=even-odd "
+      "stroke_state=[width=1.0000 cap=butt join=miter miter=10.0000] "
+      "matrix=[1.0000,0.0000,0.0000,-1.0000,0.0000,300.0000] "
+      "points=[move(10.0000,150.0000) line(60.0000,150.0000) "
+      "line(60.0000,180.0000) "
+      "line(10.0000,180.0000) line(10.0000,150.0000,close)]\n"
+      "DrawPath fill=0xff0000ff stroke=0xff000000 rule=even-odd "
+      "stroke_state=[width=1.0000 cap=butt join=miter miter=10.0000] "
+      "matrix=[1.0000,0.0000,0.0000,-1.0000,0.0000,300.0000] "
+      "points=[move(190.0000,290.0000) line(200.0000,290.0000) "
+      "line(200.0000,300.0000) "
+      "line(190.0000,300.0000) line(190.0000,290.0000,close)]\n"
+      "DrawPath fill=0xff0000ff stroke=0xff000000 rule=even-odd "
+      "stroke_state=[width=1.0000 cap=butt join=miter miter=10.0000] "
+      "matrix=[1.0000,0.0000,0.0000,-1.0000,0.0000,300.0000] "
+      "points=[move(70.0000,232.0000) line(120.0000,232.0000) "
+      "line(120.0000,262.0000) "
+      "line(70.0000,262.0000) line(70.0000,232.0000,close)]\n"
+      "DrawPath fill=0xff00ff00 stroke=0xff000000 rule=even-odd "
+      "stroke_state=[width=1.0000 cap=butt join=miter miter=10.0000] "
+      "matrix=[1.0000,0.0000,0.0000,-1.0000,0.0000,300.0000] "
+      "points=[move(190.0000,0.0000) line(200.0000,0.0000) "
+      "line(200.0000,10.0000) "
+      "line(190.0000,10.0000) line(190.0000,0.0000,close)]\n"
+      "DrawPath fill=0xff00ff00 stroke=0xff000000 rule=even-odd "
+      "stroke_state=[width=1.0000 cap=butt join=miter miter=10.0000] "
+      "matrix=[1.0000,0.0000,0.0000,-1.0000,0.0000,300.0000] "
+      "points=[move(130.0000,150.0000) line(180.0000,150.0000) "
+      "line(180.0000,180.0000) "
+      "line(130.0000,180.0000) line(130.0000,150.0000,close)]\n"
+      "DrawPath fill=0xffff0000 stroke=0xff000000 rule=even-odd "
+      "stroke_state=[width=1.0000 cap=butt join=miter miter=10.0000] "
+      "matrix=[1.0000,0.0000,0.0000,-1.0000,0.0000,300.0000] "
+      "points=[move(0.0000,0.0000) line(10.0000,0.0000) line(10.0000,10.0000) "
+      "line(0.0000,10.0000) line(0.0000,0.0000,close)]\n"
+      "DrawPath fill=0xffff0000 stroke=0xff000000 rule=even-odd "
+      "stroke_state=[width=1.0000 cap=butt join=miter miter=10.0000] "
+      "matrix=[1.0000,0.0000,0.0000,-1.0000,0.0000,300.0000] "
+      "points=[move(70.0000,67.0000) line(120.0000,67.0000) "
+      "line(120.0000,97.0000) "
+      "line(70.0000,97.0000) line(70.0000,67.0000,close)]\n"
+      "RestoreState\n"
+      "RestoreState\n";
+
+  ASSERT_TRUE(OpenDocument("rectangles.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+
+  std::string display_list = RenderPageToDisplayList(page.get());
+  EXPECT_EQ(kExpectedDisplayList, display_list);
+}
+
+TEST_F(FPDFViewEmbedderTest, RenderHelloWorldToDisplayList) {
+  ASSERT_TRUE(OpenDocument("hello_world.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+
+  std::string display_list = RenderPageToDisplayList(page.get());
+  EXPECT_NE(std::string::npos,
+            display_list.find("DrawDeviceText font=\"Tinos\" size=12.0000"));
+  EXPECT_NE(std::string::npos,
+            display_list.find("DrawDeviceText font=\"Arimo\" size=16.0000"));
+  EXPECT_NE(std::string::npos, display_list.find("idx=43,u=U+0048"));
+}
+
+TEST_F(FPDFViewEmbedderTest, RenderImageToDisplayList) {
+  ASSERT_TRUE(OpenDocument("embedded_images.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+
+  std::string display_list = RenderPageToDisplayList(page.get());
+  EXPECT_NE(std::string::npos,
+            display_list.find("StartDIBits size=[109,88] bpp=24"));
+  EXPECT_NE(std::string::npos,
+            display_list.find("StartDIBits size=[92,68] bpp=1"));
 }

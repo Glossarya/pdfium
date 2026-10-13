@@ -326,9 +326,11 @@ text markup reads oriented quads.
 **Rule.** Glyph bounds of substitute fonts are measured as drawn, including multiple-master design
 changes.
 **Why.** Text bounds of substituted fonts came out wrong, while renders were right.
-**Where.** `cfx_face.cpp`.
+**Where.** `cfx_face.cpp`, inside upstream's `PDF_ENABLE_FREETYPE` guards: the scoped variation
+calls FreeType.
 **Guarded by.** `epdf_text_bounds_embeddertest.cpp`.
-**When upstream touches this.** `CFX_Face` metrics.
+**When upstream touches this.** `CFX_Face` metrics, and the FreeType and Fontations branches of
+`CFX_Face`.
 
 ## Annotations, forms and features
 
@@ -385,7 +387,9 @@ expect standard fonts from the test fonts, so the embedder test environment turn
 `EPDFViewEmbedderTest.StandardFontsDrawWithBuiltInFaces` for standard fonts.
 **When upstream touches this.** Font loading and mapping. A new upstream test that expects the test
 fonts for a standard font passes as it is; one of ours that expects the built-in faces turns the
-switch off.
+switch off. Our font code calls FreeType directly (`CFX_Face::GetFsTypeFlags()`, CID-keyed CFF,
+the registry), so our builds keep `pdf_enable_freetype` on; a Fontations-only build would need
+Skrifa versions of them.
 
 ### measurement
 **Rule.** Measurement dictionaries and dimension appearances.

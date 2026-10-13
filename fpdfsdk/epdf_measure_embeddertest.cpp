@@ -948,7 +948,8 @@ TEST_F(EPDFMeasureEmbedderTest, CaptionAppearanceGolden) {
   }
   auto bitmap = RenderPageWithFlags(page.get(), nullptr, FPDF_ANNOT);
   ASSERT_TRUE(bitmap);
-  CompareBitmapWithFuzzyExpectationSuffix(bitmap.get(), "measure_captions");
+  CompareBitmapWithExpectationSuffix(bitmap.get(), "measure_captions",
+                                     kFuzzyDiffOptions);
 }
 
 TEST_F(EPDFMeasureEmbedderTest,

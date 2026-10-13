@@ -126,7 +126,6 @@ source_set("fpdfdoc") {
   ]
   deps = [
     "../../constants",
-    "../fpdfapi/edit:contentstream_write_utils",
     "../fpdfapi/font",
     "../fpdfapi/page",
     "../fpdfapi/parser",

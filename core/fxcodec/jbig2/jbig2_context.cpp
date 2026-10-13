@@ -18,11 +18,14 @@
 #include "core/fxcodec/jbig2/jbig2_grd_proc.h"
 #include "core/fxcodec/jbig2/jbig2_grrd_proc.h"
 #include "core/fxcodec/jbig2/jbig2_htrd_proc.h"
+#include "core/fxcodec/jbig2/jbig2_huffman_decoder.h"
 #include "core/fxcodec/jbig2/jbig2_pdd_proc.h"
 #include "core/fxcodec/jbig2/jbig2_sdd_proc.h"
 #include "core/fxcodec/jbig2/jbig2_trd_proc.h"
 #include "core/fxcrt/check_op.h"
 #include "core/fxcrt/fixed_size_data_vector.h"
+#include "core/fxcrt/fx_ceil_div.h"
+#include "core/fxcrt/fx_ceil_log2.h"
 #include "core/fxcrt/fx_memory_wrappers.h"
 #include "core/fxcrt/fx_safe_types.h"
 #include "core/fxcrt/pauseindicator_iface.h"
@@ -238,7 +241,7 @@ JBig2_Result CJBig2_Context::ParseSegmentHeader(CJBig2_Segment* pSegment) {
     }
 
     int number_of_bits_to_skip = 1 + pSegment->referred_to_segment_count_;
-    stream_->addOffset((number_of_bits_to_skip + 7) / 8);
+    stream_->addOffset(fxcrt::CeilDiv(number_of_bits_to_skip, 8));
   } else {
     if (stream_->read1Byte(&cTemp) != 0) {
       return JBig2_Result::kFailure;
@@ -710,20 +713,16 @@ JBig2_Result CJBig2_Context::ParseTextRegion(CJBig2_Segment* pSegment) {
 
   uint8_t SBSYMCODELEN = 0;
   if (pTRD->SBHUFF) {
-    std::vector<JBig2HuffmanCode> SBSYMCODES =
+    CJBig2_HuffmanTable SBSYMCODES =
         DecodeSymbolIDHuffmanTable(pTRD->SBNUMSYMS);
-    if (SBSYMCODES.empty()) {
+    if (!SBSYMCODES.IsOK()) {
       return JBig2_Result::kFailure;
     }
 
     stream_->alignByte();
     pTRD->SBSYMCODES = std::move(SBSYMCODES);
   } else {
-    dwTemp = 0;
-    while ((uint32_t)(1 << dwTemp) < pTRD->SBNUMSYMS) {
-      ++dwTemp;
-    }
-    SBSYMCODELEN = static_cast<uint8_t>(dwTemp);
+    SBSYMCODELEN = fxcrt::CeilLog2(pTRD->SBNUMSYMS);
   }
 
   if (pTRD->SBHUFF) {
@@ -1210,79 +1209,61 @@ JBig2_Result CJBig2_Context::ParseRegionInfo(JBig2RegionInfo* pRI) {
   return JBig2_Result::kSuccess;
 }
 
-std::vector<JBig2HuffmanCode> CJBig2_Context::DecodeSymbolIDHuffmanTable(
+CJBig2_HuffmanTable CJBig2_Context::DecodeSymbolIDHuffmanTable(
     uint32_t SBNUMSYMS) {
-  const size_t kRunCodesSize = 35;
-  std::array<JBig2HuffmanCode, kRunCodesSize> huffman_codes;
-  for (size_t i = 0; i < kRunCodesSize; ++i) {
-    if (stream_->readNBits(4, &huffman_codes[i].codelen) != 0) {
-      return std::vector<JBig2HuffmanCode>();
+  std::array<uint8_t, 35> runcode_lengths;
+  for (uint8_t& runcode_length : runcode_lengths) {
+    uint32_t code_length;
+    if (stream_->readNBits(4, &code_length) != 0) {
+      return CJBig2_HuffmanTable();
     }
-  }
-  if (!HuffmanAssignCode(huffman_codes)) {
-    return std::vector<JBig2HuffmanCode>();
+    runcode_length = code_length;
   }
 
-  std::vector<JBig2HuffmanCode> SBSYMCODES(SBNUMSYMS);
+  CJBig2_HuffmanTable runcode_table(runcode_lengths);
+  if (!runcode_table.IsOK()) {
+    return CJBig2_HuffmanTable();
+  }
+
+  CJBig2_HuffmanDecoder runcode_decoder(stream_.get());
+
+  std::vector<uint8_t> SBSYMCODES(SBNUMSYMS);
   int32_t run = 0;
   int32_t i = 0;
   while (i < static_cast<int>(SBNUMSYMS)) {
-    size_t j;
-    FX_SAFE_INT32 nSafeVal = 0;
-    int32_t nBits = 0;
-    uint32_t nTemp;
-    while (true) {
-      if (stream_->read1Bit(&nTemp) != 0) {
-        return std::vector<JBig2HuffmanCode>();
-      }
-
-      nSafeVal <<= 1;
-      if (!nSafeVal.IsValid()) {
-        return std::vector<JBig2HuffmanCode>();
-      }
-
-      nSafeVal |= nTemp;
-      ++nBits;
-      const int32_t nVal = nSafeVal.ValueOrDie();
-      for (j = 0; j < kRunCodesSize; ++j) {
-        if (nBits == huffman_codes[j].codelen &&
-            nVal == huffman_codes[j].code) {
-          break;
-        }
-      }
-      if (j < kRunCodesSize) {
-        break;
-      }
+    int32_t runcode;
+    if (runcode_decoder.DecodeAValue(&runcode_table, &runcode) != 0) {
+      return CJBig2_HuffmanTable();
     }
-    int32_t runcode = static_cast<int32_t>(j);
+    uint32_t temp;
     if (runcode < 32) {
-      SBSYMCODES[i].codelen = runcode;
+      SBSYMCODES[i] = runcode;
       run = 0;
     } else if (runcode == 32) {
-      if (stream_->readNBits(2, &nTemp) != 0) {
-        return std::vector<JBig2HuffmanCode>();
+      if (stream_->readNBits(2, &temp) != 0) {
+        return CJBig2_HuffmanTable();
       }
-      run = nTemp + 3;
+      run = temp + 3;
     } else if (runcode == 33) {
-      if (stream_->readNBits(3, &nTemp) != 0) {
-        return std::vector<JBig2HuffmanCode>();
+      if (stream_->readNBits(3, &temp) != 0) {
+        return CJBig2_HuffmanTable();
       }
-      run = nTemp + 3;
+      run = temp + 3;
     } else if (runcode == 34) {
-      if (stream_->readNBits(7, &nTemp) != 0) {
-        return std::vector<JBig2HuffmanCode>();
+      if (stream_->readNBits(7, &temp) != 0) {
+        return CJBig2_HuffmanTable();
       }
-      run = nTemp + 11;
+      run = temp + 11;
     }
     if (run > 0) {
       if (i + run > (int)SBNUMSYMS) {
-        return std::vector<JBig2HuffmanCode>();
+        return CJBig2_HuffmanTable();
       }
       for (int32_t k = 0; k < run; ++k) {
         if (runcode == 32 && i > 0) {
-          SBSYMCODES[i + k].codelen = SBSYMCODES[i - 1].codelen;
+          SBSYMCODES[i + k] = SBSYMCODES[i - 1];
         } else {
-          SBSYMCODES[i + k].codelen = 0;
+          SBSYMCODES[i + k] = 0;
         }
       }
       i += run;
@@ -1290,10 +1271,7 @@ std::vector<JBig2HuffmanCode> CJBig2_Context::DecodeSymbolIDHuffmanTable(
       ++i;
     }
   }
-  if (!HuffmanAssignCode(SBSYMCODES)) {
-    return std::vector<JBig2HuffmanCode>();
-  }
-  return SBSYMCODES;
+  return CJBig2_HuffmanTable(SBSYMCODES);
 }
 
 const CJBig2_HuffmanTable* CJBig2_Context::GetHuffmanTable(size_t idx) {
@@ -1303,35 +1281,4 @@ const CJBig2_HuffmanTable* CJBig2_Context::GetHuffmanTable(size_t idx) {
     huffman_tables_[idx] = std::make_unique<CJBig2_HuffmanTable>(idx);
   }
   return huffman_tables_[idx].get();
-}
-
-// static
-bool CJBig2_Context::HuffmanAssignCode(
-    pdfium::span<JBig2HuffmanCode> symcodes) {
-  int lenmax = 0;
-  for (const auto& symcode : symcodes) {
-    lenmax = std::max(symcode.codelen, lenmax);
-  }
-  std::vector<int> lencounts(lenmax + 1);
-  std::vector<int> firstcodes(lenmax + 1);
-  for (const auto& symcode : symcodes) {
-    ++lencounts[symcode.codelen];
-  }
-  lencounts[0] = 0;
-  for (int i = 1; i <= lenmax; ++i) {
-    FX_SAFE_INT32 shifted = firstcodes[i - 1];
-    shifted += lencounts[i - 1];
-    shifted <<= 1;
-    if (!shifted.IsValid()) {
-      return false;
-    }
-    firstcodes[i] = shifted.ValueOrDie();
-    int curcode = firstcodes[i];
-    for (auto& symcode : symcodes) {
-      if (symcode.codelen == i) {
-        symcode.code = curcode++;
-      }
-    }
-  }
-  return true;
 }

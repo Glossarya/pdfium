@@ -19,7 +19,7 @@
 #include <sstream>
 #include <vector>
 
-#include "core/fpdfapi/edit/cpdf_contentstream_write_utils.h"
+#include "core/fxcrt/stream_write_utils.h"
 #include "core/fpdfdoc/cpdf_annot.h"
 #include "core/fpdfdoc/cpdf_annotfontmap.h"
 #include "core/fpdfdoc/cpdf_appearancegenerator.h"

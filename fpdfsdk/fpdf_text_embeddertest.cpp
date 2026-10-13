@@ -2507,13 +2507,10 @@ TEST_F(FPDFTextEmbedderTest, Bug491516663) {
 
 TEST_F(FPDFTextEmbedderTest, Bug554790604) {
   // The document's ToUnicode CMap is a catch-all bfrange followed by overrides
-  // for individual codes. Per Adobe TN #5014 the later entries should win, so
-  // the page should read as U+00F3, U+00BA, U+20AC, U+00ED, U+00BA, 'X', 'A',
-  // 'B', U+00E9, U+00EA. The lowest mapping wins instead, so every code whose
-  // target is above it keeps the range's identity mapping, and 0x9B becomes an
-  // unprintable C1 control character.
+  // for individual codes. Per Adobe TN #5014 the later entries win, so the page
+  // reads as accented characters rather than the range's identity mapping.
   static constexpr std::array<unsigned short, 11> kExpectedChars = {
-      'A', 'B', 'C', 'U', 0x009b, 'X', 'A', 'B', 'p', 'q', 0};
+      0x00f3, 0x00ba, 0x20ac, 0x00ed, 0x00ba, 'X', 'A', 'B', 0x00e9, 0x00ea, 0};
 
   ASSERT_TRUE(OpenDocument("bug_554790604.pdf"));
   ScopedPage page = LoadScopedPage(0);
@@ -2555,10 +2552,11 @@ TEST_F(FPDFTextEmbedderTest, ActualTextRtl) {
        // שלום (logical order):
        0x05e9, 0x05dc, 0x05d5, 0x05dd, '\r', '\n',
        // Predominantly RTL case:
-       // שלום (logical order):
-       0x05e9, 0x05dc, 0x05d5, 0x05dd, ' ', 'H', 'a', ' ',
+       // TODO(crbug.com/525087036): The two RTL segments should trade places.
        // מים (logical order):
-       0x05de, 0x05d9, 0x05dd, '\r', '\n',
+       0x05de, 0x05d9, 0x05dd, ' ', 'H', 'a', ' ',
+       // שלום (logical order):
+       0x05e9, 0x05dc, 0x05d5, 0x05dd, '\r', '\n',
        // Tie-Breaker case:
        'H', 'e', ' ',
        // שלום (logical order):
@@ -2589,11 +2587,30 @@ TEST_F(FPDFTextEmbedderTest, ActualTextRtl) {
        // מים (logical order):
        0x05de, 0x05d9, 0x05dd, '\r', '\n',
        // Literal RTL text followed by RTL /ActualText case:
-       // TODO(crbug.com/525087036): Should be in logical order.
-       // םולש (/ActualText):
-       0x05dd, 0x05d5, 0x05dc, 0x05e9,
+       // שלום (/ActualText, logical order):
+       0x05e9, 0x05dc, 0x05d5, 0x05dd,
        // בן (literal text):
        0x05d1, 0x05df, '\0'});
+  static constexpr int kExpectedTextSize = std::size(kExpectedText);
+
+  unsigned short buffer[256] = {};
+  EXPECT_EQ(kExpectedTextSize,
+            FPDFText_GetText(text_page.get(), 0, std::size(buffer), buffer));
+  EXPECT_THAT(pdfium::span(buffer).first<kExpectedTextSize>(),
+              ElementsAreArray(kExpectedText));
+}
+
+TEST_F(FPDFTextEmbedderTest, Arabic) {
+  ASSERT_TRUE(OpenDocument("arabic.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+
+  ScopedFPDFTextPage text_page(FPDFText_LoadPage(page.get()));
+  ASSERT_TRUE(text_page);
+
+  static constexpr auto kExpectedText = std::to_array<unsigned short>(
+      {0x0627, 0x0644, 0x0628, 0x062d, 0x0631, ' ', 0x0627, 0x0644, 0x0623,
+       0x0632, 0x0631, 0x0642, '\0'});
   static constexpr int kExpectedTextSize = std::size(kExpectedText);
 
   unsigned short buffer[256] = {};

@@ -6,29 +6,17 @@
 
 #include "core/fxcodec/jbig2/jbig2_huffman_table.h"
 
+#include <algorithm>
 #include <array>
 #include <iterator>
 #include <limits>
 
 #include "core/fxcodec/jbig2/jbig2_bit_stream.h"
-#include "core/fxcodec/jbig2/jbig2_context.h"
 #include "core/fxcrt/check.h"
 #include "core/fxcrt/check_op.h"
 #include "core/fxcrt/fx_safe_types.h"
-#include "core/fxcrt/raw_span.h"
 
 namespace {
-
-struct JBig2TableLine {
-  uint8_t PREFLEN;
-  uint8_t RANDELEN;
-  int32_t RANGELOW;
-};
-
-struct HuffmanTable {
-  bool HTOOB;
-  pdfium::raw_span<const JBig2TableLine> lines;
-};
 
 constexpr JBig2TableLine kTableLine1[] = {{1, 4, 0},
                                           {2, 8, 16},
@@ -133,33 +121,62 @@ static_assert(CJBig2_HuffmanTable::kNumHuffmanTables ==
 }  // namespace
 
 CJBig2_HuffmanTable::CJBig2_HuffmanTable(size_t idx) {
-  const HuffmanTable& table = kHuffmanTables[idx];
-  HTOOB = table.HTOOB;
-  NTEMP = static_cast<uint32_t>(table.lines.size());
-  ok_ = ParseFromStandardTable(idx);
+  ok_ = ParseFromTable(kHuffmanTables[idx]);
   DCHECK(ok_);
 }
 
-CJBig2_HuffmanTable::CJBig2_HuffmanTable(CJBig2_BitStream* pStream)
-    : HTOOB(false), NTEMP(0) {
+CJBig2_HuffmanTable::CJBig2_HuffmanTable(CJBig2_BitStream* pStream) {
   ok_ = ParseFromCodedBuffer(pStream);
 }
 
+CJBig2_HuffmanTable::CJBig2_HuffmanTable(pdfium::span<uint8_t> prefix_lengths) {
+  std::vector<JBig2TableLine> lines(prefix_lengths.size() + 2);
+  for (size_t i = 0; const auto& length : prefix_lengths) {
+    lines[i].PREFLEN = length;
+    lines[i].RANGELEN = 0;
+    lines[i].RANGELOW = static_cast<int>(i);
+    ++i;
+  }
+  // Dummy open-ended intervals:
+  lines[prefix_lengths.size()] = {0, 0, 0};
+  lines[prefix_lengths.size() + 1] = {0, 0, 0};
+
+  ok_ = ParseFromTable({.HTOOB = false, .lines = lines});
+}
+
+CJBig2_HuffmanTable::CJBig2_HuffmanTable() noexcept = default;
+CJBig2_HuffmanTable::CJBig2_HuffmanTable(CJBig2_HuffmanTable&&) noexcept =
+    default;
+CJBig2_HuffmanTable& CJBig2_HuffmanTable::operator=(
+    CJBig2_HuffmanTable&&) noexcept = default;
 CJBig2_HuffmanTable::~CJBig2_HuffmanTable() = default;
 
-bool CJBig2_HuffmanTable::ParseFromStandardTable(size_t idx) {
-  pdfium::span<const JBig2TableLine> lines =
-      kHuffmanTables[idx].lines.first(NTEMP);
+std::optional<uint32_t> CJBig2_HuffmanTable::FindLine(unsigned codelen,
+                                                      uint32_t code) const {
+  if (codelen > max_codelen_ || code < first_codes_[codelen]) {
+    return std::nullopt;
+  }
+  const uint32_t rank = code - first_codes_[codelen];
+  if (rank >= code_counts_[codelen]) {
+    return std::nullopt;
+  }
+  return lines_by_length_[first_line_indices_[codelen] + rank];
+}
+
+bool CJBig2_HuffmanTable::ParseFromTable(const HuffmanTable& table) {
+  HTOOB = table.HTOOB;
+  NTEMP = static_cast<uint32_t>(table.lines.size());
+  pdfium::span<const JBig2TableLine> lines = table.lines;
   CODES.resize(lines.size());
   RANGELEN.resize(lines.size());
   RANGELOW.resize(lines.size());
   for (size_t i = 0; const auto& line : lines) {
     CODES[i].codelen = line.PREFLEN;
-    RANGELEN[i] = line.RANDELEN;
+    RANGELEN[i] = line.RANGELEN;
     RANGELOW[i] = line.RANGELOW;
     ++i;
   }
-  return CJBig2_Context::HuffmanAssignCode(CODES);
+  return AssignCodesAndBuildIndex();
 }
 
 bool CJBig2_HuffmanTable::ParseFromCodedBuffer(CJBig2_BitStream* pStream) {
@@ -233,7 +250,52 @@ bool CJBig2_HuffmanTable::ParseFromCodedBuffer(CJBig2_BitStream* pStream) {
     ++NTEMP;
   }
 
-  return CJBig2_Context::HuffmanAssignCode(pdfium::span(CODES).first(NTEMP));
+  return AssignCodesAndBuildIndex();
+}
+
+bool CJBig2_HuffmanTable::AssignCodesAndBuildIndex() {
+  max_codelen_ = 0;
+  for (const auto& code : CODES) {
+    max_codelen_ = std::max(code.codelen, max_codelen_);
+  }
+  const size_t table_size = static_cast<size_t>(max_codelen_) + 1;
+  code_counts_.assign(table_size, 0);
+  for (const auto& code : CODES) {
+    ++code_counts_[code.codelen];
+  }
+  code_counts_[0] = 0;
+
+  first_codes_.assign(table_size, 0);
+  first_line_indices_.assign(table_size, 0);
+  FX_SAFE_UINT32 first_code = 0;
+  uint32_t next_line_index = 0;
+
+  for (unsigned codelen = 1; codelen <= max_codelen_; ++codelen) {
+    first_code += code_counts_[codelen - 1];
+    first_code <<= 1;
+    if (!first_code.IsValid()) {
+      return false;
+    }
+    first_codes_[codelen] = first_code.ValueOrDie();
+    first_line_indices_[codelen] = next_line_index;
+    next_line_index += code_counts_[codelen];
+  }
+
+  // One pass over the lines assigns the codes and fills the index, with
+  // `filled` as the per length cursor.
+  lines_by_length_.resize(next_line_index);
+  std::vector<uint32_t> filled(table_size);
+  for (size_t i = 0; i < CODES.size(); ++i) {
+    const uint32_t codelen = CODES[i].codelen;
+    if (codelen == 0) {
+      continue;
+    }
+    CODES[i].code = first_codes_[codelen] + filled[codelen];
+    lines_by_length_[first_line_indices_[codelen] + filled[codelen]] =
+        static_cast<uint32_t>(i);
+    ++filled[codelen];
+  }
+  return true;
 }
 
 void CJBig2_HuffmanTable::ExtendBuffers(bool increment) {

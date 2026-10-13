@@ -16,6 +16,7 @@
 
 #include "core/fpdfapi/page/cpdf_colorspace.h"
 #include "core/fpdfapi/page/cpdf_docpagedata.h"
+#include "core/fpdfapi/page/cpdf_iccprofile.h"
 #include "core/fpdfapi/page/cpdf_image.h"
 #include "core/fpdfapi/page/cpdf_imageobject.h"
 #include "core/fpdfapi/page/cpdf_indexedcs.h"
@@ -520,6 +521,41 @@ CPDF_DIB::LoadState CPDF_DIB::CreateDecoder(uint8_t resolution_levels_to_skip) {
   return LoadState::kSuccess;
 }
 
+bool CPDF_DIB::ComponentCountMatchesColorSpace() const {
+  return color_space_ && components_ == color_space_->ComponentCount();
+}
+
+// Whether the JPEG decoder should be asked to emit BGR-ordered scanlines.
+// Only true when GetScanline()'s only transformation of the decoded RGB
+// scanline would be TranslateScanline24bppDefaultDecode()'s per-pixel
+// RGB-to-BGR swap, which a BGR decode makes a pass-through:
+// - a default Decode array (no per-component decode arithmetic),
+// - no color key mask (its comparisons read components in R,G,B order),
+// - a color space whose whole translation is the bare swap: DeviceRGB,
+//   CalRGB, or ICCBased with an sRGB profile (whose TranslateImageLine()
+//   is exactly fxcodec::ReverseRGB()); every other case goes through a
+//   real conversion,
+// - 3 components at 8 bpc (the swap case).
+bool CPDF_DIB::ShouldDecodeJpegToBgr() const {
+  if (!default_decode_ || color_key_ || components_ != 3 || bpc_ != 8) {
+    return false;
+  }
+  if (family_ == CPDF_ColorSpace::Family::kDeviceRGB ||
+      family_ == CPDF_ColorSpace::Family::kCalRGB) {
+    return true;
+  }
+  // For an sRGB profile, CPDF_ICCBasedCS::TranslateImageLine() is exactly
+  // fxcodec::ReverseRGB(), so the whole translation is the swap. Any other
+  // profile converts through the alternate color space instead, which is not
+  // a swap, so those keep the translate path.
+  if (family_ == CPDF_ColorSpace::Family::kICCBased &&
+      ComponentCountMatchesColorSpace()) {
+    RetainPtr<CPDF_IccProfile> profile = color_space_->GetIccProfile();
+    return profile && profile->IsSRGB();
+  }
+  return false;
+}
+
 bool CPDF_DIB::CreateDCTDecoder(pdfium::span<const uint8_t> src_span,
                                 const CPDF_Dictionary* pParams,
                                 uint8_t resolution_levels_to_skip) {
@@ -530,7 +566,8 @@ bool CPDF_DIB::CreateDCTDecoder(pdfium::span<const uint8_t> src_span,
                                << std::min<int>(resolution_levels_to_skip, 3);
   decoder_ = JpegModule::CreateDecoder(
       src_span, GetWidth(), GetHeight(), components_,
-      !pParams || pParams->GetIntegerFor("ColorTransform", 1), scale_denom);
+      !pParams || pParams->GetIntegerFor("ColorTransform", 1), scale_denom,
+      ShouldDecodeJpegToBgr());
   if (decoder_) {
     // Adopt the decoder's dimensions. libjpeg may have decoded at a reduced
     // size (scale_denom above), and its dimensions are authoritative in any
@@ -561,7 +598,7 @@ bool CPDF_DIB::CreateDCTDecoder(pdfium::span<const uint8_t> src_span,
     bpc_ = info.bits_per_components;
     decoder_ = JpegModule::CreateDecoder(src_span, GetWidth(), GetHeight(),
                                          components_, info.color_transform,
-                                         scale_denom);
+                                         scale_denom, ShouldDecodeJpegToBgr());
     if (decoder_) {
       SetWidth(decoder_->GetWidth());
       SetHeight(decoder_->GetHeight());
@@ -616,9 +653,9 @@ bool CPDF_DIB::CreateDCTDecoder(pdfium::span<const uint8_t> src_span,
   }
 
   bpc_ = info.bits_per_components;
-  decoder_ =
-      JpegModule::CreateDecoder(src_span, GetWidth(), GetHeight(), components_,
-                                info.color_transform, scale_denom);
+  decoder_ = JpegModule::CreateDecoder(src_span, GetWidth(), GetHeight(),
+                                       components_, info.color_transform,
+                                       scale_denom, ShouldDecodeJpegToBgr());
   if (decoder_) {
     SetWidth(decoder_->GetWidth());
     SetHeight(decoder_->GetHeight());
@@ -1084,7 +1121,7 @@ bool CPDF_DIB::TranslateScanline24bppDefaultDecode(
       return false;
     }
 
-    if (components_ == color_space_->ComponentCount()) {
+    if (ComponentCountMatchesColorSpace()) {
       color_space_->TranslateImageLine(dest_scan, src_scan, GetWidth(),
                                        GetWidth(), GetHeight(), TransMask());
     }
@@ -1288,9 +1325,21 @@ pdfium::span<const uint8_t> CPDF_DIB::GetScanline(int line) const {
     }
   }
   if (color_space_) {
-    TranslateScanline24bpp(line_buf_, src_line);
     src_pitch_value = 3 * GetWidth();
-    src_line = pdfium::span(line_buf_).first(src_pitch_value);
+    // Ask the decoder what it did rather than re-evaluating
+    // ShouldDecodeJpegToBgr(): that predicate reads `bpc_` and `components_`,
+    // which CreateDCTDecoder() updates between its attempts at creating a
+    // decoder, so it does not necessarily still describe the decoder that
+    // ended up being used. A decoder may also decline the request outright.
+    // When the decoder did emit B,G,R, the translation below would have been
+    // the default-decode RGB-to-BGR swap and nothing else, so the decoded
+    // scanline is already the result.
+    if (decoder_ && decoder_->ScanlinesAreBgr()) {
+      src_line = src_line.first(src_pitch_value);
+    } else {
+      TranslateScanline24bpp(line_buf_, src_line);
+      src_line = pdfium::span(line_buf_).first(src_pitch_value);
+    }
   }
   if (!color_key_) {
     return src_line;

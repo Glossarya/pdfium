@@ -11,6 +11,7 @@
 
 #include "core/fxcodec/fx_codec_def.h"
 #include "core/fxcrt/span.h"
+#include "core/fxcrt/to_underlying.h"
 #include "core/fxge/dib/fx_dib.h"
 
 namespace fxcodec {
@@ -18,16 +19,28 @@ namespace fxcodec {
 class ProgressiveDecoderContextDelegate {
  public:
   // Do not use `FXDIB_Format` here since these decoders can return pixel
-  // formats not supported by it.
+  // formats not supported by it. The LSB is the bits-per-pixel, and the
+  // MSB just needs ensure these are distinct.
   enum class Format : uint16_t {
     kInvalid = 0,
     k8bppGray = 0x108,
     k8bppRgb = 0x008,
-    kRgb = 0x018,
-    kRgb32 = 0x020,
-    kArgb = 0x220,
+    kBgr = 0x018,
+    kRgb = 0x118,
+    kBgrx = 0x020,
+    kBgra = 0x220,
     kCmyk = 0x120,
   };
+
+  // Bits per pixel, not bytes.
+  static int GetBppFromFormat(Format format) {
+    return fxcrt::to_underlying(format) & 0xff;
+  }
+
+  // AKA bytes per pixel, assuming 8-bits per component.
+  static int GetCompsFromFormat(Format format) {
+    return GetBppFromFormat(format) / 8;
+  }
 
   virtual ~ProgressiveDecoderContextDelegate() = default;
 

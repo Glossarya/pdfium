@@ -9,7 +9,7 @@
 #include <vector>
 #include <algorithm>
 
-#include "core/fpdfapi/edit/cpdf_contentstream_write_utils.h"
+#include "core/fxcrt/stream_write_utils.h"
 #include "core/fpdfapi/edit/cpdf_image_redactor.h"
 #include "core/fpdfapi/edit/cpdf_path_redactor.h"
 #include "core/fpdfapi/edit/cpdf_pagecontentgenerator.h"

@@ -17,7 +17,7 @@
 #include <utility>
 
 #include "constants/annotation_common.h"
-#include "core/fpdfapi/edit/cpdf_contentstream_write_utils.h"
+#include "core/fxcrt/stream_write_utils.h"
 #include "core/fpdfapi/parser/cpdf_array.h"
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
 #include "core/fpdfdoc/cpdf_annot.h"

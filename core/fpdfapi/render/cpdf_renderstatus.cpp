@@ -58,7 +58,6 @@
 #include "core/fxcrt/data_vector.h"
 #include "core/fxcrt/epdf_tls.h"
 #include "core/fxcrt/fx_2d_size.h"
-#include "core/fxcrt/fx_safe_types.h"
 #include "core/fxcrt/fx_system.h"
 #include "core/fxcrt/notreached.h"
 #include "core/fxcrt/span.h"
@@ -142,7 +141,7 @@ FXDIB_Format GetFormatForLuminosity(bool is_luminosity) {
   return FXDIB_Format::kBgrx;
 #else  // BUILDFLAG(IS_APPLE)
 #if defined(PDF_USE_SKIA)
-  if (CFX_GEModule::Get()->UseSkiaRenderer()) {
+  if (CFX_GEModule::IsSkiaRenderer()) {
     return FXDIB_Format::kBgrx;
   }
 #endif  // defined(PDF_USE_SKIA)
@@ -960,7 +959,8 @@ bool CPDF_RenderStatus::ProcessText(CPDF_TextObject* textobj,
       pFont.Get(), font_size, text_matrix, fill_argb, options_);
 }
 
-// TODO(npm): Font fallback for type 3 fonts? (Completely separate code!!)
+// TODO(crbug.com/567622442): Font fallback for type 3 fonts? (Completely
+// separate code!!)
 bool CPDF_RenderStatus::ProcessType3Text(CPDF_TextObject* textobj,
                                          const CFX_Matrix& mtObj2Device) {
   CPDF_Type3Font* pType3Font = textobj->text_state().GetFont()->AsType3Font();
@@ -1105,20 +1105,16 @@ bool CPDF_RenderStatus::ProcessType3Text(CPDF_TextObject* textobj,
 
       CFX_Point origin(FXSYS_roundf(matrix.e), FXSYS_roundf(matrix.f));
       if (glyphs.empty()) {
-        FX_SAFE_INT32 left = origin.x;
-        left += pBitmap->left();
-        if (!left.IsValid()) {
+        TextGlyphPos glyph;
+        glyph.glyph_ = pBitmap;
+        glyph.origin_ = origin;
+        std::optional<CFX_Point> glyph_origin = glyph.GetOrigin({0, 0});
+        if (!glyph_origin.has_value()) {
           continue;
         }
 
-        FX_SAFE_INT32 top = origin.y;
-        top -= pBitmap->top();
-        if (!top.IsValid()) {
-          continue;
-        }
-
-        device_->SetBitMask(pBitmap->GetBitmap(), left.ValueOrDie(),
-                            top.ValueOrDie(), fill_argb);
+        device_->SetBitMask(pBitmap->GetBitmap(), glyph_origin->x,
+                            glyph_origin->y, fill_argb);
       } else {
         glyphs[iChar].glyph_ = pBitmap;
         glyphs[iChar].origin_ = origin;
@@ -1361,7 +1357,7 @@ void CPDF_RenderStatus::CompositeDIBitmap(
     } else {
       if (alpha != 1.0f) {
 #if defined(PDF_USE_SKIA)
-        if (CFX_GEModule::Get()->UseSkiaRenderer()) {
+        if (CFX_GEModule::IsSkiaRenderer()) {
           CFX_Matrix matrix = CFX_RenderDevice::GetFlipMatrix(
               bitmap->GetWidth(), bitmap->GetHeight(), left, top);
           device_->StartDIBits(std::move(bitmap), alpha, /*argb=*/0, matrix,
@@ -1540,7 +1536,7 @@ RetainPtr<CFX_DIBitmap> CPDF_RenderStatus::LoadSMask(
     for (size_t i = 0; i < transfers.size(); ++i) {
       float input = i / 255.0f;
       pFunc->Call(pdfium::span_from_ref(input), results);
-      transfers[i] = FXSYS_roundf(results[0] * 255);
+      transfers[i] = std::clamp(FXSYS_roundf(results[0] * 255.0f), 0, 255);
     }
   } else {
     // Fill |transfers| with 0, 1, ... N.

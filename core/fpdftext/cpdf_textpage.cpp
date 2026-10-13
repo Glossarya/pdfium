@@ -116,8 +116,7 @@ DataVector<wchar_t> GetUnicodeNormalization(wchar_t wch) {
     wFind = maps.front();
     maps = maps.subspan<1u>();
   }
-  const auto range = maps.first(static_cast<size_t>(wFind));
-  return DataVector<wchar_t>(range.begin(), range.end());
+  return ToDataVector<wchar_t>(maps.first(static_cast<size_t>(wFind)));
 }
 
 float MaskPercentFilled(const std::vector<bool>& mask,
@@ -399,6 +398,24 @@ CFX_FloatRect GetLooseBounds(const CPDF_TextPage::CharInfo& charinfo) {
 
   // Fallback to the tight bounds in empty text scenarios, or bad font metrics
   return charinfo.char_box();
+}
+
+// EmbedPDF(bug-fix): whether `chars`, the line so far, ends in right-to-left
+// text that isn't /ActualText. Spaces and other characters without a strong
+// direction are skipped.
+bool FollowsLiteralRightToLeftText(
+    pdfium::span<const CPDF_TextPage::CharInfo> chars) {
+  for (size_t i = chars.size(); i > 0; --i) {
+    const CPDF_TextPage::CharInfo& info = chars[i - 1];
+    const BidiClass bidi = pdfium::unicode::GetBidiClass(info.unicode());
+    if (bidi == BidiClass::kL) {
+      return false;
+    }
+    if (bidi == BidiClass::kR || bidi == BidiClass::kAL) {
+      return info.char_type() != CPDF_TextPage::CharType::kActualText;
+    }
+  }
+  return false;
 }
 
 }  // namespace
@@ -951,7 +968,7 @@ void CPDF_TextPage::CloseTempLine() {
     }
     prev_char_is_space = true;
   }
-  CFX_BidiString bidi(str, /*auto_order=*/false);
+  CFX_BidiString bidi(str, /*auto_order=*/true);
   if (rtl_) {
     bidi.SetOverallDirectionRight();
   }
@@ -1113,7 +1130,7 @@ CPDF_TextPage::MarkedContentState CPDF_TextPage::PreMarkedContent(
   return MarkedContentState::kDelay;
 }
 
-void CPDF_TextPage::ProcessMarkedContent(const TransformedTextObject& obj) {
+bool CPDF_TextPage::ProcessMarkedContent(const TransformedTextObject& obj) {
   CPDF_TextObject* const text_obj = obj.text_obj_;
   const CPDF_ContentMarks* marks = text_obj->GetContentMarks();
   const size_t content_marks_count = marks->CountItems();
@@ -1126,10 +1143,14 @@ void CPDF_TextPage::ProcessMarkedContent(const TransformedTextObject& obj) {
     }
   }
   if (actual_text.IsEmpty()) {
-    return;
+    return false;
   }
 
-  const bool is_rtl = IsRightToLeft(*text_obj);
+  const bool is_rtl =
+      IsRightToLeft(*text_obj) ||
+      (prev_text_obj_ && IsRightToLeft(*prev_text_obj_) &&
+       CFX_BidiString(actual_text, /*auto_order=*/true).OverallDirection() ==
+           CFX_BidiChar::Direction::kRight);
   CFX_Matrix matrix = text_obj->GetTextMatrix() * obj.form_matrix_;
   CFX_FloatRect rect = text_obj->GetRect();
   float step = 0;
@@ -1160,6 +1181,7 @@ void CPDF_TextPage::ProcessMarkedContent(const TransformedTextObject& obj) {
         CharInfo::Synthetic(CharType::kActualText, wc, text_obj->GetPos(),
                             char_box, matrix, text_obj));
   }
+  return is_rtl;
 }
 
 void CPDF_TextPage::FindPreviousTextObject() {
@@ -1219,8 +1241,24 @@ void CPDF_TextPage::ProcessTransformedTextObjects() {
       curline_rect_ = text_obj->GetRect();
     }
 
+    // Save these before ProcessMarkedContent() or ProcessTextObjectItems()
+    // modifies the containers.
+    const size_t orig_char_list_index = temp_char_list_.size();
+    const size_t orig_buf_index = temp_text_buf_.GetLength();
     if (ePreMKC == MarkedContentState::kDelay) {
-      ProcessMarkedContent(obj);
+      // EmbedPDF(bug-fix): a right-to-left /ActualText run is reversed here
+      // only after literal right-to-left text, whose segment CloseTempLine()
+      // reverses as a whole. A run that starts its segment stays in logical
+      // order, because CloseTempLine() passes such a segment forward: reversing
+      // it here turned Acrobat's /ActualText around each shaped Arabic or
+      // Hebrew run back to front.
+      if (ProcessMarkedContent(obj) &&
+          FollowsLiteralRightToLeftText(
+              pdfium::span(temp_char_list_).first(orig_char_list_index))) {
+        // TODO(thestig): It would be nicer if there was a way to avoid doing
+        // this second reversal.
+        ReverseTempTextBufs(orig_char_list_index, orig_buf_index);
+      }
       prev_text_obj_ = text_obj;
       prev_matrix_ = form_matrix;
       continue;
@@ -1230,10 +1268,6 @@ void CPDF_TextPage::ProcessTransformedTextObjects() {
     prev_matrix_ = form_matrix;
 
     const CFX_Matrix matrix = text_obj->GetTextMatrix() * form_matrix;
-    // Save these before ProcessTextObjectItems() modifies the containers.
-    const size_t orig_char_list_index = temp_char_list_.size();
-    const size_t orig_buf_index = temp_text_buf_.GetLength();
-
     if (ProcessTextObjectItems(text_obj, form_matrix, matrix)) {
       ReverseTempTextBufs(orig_char_list_index, orig_buf_index);
     }

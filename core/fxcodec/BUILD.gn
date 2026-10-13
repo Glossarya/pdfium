@@ -5,11 +5,11 @@
 import("../../pdfium.gni")
 import("../../testing/test.gni")
 
-if (pdf_enable_rust_bmp || pdf_enable_rust_png) {
+if (pdf_enable_rust_bmp || pdf_enable_rust_jpeg || pdf_enable_rust_png) {
   import("//build/rust/rust_static_library.gni")
 }
 
-if (pdf_enable_rust_bmp || pdf_enable_rust_png) {
+if (pdf_enable_rust_bmp || pdf_enable_rust_jpeg || pdf_enable_rust_png) {
   config("pdfium_rust_ffi_config") {
     include_dirs = [ "$target_gen_dir/../.." ]
   }
@@ -26,6 +26,21 @@ if (pdf_enable_rust_bmp) {
     deps = [
       "//build/rust:cxx_cppdeps",
       "//third_party/rust/image/v0_25:lib",
+    ]
+  }
+}
+
+if (pdf_enable_rust_jpeg) {
+  rust_static_library("rust_jpeg_ffi") {
+    crate_name = "rust_jpeg_ffi"
+    allow_unsafe = true
+    crate_root = "jpeg/rust_jpeg_ffi.rs"
+    sources = [ crate_root ]
+    cxx_bindings = [ crate_root ]
+    public_configs = [ ":pdfium_rust_ffi_config" ]
+    deps = [
+      "//build/rust:cxx_cppdeps",
+      "//third_party/rust/zune_jpeg/v0_5:lib",
     ]
   }
 }
@@ -60,6 +75,8 @@ source_set("fxcodec") {
     "fx_codec_def.h",
     "icc/icc_transform.cpp",
     "icc/icc_transform.h",
+    "image_predictors.cpp",
+    "image_predictors.h",
     "jbig2/jbig2_arith_decoder.cpp",
     "jbig2/jbig2_arith_decoder.h",
     "jbig2/jbig2_arith_int_decoder.cpp",
@@ -170,10 +187,13 @@ source_set("fxcodec") {
     }
     if (pdf_enable_rust_jpeg) {
       sources += [
-        "jpeg/skia_jpeg_context.cpp",
-        "jpeg/skia_jpeg_context.h",
+        "jpeg/rust_jpeg_context.cpp",
+        "jpeg/rust_jpeg_context.h",
       ]
-      deps += [ "//skia" ]
+      deps += [
+        ":rust_jpeg_ffi",
+        "//build/rust:cxx_cppdeps",
+      ]
     } else {
       sources += [
         "jpeg/libjpeg_jpeg_context.cpp",
@@ -205,23 +225,30 @@ source_set("fxcodec") {
     }
   }
 
-  # Windows requires libjpeg for JpegModule::JpegEncode (used for EMF printing)
-  # regardless of whether Rust JPEG is enabled for decoding. Libjpeg is also
-  # used as fallback for CMYK / 4-component JPEG decoding in JpegModule.
-  sources += [
-    "jpeg/jpeg_common.c",
-    "jpeg/jpeg_common.h",
-    "jpeg/libjpeg_scanline_decoder.cpp",
-    "jpeg/libjpeg_scanline_decoder.h",
-  ]
-  deps += [ "//third_party:jpeg" ]
-
   if (pdf_enable_rust_jpeg) {
     sources += [
-      "jpeg/skia_scanline_decoder.cpp",
-      "jpeg/skia_scanline_decoder.h",
+      "jpeg/rust_jpeg_scanline_decoder.cpp",
+      "jpeg/rust_jpeg_scanline_decoder.h",
     ]
-    deps += [ "//skia" ]
+    deps += [
+      ":rust_jpeg_ffi",
+      "//build/rust:cxx_cppdeps",
+    ]
+  } else {
+    sources += [
+      "jpeg/libjpeg_scanline_decoder.cpp",
+      "jpeg/libjpeg_scanline_decoder.h",
+    ]
+  }
+
+  if (!pdf_enable_rust_jpeg || is_win) {
+    # Windows requires libjpeg for JpegModule::JpegEncode (used for EMF
+    # printing).
+    sources += [
+      "jpeg/jpeg_common.c",
+      "jpeg/jpeg_common.h",
+    ]
+    deps += [ "//third_party:jpeg" ]
   }
   visibility = [ "../../*" ]
 }
@@ -240,6 +267,7 @@ pdfium_unittest_source_set("unittests") {
     ":fxcodec",
     "../../third_party:libopenjpeg2",
     "../fpdfapi/parser",
+    "../fxge",
   ]
   pdfium_root_dir = "../../"
 
@@ -249,7 +277,6 @@ pdfium_unittest_source_set("unittests") {
       "gif/lzw_decompressor_unittest.cpp",
       "progressive_decoder_unittest.cpp",
     ]
-    deps += [ "../fxge" ]
     if (pdf_use_skia) {
       sources += [ "codec_memory_sk_stream_unittest.cpp" ]
       deps += [ "//skia" ]

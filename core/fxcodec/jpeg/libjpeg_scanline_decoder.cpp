@@ -16,6 +16,7 @@
 #include "core/fxcrt/check_op.h"
 #include "core/fxcrt/compiler_specific.h"
 #include "core/fxcrt/data_vector.h"
+#include "core/fxcrt/fx_ceil_div.h"
 #include "core/fxcrt/fx_safe_types.h"
 #include "core/fxcrt/raw_span.h"
 
@@ -43,7 +44,7 @@ pdfium::span<const uint8_t> JpegScanSOI(pdfium::span<const uint8_t> src_span) {
 // power-of-two scalings (scale_denom of 1, 2, 4, 8), which reduce to
 // ceil(dim / scale_denom).
 uint32_t ScaledJpegSize(uint32_t dim, uint32_t scale_denom) {
-  return (dim + scale_denom - 1) / scale_denom;
+  return fxcrt::CeilDiv(dim, scale_denom);
 }
 
 }  // namespace
@@ -55,10 +56,11 @@ std::unique_ptr<ScanlineDecoder> LibjpegScanlineDecoder::Create(
     uint32_t height,
     int nComps,
     bool ColorTransform,
-    uint32_t scale_denom) {
+    uint32_t scale_denom,
+    bool prefer_bgr_output) {
   auto decoder = std::make_unique<LibjpegScanlineDecoder>();
   if (!decoder->CreateImpl(src_span, width, height, nComps, ColorTransform,
-                           scale_denom)) {
+                           scale_denom, prefer_bgr_output)) {
     return nullptr;
   }
   return decoder;
@@ -122,6 +124,22 @@ bool LibjpegScanlineDecoder::InitDecode(bool bAcceptKnownBadHeader) {
     common_.cinfo.out_color_space = common_.cinfo.jpeg_color_space;
   }
 
+#ifdef JCS_EXTENSIONS
+  // When the caller asked for BGR scanlines and the output would otherwise
+  // be plain 3-component RGB, have libjpeg-turbo emit the swapped order
+  // directly (JCS_EXT_BGR): the same decode pipeline, storing the three
+  // converted samples at exchanged offsets, so the per-sample values are
+  // identical to a JCS_RGB decode. Deliberately not done when the output
+  // is anything else (grayscale, CMYK, or the raw non-JCS_RGB pass-through
+  // selected above), where no swap exists to fold in.
+  scanlines_are_bgr_ = prefer_bgr_output_ &&
+                       common_.cinfo.num_components == 3 &&
+                       common_.cinfo.out_color_space == JCS_RGB;
+  if (scanlines_are_bgr_) {
+    common_.cinfo.out_color_space = JCS_EXT_BGR;
+  }
+#endif  // JCS_EXTENSIONS
+
   orig_width_ = common_.cinfo.image_width;
   orig_height_ = common_.cinfo.image_height;
 
@@ -166,7 +184,9 @@ bool LibjpegScanlineDecoder::CreateImpl(pdfium::span<const uint8_t> src_span,
                                         uint32_t height,
                                         int nComps,
                                         bool ColorTransform,
-                                        uint32_t scale_denom) {
+                                        uint32_t scale_denom,
+                                        bool prefer_bgr_output) {
+  prefer_bgr_output_ = prefer_bgr_output;
   // Only power-of-two scalings up to 1/8 are supported: ScaledJpegSize() (which
   // sizes the scanline buffer via CalcPitch()) only matches libjpeg's actual
   // output dimensions for these. A different value would desynchronize the two
@@ -258,9 +278,7 @@ void LibjpegScanlineDecoder::CalcPitch() {
   // `InitDecode()`.
   DCHECK_GT(output_width_, 0);
   pitch_ = static_cast<uint32_t>(output_width_) * common_.cinfo.num_components;
-  pitch_ += 3;
-  pitch_ /= 4;
-  pitch_ *= 4;
+  pitch_ = fxcrt::CeilDiv(pitch_, 4) * 4;
 }
 
 void LibjpegScanlineDecoder::InitDecompressSrc() {
@@ -308,33 +326,30 @@ bool LibjpegScanlineDecoder::IsSofSegment(size_t marker_offset) const {
 
 void LibjpegScanlineDecoder::PatchUpKnownBadHeaderWithInvalidHeight(
     size_t dimension_offset) {
-  DCHECK(src_span_.size() > dimension_offset + 1u);
-  auto pData = GetWritableSrcData().subspan(dimension_offset);
-  pData[0] = (orig_height_ >> 8) & 0xff;
-  pData[1] = orig_height_ & 0xff;
+  auto corrected_span = GetWritableSrcData().subspan(dimension_offset);
+  corrected_span[0] = (orig_height_ >> 8) & 0xff;
+  corrected_span[1] = orig_height_ & 0xff;
 }
 
 void LibjpegScanlineDecoder::PatchUpTrailer() {
-  // EmbedPDF(reads-dont-write): a trailer already in place needs no patch,
-  // so the usual JPEG is decoded from its own bytes, uncopied.
-  if (src_span_[src_span_.size() - 2] == 0xff &&
-      src_span_[src_span_.size() - 1] == 0xd9) {
+  if (src_span_.size() < 2) {
     return;
   }
-  auto pData = GetWritableSrcData();
-  pData[src_span_.size() - 2] = 0xff;
-  pData[src_span_.size() - 1] = 0xd9;
+  auto trailer_span = src_span_.last<2>();
+  if (trailer_span[0] == 0xff && trailer_span[1] == 0xd9) {
+    return;
+  }
+  auto corrected_trailer_span = GetWritableSrcData().last<2>();
+  corrected_trailer_span[0] = 0xff;
+  corrected_trailer_span[1] = 0xd9;
 }
 
-// EmbedPDF(reads-dont-write): the source is the image stream's own bytes,
-// which a layer shares with its frozen base and another thread may be
-// decoding at the same time. A patch goes into a private copy instead.
 pdfium::span<uint8_t> LibjpegScanlineDecoder::GetWritableSrcData() {
-  if (patched_src_.empty()) {
-    patched_src_ = DataVector<uint8_t>(src_span_.begin(), src_span_.end());
-    src_span_ = pdfium::span<const uint8_t>(patched_src_);
+  if (corrected_src_data_.empty()) {
+    corrected_src_data_ = ToDataVector(src_span_);
+    src_span_ = corrected_src_data_;
   }
-  return patched_src_;
+  return corrected_src_data_;
 }
 
 // static

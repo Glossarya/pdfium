@@ -28,7 +28,8 @@ class LibjpegScanlineDecoder final : public ScanlineDecoder {
       uint32_t height,
       int nComps,
       bool ColorTransform,
-      uint32_t scale_denom);
+      uint32_t scale_denom,
+      bool prefer_bgr_output);
 
   static std::optional<JpegModule::ImageInfo> LoadInfo(
       pdfium::span<const uint8_t> src_span);
@@ -47,17 +48,16 @@ class LibjpegScanlineDecoder final : public ScanlineDecoder {
                   uint32_t height,
                   int nComps,
                   bool ColorTransform,
-                  uint32_t scale_denom);
+                  uint32_t scale_denom,
+                  bool prefer_bgr_output);
   bool InitDecode(bool bAcceptKnownBadHeader);
   void CalcPitch();
   void InitDecompressSrc();
   bool HasKnownBadHeaderWithInvalidHeight(size_t dimension_offset) const;
   bool IsSofSegment(size_t marker_offset) const;
   void PatchUpKnownBadHeaderWithInvalidHeight(size_t dimension_offset);
-  // Patch up the JPEG trailer, even if it is correct.
+  // Patch up the JPEG trailer if missing.
   void PatchUpTrailer();
-  // EmbedPDF(reads-dont-write): a private copy of the source, made on the
-  // first patch.
   pdfium::span<uint8_t> GetWritableSrcData();
 
   // For a given invalid height byte offset in
@@ -66,14 +66,13 @@ class LibjpegScanlineDecoder final : public ScanlineDecoder {
   static constexpr size_t kSofMarkerByteOffset = 5;
 
   JpegCommon common_ = {};
+  DataVector<uint8_t> corrected_src_data_;  // Must outlive `src_span_`.
   pdfium::raw_span<const uint8_t> src_span_;
-  // EmbedPDF(reads-dont-write): the patched copy `src_span_` points at once a
-  // header or trailer needed patching; empty until then.
-  DataVector<uint8_t> patched_src_;
   DataVector<uint8_t> scanline_buf_;
   bool decompress_created_ = false;
   bool started_ = false;
   bool jpeg_transform_ = false;
+  bool prefer_bgr_output_ = false;
   uint32_t scale_denom_ = 1;
 };
 

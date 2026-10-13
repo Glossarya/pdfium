@@ -931,12 +931,13 @@ TEST_F(FPDFEditEmbedderTest, SetPositionsVertical) {
   static constexpr char kExpected[] = "vertical_text_positioned";
   {
     ScopedFPDFBitmap bitmap = RenderPage(page.get());
-    CompareBitmapWithFuzzyExpectationSuffix(bitmap.get(), kExpected);
+    CompareBitmapWithExpectationSuffix(bitmap.get(), kExpected,
+                                       kFuzzyDiffOptions);
   }
   ASSERT_TRUE(FPDFPage_GenerateContent(page.get()));
 
   ASSERT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
-  VerifySavedDocumentWithFuzzyExpectationSuffix(kExpected);
+  VerifySavedDocumentWithExpectationSuffix(kExpected, kFuzzyDiffOptions);
 }
 
 TEST_F(FPDFEditEmbedderTest, SetPositionsBengali2) {
@@ -1063,7 +1064,8 @@ TEST_F(FPDFEditEmbedderTest, SetPositionsBengali3) {
 
   static constexpr char kExpected[] = "set_positions_bengali3";
   ScopedFPDFBitmap page_bitmap = RenderPage(page.get());
-  CompareBitmapWithFuzzyExpectationSuffix(page_bitmap.get(), kExpected);
+  CompareBitmapWithExpectationSuffix(page_bitmap.get(), kExpected,
+                                     kFuzzyDiffOptions);
 
   ASSERT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
   VerifySavedDocumentWithExpectationSuffix(kExpected);
@@ -3024,8 +3026,10 @@ TEST_F(FPDFEditEmbedderTest, AddStandardFontText) {
   EXPECT_TRUE(FPDFTextObj_GetFontSize(text_object3, &size));
   EXPECT_EQ(20, size);
 
-  // TODO(npm): Why are there issues with text rotated by 90 degrees?
-  // TODO(npm): FPDF_SaveAsCopy not giving the desired result after this.
+  // TODO(crbug.com/567621440): Why are there issues with text rotated by 90
+  // degrees?
+  // TODO(crbug.com/567621440): FPDF_SaveAsCopy not giving the desired result
+  // after this.
 }
 
 TEST_F(FPDFEditEmbedderTest, SetFontSize) {
@@ -3718,7 +3722,8 @@ TEST_F(FPDFEditEmbedderTest, DoubleGenerating) {
 
 TEST_F(FPDFEditEmbedderTest, LoadSimpleType1Font) {
   CreateNewDocument();
-  // TODO(npm): use other fonts after disallowing loading any font as any type
+  // TODO(crbug.com/567623562): use other fonts after disallowing loading any
+  // font as any type
   RetainPtr<CPDF_Font> stock_font =
       CPDF_Font::GetStockFont(cpdf_doc(), "Times-Bold");
   pdfium::span<const uint8_t> span = stock_font->GetFont()->GetFontSpan();
@@ -3936,7 +3941,7 @@ TEST_F(FPDFEditEmbedderTest, TransformAnnot) {
   }
 }
 
-// TODO(npm): Add tests using Japanese fonts in other OS.
+// TODO(crbug.com/567621440): Add tests using Japanese fonts in other OS.
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 TEST_F(FPDFEditEmbedderTest, AddCIDFontText) {
   // Start with a blank page
@@ -4151,7 +4156,7 @@ TEST_F(FPDFEditEmbedderTest, SaveAndRender) {
     // Now add a more complex green path.
     FPDF_PAGEOBJECT green_path = FPDFPageObj_CreateNewPath(20, 20);
     EXPECT_TRUE(FPDFPageObj_SetFillColor(green_path, 0, 255, 0, 200));
-    // TODO(npm): stroking will cause the rendering to differ.
+    // TODO(crbug.com/567621440): stroking will cause the rendering to differ.
     EXPECT_TRUE(FPDFPath_SetDrawMode(green_path, FPDF_FILLMODE_WINDING, 0));
     EXPECT_TRUE(FPDFPath_LineTo(green_path, 20, 63));
     EXPECT_TRUE(FPDFPath_BezierTo(green_path, 55, 55, 78, 78, 90, 90));
@@ -4161,14 +4166,15 @@ TEST_F(FPDFEditEmbedderTest, SaveAndRender) {
     EXPECT_TRUE(FPDFPath_Close(green_path));
     EXPECT_TRUE(FPDFPage_InsertObject(page.get(), green_path));
     ScopedFPDFBitmap page_bitmap = RenderLoadedPage(page.get());
-    CompareBitmapWithFuzzyExpectationSuffix(page_bitmap.get(), kBug779Png);
+    CompareBitmapWithExpectationSuffix(page_bitmap.get(), kBug779Png,
+                                       kFuzzyDiffOptions);
 
     // Now save the result, closing the page and document
     EXPECT_TRUE(FPDFPage_GenerateContent(page.get()));
     EXPECT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
   }
 
-  VerifySavedDocumentWithFuzzyExpectationSuffix(kBug779Png);
+  VerifySavedDocumentWithExpectationSuffix(kBug779Png, kFuzzyDiffOptions);
 }
 
 TEST_F(FPDFEditEmbedderTest, AddMark) {
@@ -4843,7 +4849,12 @@ TEST_F(FPDFEditEmbedderTest, GetBitmap) {
     ASSERT_EQ(FPDF_PAGEOBJ_IMAGE, FPDFPageObj_GetType(obj));
     ScopedFPDFBitmap bitmap(FPDFImageObj_GetBitmap(obj));
     EXPECT_EQ(FPDFBitmap_BGR, FPDFBitmap_GetFormat(bitmap.get()));
+#if defined(PDF_ENABLE_RUST_JPEG)
+    CompareBitmapWithExpectationSuffix(bitmap.get(), "embedded_images_37",
+                                       kFuzzyDiffOptions);
+#else
     CompareBitmap(bitmap.get(), "embedded_images_37");
+#endif
   }
 
   {
@@ -4851,7 +4862,14 @@ TEST_F(FPDFEditEmbedderTest, GetBitmap) {
     ASSERT_EQ(FPDF_PAGEOBJ_IMAGE, FPDFPageObj_GetType(obj));
     ScopedFPDFBitmap bitmap(FPDFImageObj_GetBitmap(obj));
     EXPECT_EQ(FPDFBitmap_BGR, FPDFBitmap_GetFormat(bitmap.get()));
+#if defined(PDF_ENABLE_RUST_JPEG)
+    CompareBitmapWithExpectationSuffix(
+        bitmap.get(), "embedded_images_38",
+        DiffOptions{.max_pixel_per_channel_delta = 3,
+                    .max_mean_squared_error = 0.3});
+#else
     CompareBitmap(bitmap.get(), "embedded_images_38");
+#endif
   }
 }
 
@@ -5516,6 +5534,134 @@ TEST_F(FPDFEditEmbedderTest, GetRenderedBitmapForTextWithBadParameters) {
   ScopedFPDFDocument empty_document(FPDF_CreateNewDocument());
   EXPECT_FALSE(FPDFTextObj_GetRenderedBitmap(empty_document.get(), page.get(),
                                              text_object, 1));
+}
+
+TEST_F(FPDFEditEmbedderTest, GetRenderedStrokePattern) {
+  ASSERT_TRUE(OpenDocument("pattern_stroke.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+
+  FPDF_PAGEOBJECT path_object = FPDFPage_GetObject(page.get(), 0);
+  ASSERT_EQ(FPDF_PAGEOBJ_PATH, FPDFPageObj_GetType(path_object));
+
+  ScopedFPDFBitmap bitmap(
+      FPDFPageObj_GetRenderedStrokePattern(document(), path_object));
+  ASSERT_TRUE(bitmap);
+  // This is the case when a colored pattern has a color of its own.
+  CompareBitmapWithExpectationSuffix(bitmap.get(), "pattern_stroke");
+}
+
+TEST_F(FPDFEditEmbedderTest, GetRenderedStrokePatternUncolored) {
+  ASSERT_TRUE(OpenDocument("pattern_stroke_uncolored.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+
+  FPDF_PAGEOBJECT path_object = FPDFPage_GetObject(page.get(), 0);
+  ASSERT_EQ(FPDF_PAGEOBJ_PATH, FPDFPageObj_GetType(path_object));
+
+  ScopedFPDFBitmap bitmap(
+      FPDFPageObj_GetRenderedStrokePattern(document(), path_object));
+  ASSERT_TRUE(bitmap);
+  // This is the case when an uncolored pattern has no color of its own.
+  CompareBitmapWithExpectationSuffix(bitmap.get(), "pattern_stroke_uncolored");
+}
+
+TEST_F(FPDFEditEmbedderTest, GetRenderedStrokePatternBadParams) {
+  ASSERT_TRUE(OpenDocument("pattern_stroke.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+
+  FPDF_PAGEOBJECT path_object = FPDFPage_GetObject(page.get(), 0);
+  ASSERT_TRUE(path_object);
+
+  // Simple bad parameters testing.
+  EXPECT_FALSE(FPDFPageObj_GetRenderedStrokePattern(nullptr, nullptr));
+  EXPECT_FALSE(FPDFPageObj_GetRenderedStrokePattern(document(), nullptr));
+  EXPECT_FALSE(FPDFPageObj_GetRenderedStrokePattern(nullptr, path_object));
+
+  // A page object that is not a path has no stroke pattern, either.
+  FPDF_PAGEOBJECT text_object =
+      FPDFPageObj_NewTextObj(document(), "Arial", 12.0f);
+  ASSERT_EQ(FPDF_PAGEOBJ_TEXT, FPDFPageObj_GetType(text_object));
+  EXPECT_TRUE(FPDFPage_InsertObject(page.get(), text_object));
+  ASSERT_EQ(2, FPDFPage_CountObjects(page.get()));
+  EXPECT_FALSE(FPDFPageObj_GetRenderedStrokePattern(document(), text_object));
+}
+
+TEST_F(FPDFEditEmbedderTest, GetRenderedStrokePatternNoPattern) {
+  ASSERT_TRUE(OpenDocument("rectangles.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+
+  FPDF_PAGEOBJECT path_object = FPDFPage_GetObject(page.get(), 0);
+  ASSERT_EQ(FPDF_PAGEOBJ_PATH, FPDFPageObj_GetType(path_object));
+
+  // The stroke color is a plain color, not a pattern.
+  EXPECT_FALSE(FPDFPageObj_GetRenderedStrokePattern(document(), path_object));
+}
+
+TEST_F(FPDFEditEmbedderTest, GetRenderedFillPattern) {
+  ASSERT_TRUE(OpenDocument("pattern_fill.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+
+  FPDF_PAGEOBJECT path_object = FPDFPage_GetObject(page.get(), 0);
+  ASSERT_EQ(FPDF_PAGEOBJ_PATH, FPDFPageObj_GetType(path_object));
+
+  ScopedFPDFBitmap bitmap(
+      FPDFPageObj_GetRenderedFillPattern(document(), path_object));
+  ASSERT_TRUE(bitmap);
+  // This is the case when a colored pattern has a color of its own.
+  CompareBitmapWithExpectationSuffix(bitmap.get(), "pattern_fill");
+}
+
+TEST_F(FPDFEditEmbedderTest, GetRenderedFillPatternUncolored) {
+  ASSERT_TRUE(OpenDocument("pattern_fill_uncolored.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+
+  FPDF_PAGEOBJECT path_object = FPDFPage_GetObject(page.get(), 0);
+  ASSERT_EQ(FPDF_PAGEOBJ_PATH, FPDFPageObj_GetType(path_object));
+
+  ScopedFPDFBitmap bitmap(
+      FPDFPageObj_GetRenderedFillPattern(document(), path_object));
+  ASSERT_TRUE(bitmap);
+  // This is the case when an uncolored pattern has no color of its own.
+  CompareBitmapWithExpectationSuffix(bitmap.get(), "pattern_fill_uncolored");
+}
+
+TEST_F(FPDFEditEmbedderTest, GetRenderedFillPatternBadParams) {
+  ASSERT_TRUE(OpenDocument("pattern_fill.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+
+  FPDF_PAGEOBJECT path_object = FPDFPage_GetObject(page.get(), 0);
+  ASSERT_TRUE(path_object);
+
+  // Simple bad parameters testing.
+  EXPECT_FALSE(FPDFPageObj_GetRenderedFillPattern(nullptr, nullptr));
+  EXPECT_FALSE(FPDFPageObj_GetRenderedFillPattern(document(), nullptr));
+  EXPECT_FALSE(FPDFPageObj_GetRenderedFillPattern(nullptr, path_object));
+
+  // A page object that is not a path has no fill pattern, either.
+  FPDF_PAGEOBJECT text_object =
+      FPDFPageObj_NewTextObj(document(), "Arial", 12.0f);
+  ASSERT_EQ(FPDF_PAGEOBJ_TEXT, FPDFPageObj_GetType(text_object));
+  EXPECT_TRUE(FPDFPage_InsertObject(page.get(), text_object));
+  ASSERT_EQ(2, FPDFPage_CountObjects(page.get()));
+  EXPECT_FALSE(FPDFPageObj_GetRenderedFillPattern(document(), text_object));
+}
+
+TEST_F(FPDFEditEmbedderTest, GetRenderedFillPatternNoPattern) {
+  ASSERT_TRUE(OpenDocument("rectangles.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_TRUE(page);
+
+  FPDF_PAGEOBJECT path_object = FPDFPage_GetObject(page.get(), 0);
+  ASSERT_EQ(FPDF_PAGEOBJ_PATH, FPDFPageObj_GetType(path_object));
+
+  // The fill color is a plain color, not a pattern.
+  EXPECT_FALSE(FPDFPageObj_GetRenderedFillPattern(document(), path_object));
 }
 
 TEST_F(FPDFEditEmbedderTest, GetRenderedBitmapForRotatedImage) {

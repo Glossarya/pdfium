@@ -39,6 +39,12 @@ class IJS_Runtime;
 class IPDF_Page;
 struct CFFL_FieldAction;
 
+#ifdef PDF_ENABLE_V8
+namespace v8 {
+class Isolate;
+}  // namespace v8
+#endif  // PDF_ENABLE_V8
+
 // NOTE: |bsUTF16LE| must outlive the use of the result. Care must be taken
 // since modifying the result would impact |bsUTF16LE|.
 FPDF_WIDESTRING AsFPDFWideString(ByteString* bsUTF16LE);
@@ -85,12 +91,15 @@ class CPDFSDK_FormFillEnvironment final
   bool HasPermissions(uint32_t flags) const override;
   void OnChange() override;
 
+  bool InPassiveFFICallback() const { return in_passive_ffi_callback_; }
+
   CPDFSDK_PageView* GetPageViewAtIndex(int nIndex);
   void RemovePageView(IPDF_Page* pUnderlyingPage);
   void UpdateAllViews(CPDFSDK_Annot* pAnnot);
 
   bool KillFocusAnnot(Mask<FWL_EVENTFLAG> nFlags);
   void ClearAllFocusedAnnots();
+  void OnDetachFromDocument();
 
   int GetPageCount() const;
 
@@ -107,10 +116,13 @@ class CPDFSDK_FormFillEnvironment final
                     int zoomMode,
                     pdfium::span<float> fPosArray);
 
-  CPDF_Document* GetPDFDocument() const { return cpdfdoc_; }
+  CPDF_Document* GetPDFDocument() const { return cpdfdoc_.Get(); }
   CPDF_Document::Extension* GetDocExtension() const {
-    return cpdfdoc_->GetExtension();
+    return cpdfdoc_ ? cpdfdoc_->GetExtension() : nullptr;
   }
+#ifdef PDF_ENABLE_V8
+  v8::Isolate* GetIsolate() const;
+#endif  // PDF_ENABLE_V8
 
   bool IsJSPlatformPresent() const { return info_ && info_->m_pJsPlatform; }
   IPDF_JSPLATFORM* GetJSPlatform() const {
@@ -283,10 +295,11 @@ class CPDFSDK_FormFillEnvironment final
 
   std::unique_ptr<CPDFSDK_InteractiveForm> interactive_form_;
   ObservedPtr<CPDFSDK_Annot> focus_annot_;
-  UnownedPtr<CPDF_Document> const cpdfdoc_;
+  ObservedPtr<CPDF_Document> cpdfdoc_;
   std::unique_ptr<CFFL_InteractiveFormFiller> interactive_form_filler_;
   bool change_mask_ = false;
   bool being_destroyed_ = false;
+  bool in_passive_ffi_callback_ = false;
 
   // Holds the list of focusable annot types.
   // Annotations of type WIDGET are by default focusable.

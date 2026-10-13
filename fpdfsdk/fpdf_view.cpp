@@ -241,15 +241,15 @@ FPDF_InitLibraryWithConfig(const FPDF_LIBRARY_CONFIG* config) {
 
   CFX_FontMgr::FontBackend backend = CFX_FontMgr::FontBackend::kFreeType;
   if (config && config->version >= 5) {
-#if defined(PDF_USE_SKIA)
+#if defined(PDF_ENABLE_FONTATIONS)
     CHECK(config->m_FontLibraryType == FPDF_FONTBACKENDTYPE_FREETYPE ||
           config->m_FontLibraryType == FPDF_FONTBACKENDTYPE_FONTATIONS);
     if (config->m_FontLibraryType == FPDF_FONTBACKENDTYPE_FONTATIONS) {
-      CHECK_EQ(renderer_type, CFX_GEModule::RendererType::kSkia);
       backend = CFX_FontMgr::FontBackend::kFontations;
     }
 #else
-    // AGG-only builds should always use `FPDF_FONTBACKENDTYPE_FREETYPE`.
+    // Builds without Fontations should always use
+    // `FPDF_FONTBACKENDTYPE_FREETYPE`.
     CHECK_EQ(config->m_FontLibraryType, FPDF_FONTBACKENDTYPE_FREETYPE);
 #endif
   }
@@ -282,8 +282,13 @@ FPDF_InitLibraryWithConfig(const FPDF_LIBRARY_CONFIG* config) {
 
   if (config && config->version >= 2) {
     void* platform = config->version >= 3 ? config->m_pPlatform : nullptr;
+    const bool isolate_per_document =
+        config->version >= 7 && config->m_IsolatePerDocument;
+    if (isolate_per_document) {
+      CHECK(!config->m_pIsolate);
+    }
     IJS_Runtime::Initialize(config->m_v8EmbedderSlot, config->m_pIsolate,
-                            platform);
+                            platform, isolate_per_document);
   }
   g_bLibraryInitialized = true;
 }
@@ -1165,7 +1170,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDF_RenderPage(HDC dc,
     return false;
   }
 #if defined(PDF_USE_SKIA)
-  if (!CFX_GEModule::Get()->UseSkiaRenderer()) {
+  if (!CFX_GEModule::IsSkiaRenderer()) {
     // Not needed by Skia. Call it for AGG to preserve pre-existing behavior.
     pBitmap->Clear(0x00ffffff);
   }
@@ -1738,8 +1743,8 @@ FPDF_EXPORT int FPDF_CALLCONV FPDFBitmap_GetFormat(FPDF_BITMAP bitmap) {
       return FPDFBitmap_BGRA;
 #if defined(PDF_USE_SKIA)
     case FXDIB_Format::kBgraPremul:
-      return CFX_GEModule::Get()->UseSkiaRenderer() ? FPDFBitmap_BGRA_Premul
-                                                    : FPDFBitmap_Unknown;
+      return CFX_GEModule::IsSkiaRenderer() ? FPDFBitmap_BGRA_Premul
+                                            : FPDFBitmap_Unknown;
 #endif
     default:
       return FPDFBitmap_Unknown;
@@ -2268,11 +2273,7 @@ FPDF_EXPORT const char* FPDF_CALLCONV FPDF_GetRecommendedV8Flags() {
 }
 
 FPDF_EXPORT void* FPDF_CALLCONV FPDF_GetArrayBufferAllocatorSharedInstance() {
-  // Deliberately leaked. This allocator is used outside of the library
-  // initialization / destruction lifecycle, and the caller does not take
-  // ownership of the object. Thus there is no existing way to delete this.
-  static auto* s_allocator = new CFX_V8ArrayBufferAllocator();
-  return s_allocator;
+  return CFX_V8ArrayBufferAllocator::GetSharedInstance();
 }
 #endif  // PDF_ENABLE_V8
 

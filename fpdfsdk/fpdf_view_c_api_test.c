@@ -108,6 +108,7 @@ int CheckPDFiumCApi() {
     CHK(FPDFPage_RemoveAnnot);
 
     // fpdf_attachment.h
+    CHK(FPDFAttachment_GetAFRelationship);
     CHK(FPDFAttachment_GetDescription);
     CHK(FPDFAttachment_GetFile);
     CHK(FPDFAttachment_GetName);
@@ -231,6 +232,8 @@ int CheckPDFiumCApi() {
     CHK(FPDFPageObj_GetMark);
     CHK(FPDFPageObj_GetMarkedContentID);
     CHK(FPDFPageObj_GetMatrix);
+    CHK(FPDFPageObj_GetRenderedFillPattern);
+    CHK(FPDFPageObj_GetRenderedStrokePattern);
     CHK(FPDFPageObj_GetRotatedBounds);
     CHK(FPDFPageObj_GetStrokeColor);
     CHK(FPDFPageObj_GetStrokeWidth);
@@ -416,6 +419,7 @@ int CheckPDFiumCApi() {
     CHK(FPDF_StructElement_GetMarkedContentIdCount);
     CHK(FPDF_StructElement_GetObjType);
     CHK(FPDF_StructElement_GetParent);
+    CHK(FPDF_StructElement_GetRawType);
     CHK(FPDF_StructElement_GetStringAttribute);
     CHK(FPDF_StructElement_GetTitle);
     CHK(FPDF_StructElement_GetType);

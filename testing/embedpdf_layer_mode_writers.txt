@@ -268,6 +268,7 @@ FPDFTransformEmbedderTest.SetCropBox 1
 FPDFTransformEmbedderTest.SetMediaBox 1
 FPDFTransformEmbedderTest.TransFormWithClip 9
 FPDFTransformEmbedderTest.TransFormWithClipAndSave 5
+FPDFTransformEmbedderTest.TransFormWithClipAndSaveWithLocale 5
 PDFEditImgTest.GetAndSetMatrixForFormWithImage 3
 RichTextParityTest.DecorationsFixtureMatchesAcrobat 2
 RichTextParityTest.LinesFixtureMatchesAcrobat 2

@@ -15,11 +15,15 @@ FPDFFormFill*.* Drives the form-fill environment.
 CPDFSDKBAAnnotTest.* Drives the form-fill environment.
 CPDFSDKAnnotIteratorTest.* Drives the form-fill environment.
 FPDFAnnotEmbedderTest.FocusableAnnotSubtypes Drives the form-fill environment.
+FPDFAnnotEmbedderTest.FocusableAnnotRendering Drives the form-fill environment.
 FPDFProgressiveRenderEmbedderTest.RenderFormWithColorScheme Drives the form-fill environment.
+FPDFProgressiveRenderEmbedderTest.RenderFormsWithPause Drives the form-fill environment.
 FPDFAnnotEmbedderTest.GetFontSize* Needs the form-fill page view (FPDF_FORMHANDLE APIs).
 FPDFAnnotEmbedderTest.GetFontColor Needs the form-fill page view (FPDF_FORMHANDLE APIs).
 FPDFAnnotEmbedderTest.IsChecked* Needs the form-fill page view (FPDF_FORMHANDLE APIs).
 FPDFAnnotEmbedderTest.GetFormFieldExportValue* Needs the form-fill page view (FPDF_FORMHANDLE APIs).
+FPDFFlattenEmbedderTest.Bug861842 Pixel test of a form; layer mode doesn't draw with FPDF_FFLDraw.
+FPDFFlattenEmbedderTest.Bug889099 Pixel test of a form; layer mode doesn't draw with FPDF_FFLDraw.
 FPDFFlattenEmbedderTest.Bug890322 Pixel test of a form; layer mode doesn't draw with FPDF_FFLDraw.
 FPDFFlattenEmbedderTest.Bug896366 Pixel test of a form; layer mode doesn't draw with FPDF_FFLDraw.
 

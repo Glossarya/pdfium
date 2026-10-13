@@ -46,6 +46,7 @@ set-once | (anonymous namespace)::AddStandardFont(CPDF_Document*)::encoding | Up
 set-once | guard variable for (anonymous namespace)::AddStandardFont(CPDF_Document*)::encoding | Its initialization guard.
 set-once | fxcodec::(anonymous namespace)::Basis()::basis | The JPEG writer's DCT basis: a const table built once (thread-safe static initialization) and only read after.
 set-once | guard variable for fxcodec::(anonymous namespace)::Basis()::basis | Its initialization guard.
+set-once | CStretchEngine::Expand1BppRow(*)::kBitsToBytes | Upstream: a table built at compile time (constinit) and only read; not const, so it sits in writable data.
 
 # --- Third-party code, shared by design.
 third-party | std::__Cr::* | libc++: locale and facet state behind its own locks.
@@ -77,7 +78,8 @@ third-party | known_tables | HarfBuzz subsetter: a constant table.
 third-party | langs | HarfBuzz: the language list, behind atomics.
 third-party | endchar_str | HarfBuzz CFF: a constant.
 third-party | only_cleanup_pass_is_decoded | openjpeg: a one-time warning flag, set under a mutex.
-third-party | Cr_z_arm_cpu_enable_* | zlib: CPU features, detected once.
+third-party | Cr_z_*_cpu_enable_* | zlib: CPU features, detected once (under cpu_check_inited_once).
+third-party | cpu_check_inited_once | zlib: the pthread_once flag of its CPU check.
 third-party | cpu_info_ | libyuv: CPU features, detected on first use; read and written with relaxed atomics, and every thread detects the same value.
 third-party | SkFibonacci47 | Skia path ops: a constant table.
 third-party | SkMatrix::I()::identity | Skia path ops: a constant.
@@ -86,3 +88,6 @@ third-party | SkPathData::PeekEmptySingleton()::gEmpty | Skia path ops: a once-b
 third-party | guard variable for SkPath*::Peek* | Skia path ops: initialization guards.
 third-party | next_pathdata_unique_id()::nextID | Skia path ops: an atomic counter.
 third-party | fast_float::detail::rounds_to_nearest()::fmin | fast_float: a volatile constant.
+third-party | __dso_handle | The C runtime (ELF): this library's handle for atexit, set when it loads.
+third-party | DW.ref.__gxx_personality_v0 | The C++ runtime (ELF): the exception personality's address, set when the library loads.
+third-party | completed.0 | The C runtime (ELF, crtstuff): set once, when the library's destructors run at unload.

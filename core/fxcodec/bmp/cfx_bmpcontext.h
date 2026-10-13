@@ -16,28 +16,27 @@
 
 namespace fxcodec {
 
-class BmpDecoderDelegate;
 class CFX_DIBAttribute;
+class ProgressiveDecoderContextDelegate;
 
 class CFX_BmpContext final : public ProgressiveDecoderContext {
  public:
-  explicit CFX_BmpContext(BmpDecoderDelegate* pDelegate);
+  explicit CFX_BmpContext(ProgressiveDecoderContextDelegate* pDelegate);
   ~CFX_BmpContext() override;
 
   // ProgressiveDecoderContext:
   FX_FILESIZE GetAvailInput() const override;
   void Input(RetainPtr<CFX_CodecMemory> codec_memory) override;
-  Status DecodeImage(size_t frame_index) override;
+  Status DecodeImage() override;
 
   Status ReadHeader(int32_t* width,
                     int32_t* height,
-                    bool* tb_flag,
                     int32_t* components,
                     pdfium::span<const FX_ARGB>* palette,
                     CFX_DIBAttribute* attribute);
 
   CFX_BmpDecompressor bmp_;
-  UnownedPtr<BmpDecoderDelegate> const delegate_;
+  UnownedPtr<ProgressiveDecoderContextDelegate> const delegate_;
 };
 
 }  // namespace fxcodec

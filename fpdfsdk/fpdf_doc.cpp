@@ -29,7 +29,7 @@
 #include "core/fpdfdoc/cpdf_dest.h"
 #include "core/fpdfdoc/cpdf_linklist.h"
 #include "core/fpdfdoc/cpdf_pagelabel.h"
-#include "core/fxcrt/check.h"
+#include "core/fxcrt/check_op.h"
 #include "core/fxcrt/compiler_specific.h"
 #include "core/fxcrt/containers/contains.h"
 #include "core/fxcrt/numerics/safe_conversions.h"
@@ -275,6 +275,15 @@ FPDFBookmark_GetColor(FPDF_BOOKMARK bookmark, float* R, float* G, float* B) {
   return true;
 }
 
+FPDF_EXPORT int FPDF_CALLCONV FPDFBookmark_GetStyle(FPDF_BOOKMARK bookmark) {
+  if (!bookmark) {
+    return 0;
+  }
+  CPDF_Bookmark cpdf_bookmark(
+      pdfium::WrapRetain(CPDFDictionaryFromFPDFBookmark(bookmark)));
+  return cpdf_bookmark.GetStyle();
+}
+
 FPDF_EXPORT unsigned long FPDF_CALLCONV FPDFAction_GetType(FPDF_ACTION action) {
   if (!action) {
     return PDFACTION_UNSUPPORTED;
@@ -390,7 +399,7 @@ FPDFDest_GetView(FPDF_DEST dest, unsigned long* pNumParams, FS_FLOAT* pParams) {
   CPDF_Dest destination(pdfium::WrapRetain(CPDFArrayFromFPDFDest(dest)));
   const unsigned long nParams =
       pdfium::checked_cast<unsigned long>(destination.GetNumParams());
-  DCHECK(nParams <= 4);
+  DCHECK_LE(nParams, 4);
   *pNumParams = nParams;
   for (unsigned long i = 0; i < nParams; ++i) {
     UNSAFE_TODO(pParams[i]) = destination.GetParam(i);

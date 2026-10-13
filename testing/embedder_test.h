@@ -346,15 +346,17 @@ class EmbedderTest : public ::testing::Test,
   //
   // This is similar to the behavior in testing/tools/pngdiffer.py.
   //
-  // `max_pixel_per_channel_delta` can optionally be set to tolerate minor pixel
-  // discrepancies. The default is exact matching.
+  // `max_pixel_per_channel_delta` and `max_mean_squared_error` can optionally
+  // be set to tolerate minor pixel discrepancies. The default is exact
+  // matching.
   static void CompareBitmapWithExpectationSuffix(
       FPDF_BITMAP bitmap,
       std::string_view expectation_png_name,
-      int max_pixel_per_channel_delta = 0);
+      int max_pixel_per_channel_delta = 0,
+      double max_mean_squared_error = 0.0);
 
   // Same as `CompareBitmapWithExpectationSuffix()`, but automatically
-  // applies platform-specific tolerance.
+  // applies standard fuzzy tolerance.
   static void CompareBitmapWithFuzzyExpectationSuffix(
       FPDF_BITMAP bitmap,
       std::string_view expectation_png_name);
@@ -372,8 +374,6 @@ class EmbedderTest : public ::testing::Test,
   ScopedSavedDoc OpenScopedSavedDocumentWithPassword(
       const ByteString& password);
   ScopedSavedPage LoadScopedSavedPage(int page_index);
-  FPDF_PAGE LoadSavedPage(int page_index);
-  void CloseSavedPage(FPDF_PAGE page);
 
   // See comments for CompareBitmap() and CompareBitmapWithExpectationSuffix()
   // above.
@@ -427,6 +427,14 @@ class EmbedderTest : public ::testing::Test,
   // in documents opened by the helpers above. This is intended for internal use
   // in the destructor of the scoped methods.
   void CloseSavedDocument();
+
+  // Helper for loading saved pages. Callers should use the Scoped methods that
+  // manage lifetime automatically.
+  FPDF_PAGE LoadSavedPage(int page_index);
+
+  // Closes a page loaded via LoadSavedPage(). This must only be invoked in
+  // pages loaded by the helper above.
+  void CloseSavedPage(FPDF_PAGE page);
 
   void UnloadPageCommon(FPDF_PAGE page, bool do_events);
   FPDF_PAGE LoadPageCommon(int page_index, bool do_events);

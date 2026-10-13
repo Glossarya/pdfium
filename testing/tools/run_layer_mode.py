@@ -199,7 +199,9 @@ def main():
   ran = [r[0] for r in results]
   for pattern in expectations:
     matched = [t for t in ran if fnmatch.fnmatchcase(t, pattern)]
-    if matched and not any(t in layer_only for t in matched):
+    # A test that fails the plain run too (a platform's goldens) says nothing.
+    if matched and not any(t in layer_only or t in plain_failed
+                           for t in matched):
       warnings.append(f'expected to fail in layer mode, but passes: {pattern}')
 
   if args.record_writers:

@@ -57,8 +57,7 @@ class CachedImage final : public CFX_DIBBase {
     SetPitch(image_->GetPitch());
 
     if (image_->HasPalette()) {
-      pdfium::span<const uint32_t> palette = image_->GetPaletteSpan();
-      palette_ = DataVector<uint32_t>(palette.begin(), palette.end());
+      palette_ = ToDataVector(image_->GetPaletteSpan());
     }
   }
 
@@ -102,7 +101,7 @@ class CachedImage final : public CFX_DIBBase {
 RetainPtr<CFX_DIBBase> MakeCachedImage(RetainPtr<CFX_DIBBase> image,
                                        bool realize_hint) {
 #if defined(PDF_USE_SKIA)
-  if (CFX_GEModule::Get()->UseSkiaRenderer()) {
+  if (CFX_GEModule::IsSkiaRenderer()) {
     // Ignore `realize_hint`, as `RealizeSkImage()` doesn't benefit from it.
     return pdfium::MakeRetain<CachedImage>(std::move(image));
   }

@@ -6,6 +6,7 @@
 
 #include "core/fxcodec/jbig2/jbig2_trd_proc.h"
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 
@@ -13,6 +14,7 @@
 #include "core/fxcodec/jbig2/jbig2_arith_int_decoder.h"
 #include "core/fxcodec/jbig2/jbig2_grrd_proc.h"
 #include "core/fxcodec/jbig2/jbig2_huffman_decoder.h"
+#include "core/fxcrt/fx_ceil_log2.h"
 #include "core/fxcrt/fx_safe_types.h"
 #include "core/fxcrt/maybe_owned.h"
 
@@ -115,12 +117,9 @@ std::unique_ptr<CJBig2_Image> CJBig2_TRDProc::DecodeHuffman(
       }
       uint8_t CURT = 0;
       if (SBSTRIPS != 1) {
-        uint32_t nTmp = 1;
-        while (static_cast<uint32_t>(1 << nTmp) < SBSTRIPS) {
-          ++nTmp;
-        }
+        uint32_t num_bits = std::max<uint8_t>(1, fxcrt::CeilLog2(SBSTRIPS));
         int32_t nVal;
-        if (pStream->readNBits(nTmp, &nVal) != 0) {
+        if (pStream->readNBits(num_bits, &nVal) != 0) {
           return nullptr;
         }
 
@@ -132,33 +131,12 @@ std::unique_ptr<CJBig2_Image> CJBig2_TRDProc::DecodeHuffman(
       }
 
       int32_t TI = SAFE_TI.ValueOrDie();
-      FX_SAFE_INT32 nSafeVal = 0;
-      int32_t nBits = 0;
-      uint32_t IDI;
-      for (;;) {
-        uint32_t nTmp;
-        if (pStream->read1Bit(&nTmp) != 0) {
-          return nullptr;
-        }
 
-        nSafeVal <<= 1;
-        if (!nSafeVal.IsValid()) {
-          return nullptr;
-        }
-
-        nSafeVal |= nTmp;
-        ++nBits;
-        const int32_t nVal = nSafeVal.ValueOrDie();
-        for (IDI = 0; IDI < SBNUMSYMS; ++IDI) {
-          if (nBits == SBSYMCODES[IDI].codelen &&
-              nVal == SBSYMCODES[IDI].code) {
-            break;
-          }
-        }
-        if (IDI < SBNUMSYMS) {
-          break;
-        }
+      int32_t IDI;
+      if (pHuffmanDecoder->DecodeAValue(&SBSYMCODES, &IDI) != 0) {
+        return nullptr;
       }
+
       bool RI = false;
       if (SBREFINE != 0 && pStream->read1Bit(&RI) != 0) {
         return nullptr;

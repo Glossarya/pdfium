@@ -17,7 +17,6 @@
 #include <vector>
 
 #include "constants/page_object.h"
-#include "core/fpdfapi/edit/cpdf_contentstream_write_utils.h"
 #include "core/fpdfapi/edit/cpdf_pagecontentmanager.h"
 #include "core/fpdfapi/edit/cpdf_resourceuse.h"
 #include "core/fpdfapi/edit/cpdf_stringarchivestream.h"
@@ -57,6 +56,7 @@
 #include "core/fxcrt/notreached.h"
 #include "core/fxcrt/numerics/safe_conversions.h"
 #include "core/fxcrt/span.h"
+#include "core/fxcrt/stream_write_utils.h"
 #include "core/fxcrt/zip.h"
 #include "core/fxge/cfx_graphstate.h"
 

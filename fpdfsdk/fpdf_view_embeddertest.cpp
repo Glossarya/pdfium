@@ -302,11 +302,9 @@ class FPDFViewEmbedderTest : public EmbedderTest {
                                   std::string_view expectation_png_name,
                                   bool fuzzy = false) {
     RenderPageToBitmap(page, bitmap);
-    if (fuzzy) {
-      CompareBitmapWithFuzzyExpectationSuffix(bitmap, expectation_png_name);
-    } else {
-      CompareBitmapWithExpectationSuffix(bitmap, expectation_png_name);
-    }
+    CompareBitmapWithExpectationSuffix(
+        bitmap, expectation_png_name,
+        fuzzy ? kFuzzyDiffOptions : kExactDiffOptions);
   }
 };
 
@@ -1595,7 +1593,7 @@ TEST_F(FPDFViewEmbedderTest, RenderManyRectanglesWithAndWithoutExternalMemory) {
                                                     pdfium::kManyRectanglesPng);
 
 #if defined(PDF_USE_SKIA)
-  if (CFX_GEModule::Get()->UseSkiaRenderer()) {
+  if (CFX_GEModule::IsSkiaRenderer()) {
     TestRenderPageBitmapWithInternalMemory(page.get(), FPDFBitmap_BGRA_Premul,
                                            pdfium::kManyRectanglesPng);
     TestRenderPageBitmapWithInternalMemoryAndStride(
@@ -1643,13 +1641,13 @@ TEST_F(FPDFViewEmbedderTest, RenderHelloWorldWithFlags) {
 }
 
 // Deliberately disabled because this test case renders a large bitmap, which is
-// very slow for debug builds.
-#if defined(NDEBUG)
+// very slow for debug and AddressSanitizer builds.
+#if defined(NDEBUG) && !defined(ADDRESS_SANITIZER)
 #define MAYBE_LargeImageDoesNotRenderBlank LargeImageDoesNotRenderBlank
 #else
 #define MAYBE_LargeImageDoesNotRenderBlank DISABLED_LargeImageDoesNotRenderBlank
 #endif
-TEST_F(FPDFViewEmbedderTest, LargeImageDoesNotRenderBlank) {
+TEST_F(FPDFViewEmbedderTest, MAYBE_LargeImageDoesNotRenderBlank) {
   static constexpr char kFilename[] = "bug_1646";
 
   ASSERT_TRUE(OpenDocument("bug_1646.pdf"));
@@ -1971,7 +1969,7 @@ TEST_F(FPDFViewEmbedderTest, RenderXfaPage) {
 
 #if defined(PDF_USE_SKIA)
 TEST_F(FPDFViewEmbedderTest, RenderPageToSkp) {
-  if (!CFX_GEModule::Get()->UseSkiaRenderer()) {
+  if (!CFX_GEModule::IsSkiaRenderer()) {
     GTEST_SKIP() << "FPDF_RenderPageSkp() only makes sense with Skia";
   }
 
@@ -1984,7 +1982,7 @@ TEST_F(FPDFViewEmbedderTest, RenderPageToSkp) {
 }
 
 TEST_F(FPDFViewEmbedderTest, RenderXfaPageToSkp) {
-  if (!CFX_GEModule::Get()->UseSkiaRenderer()) {
+  if (!CFX_GEModule::IsSkiaRenderer()) {
     GTEST_SKIP() << "FPDF_RenderPageSkp() only makes sense with Skia";
   }
 
@@ -2045,7 +2043,34 @@ TEST_F(FPDFViewEmbedderTest, Bug2087) {
 }
 #endif  // defined(PDF_USE_SKIA)
 
+TEST_F(FPDFViewEmbedderTest, BadIsolatePerDocumentConfig) {
+  FPDF_DestroyLibrary();
+
+  const FPDF_LIBRARY_CONFIG kBadConfig = {
+      .version = 7,
+      .m_pUserFontPaths = nullptr,
+      .m_pIsolate = reinterpret_cast<void*>(1),
+      .m_v8EmbedderSlot = 0,
+      .m_pPlatform = nullptr,
+      .m_RendererType = FPDF_RENDERERTYPE_AGG,
+      .m_FontLibraryType = FPDF_FONTBACKENDTYPE_FREETYPE,
+      .m_BrotliEnabled = false,
+      .m_IsolatePerDocument = true,
+  };
+  EXPECT_DEATH_IF_SUPPORTED(FPDF_InitLibraryWithConfig(&kBadConfig), "");
+
+  EmbedderTestEnvironment::GetInstance()->TearDown();
+  EmbedderTestEnvironment::GetInstance()->SetUp();
+}
+
 TEST_F(FPDFViewEmbedderTest, NoSmoothTextItalicOverlappingGlyphs) {
+  if (EmbedderTestEnvironment::GetInstance()->fontations()) {
+    // Monochrome 1-bit text rendering (FPDF_RENDER_NO_SMOOTHTEXT) produces
+    // binary 0/255 pixel transitions at glyph boundaries where subpixel contour
+    // differences cross pixel centers, which cannot be fuzzy matched.
+    // TODO(crbug.com/42271123): fix as part of full fontations support.
+    GTEST_SKIP() << "Fontations subpixel monochrome variance";
+  }
   ASSERT_TRUE(OpenDocument("bug_1919.pdf"));
   ScopedPage page = LoadScopedPage(0);
   ASSERT_TRUE(page);
@@ -2138,7 +2163,7 @@ TEST_F(FPDFViewEmbedderTest, BitmapBGRAPremulFormat) {
   ScopedFPDFBitmap bitmap(
       FPDFBitmap_CreateEx(kWidth, kHeight, FPDFBitmap_BGRA_Premul, nullptr, 0));
 #if defined(PDF_USE_SKIA)
-  if (CFX_GEModule::Get()->UseSkiaRenderer()) {
+  if (CFX_GEModule::IsSkiaRenderer()) {
     ASSERT_TRUE(bitmap);
     EXPECT_EQ(FPDFBitmap_BGRA_Premul, FPDFBitmap_GetFormat(bitmap.get()));
     return;

@@ -26,6 +26,7 @@
 #include "core/fpdfapi/page/cpdf_pathobject.h"
 #include "core/fpdfapi/page/cpdf_shadingobject.h"
 #include "core/fpdfapi/page/cpdf_textobject.h"
+#include "core/fpdfapi/page/cpdf_tilingpattern.h"
 #include "core/fpdfapi/parser/cpdf_array.h"
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
 #include "core/fpdfapi/parser/cpdf_document.h"
@@ -33,6 +34,8 @@
 #include "core/fpdfapi/parser/cpdf_number.h"
 #include "core/fpdfapi/parser/cpdf_string.h"
 #include "core/fpdfapi/render/cpdf_docrenderdata.h"
+#include "core/fpdfapi/render/cpdf_renderoptions.h"
+#include "core/fpdfapi/render/cpdf_rendertiling.h"
 #include "core/fpdfdoc/cpdf_annot.h"
 #include "core/fpdfdoc/cpdf_annotlist.h"
 #include "core/fxcrt/compiler_specific.h"
@@ -44,6 +47,7 @@
 #include "core/fxcrt/span_util.h"
 #include "core/fxcrt/stl_util.h"
 #include "core/fxcrt/unowned_ptr.h"
+#include "core/fxge/dib/cfx_dibitmap.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "public/epdf_edit.h"
 #include "public/fpdf_formfill.h"
@@ -200,6 +204,101 @@ ByteString FormatPDFDate(time_t current_time, const tm& local_time) {
                              abs_offset_minutes / kMinutesPerHour,
                              abs_offset_minutes % kMinutesPerHour);
   return date;
+}
+
+FPDF_BITMAP RenderTilingPatternToBitmap(CPDF_Pattern* pattern,
+                                        CPDF_Document* doc,
+                                        CPDF_PageObject* page_obj,
+                                        bool use_stroke_color) {
+  CPDF_TilingPattern* tiling_pattern = pattern->AsTilingPattern();
+  if (!tiling_pattern) {
+    return nullptr;
+  }
+  const std::unique_ptr<CPDF_Form> pattern_form =
+      tiling_pattern->Load(page_obj);
+  if (!pattern_form) {
+    return nullptr;
+  }
+  const FX_RECT rect = tiling_pattern->bbox().GetOuterRect();
+  if (rect.IsEmpty() || !rect.Valid()) {
+    return nullptr;
+  }
+
+  RetainPtr<CFX_DIBitmap> cell_bitmap = CPDF_RenderTiling::DrawPatternBitmap(
+      doc, /*pCache=*/nullptr, tiling_pattern, pattern_form.get(), CFX_Matrix(),
+      rect.Width(), rect.Height(), CPDF_RenderOptions::Options());
+  if (!cell_bitmap) {
+    return nullptr;
+  }
+
+  if (tiling_pattern->colored()) {
+    ValidateBitmapPremultiplyState(cell_bitmap);
+
+    // Caller takes ownership.
+    return FPDFBitmapFromCFXDIBitmap(cell_bitmap.Leak());
+  }
+
+  // An uncolored pattern gets its color from the stroke/fill color operands.
+  const CPDF_ColorState& color_state = page_obj->color_state();
+  const FX_COLORREF colorref =
+      use_stroke_color ? color_state.GetStrokeColorRef()
+                       : color_state.GetFillColorRef();
+  // 0xFFFFFFFF is the unusable color, see FX_COLORREF.
+  if (colorref == 0xFFFFFFFF) {
+    return nullptr;
+  }
+
+  auto result_bitmap = pdfium::MakeRetain<CFX_DIBitmap>();
+  if (!result_bitmap->Create(rect.Width(), rect.Height(),
+                             FXDIB_Format::kBgra)) {
+    return nullptr;
+  }
+  const CPDF_GeneralState& general_state = page_obj->general_state();
+  const float float_alpha = use_stroke_color
+                                ? general_state.GetStrokeAlpha()
+                                : general_state.GetFillAlpha();
+  const int alpha = static_cast<int>(float_alpha * 255);
+  if (!result_bitmap->CompositeMask(
+          /*dest_left=*/0, /*dest_top=*/0, rect.Width(), rect.Height(),
+          cell_bitmap, AlphaAndColorRefToArgb(alpha, colorref),
+          /*src_left=*/0, /*src_top=*/0, BlendMode::kNormal)) {
+    return nullptr;
+  }
+
+  ValidateBitmapPremultiplyState(result_bitmap);
+
+  // Caller takes ownership.
+  return FPDFBitmapFromCFXDIBitmap(result_bitmap.Leak());
+}
+
+FPDF_BITMAP GetRenderedPattern(FPDF_DOCUMENT document,
+                               FPDF_PAGEOBJECT page_object,
+                               bool use_stroke_color) {
+  CPDF_Document* doc = CPDFDocumentFromFPDFDocument(document);
+  if (!doc) {
+    return nullptr;
+  }
+
+  CPDF_PageObject* object = CPDFPageObjectFromFPDFPageObject(page_object);
+  if (!object) {
+    return nullptr;
+  }
+
+  const CPDF_ColorState& color_state = object->color_state();
+  const CPDF_Color* color = use_stroke_color
+                                ? color_state.GetStrokeColor()
+                                : color_state.GetFillColor();
+  if (!color || !color->IsPattern()) {
+    return nullptr;
+  }
+
+  RetainPtr<CPDF_Pattern> pattern = color->GetPattern();
+  if (!pattern) {
+    return nullptr;
+  }
+
+  return RenderTilingPatternToBitmap(pattern.Get(), doc, object,
+                                     use_stroke_color);
 }
 
 }  // namespace
@@ -1244,6 +1343,18 @@ FPDFPageObj_SetDashArray(FPDF_PAGEOBJECT page_object,
   pPageObj->mutable_graph_state().SetLineDash(dashes, phase);
   pPageObj->SetDirty(true);
   return true;
+}
+
+FPDF_EXPORT FPDF_BITMAP FPDF_CALLCONV
+FPDFPageObj_GetRenderedStrokePattern(FPDF_DOCUMENT document,
+                                     FPDF_PAGEOBJECT page_object) {
+  return GetRenderedPattern(document, page_object, /*use_stroke_color=*/true);
+}
+
+FPDF_EXPORT FPDF_BITMAP FPDF_CALLCONV
+FPDFPageObj_GetRenderedFillPattern(FPDF_DOCUMENT document,
+                                   FPDF_PAGEOBJECT page_object) {
+  return GetRenderedPattern(document, page_object, /*use_stroke_color=*/false);
 }
 
 FPDF_EXPORT int FPDF_CALLCONV

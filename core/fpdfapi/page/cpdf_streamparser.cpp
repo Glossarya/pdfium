@@ -115,7 +115,7 @@ uint32_t DecodeInlineStream(pdfium::span<const uint8_t> src_span,
     std::unique_ptr<ScanlineDecoder> pDecoder = JpegModule::CreateDecoder(
         src_span, width, height, 0,
         !pParam || pParam->GetIntegerFor("ColorTransform", 1),
-        /*scale_denom=*/1);
+        /*scale_denom=*/1, /*prefer_bgr_output=*/false);
     return DecodeAllScanlines(std::move(pDecoder));
   }
   if (decoder == "CCITTFaxDecode") {
@@ -135,7 +135,7 @@ uint32_t DecodeInlineStream(pdfium::span<const uint8_t> src_span,
   }
 #if defined(PDF_ENABLE_BROTLI)
   if (decoder == "BrotliDecode" && BrotliDecoder::GetBrotliEnabled()) {
-    return BrotliDecoder::Decode(src_span, orig_size).bytes_consumed;
+    return BrotliDecode(src_span, pParam.Get(), orig_size).bytes_consumed;
   }
 #endif
 
@@ -214,8 +214,7 @@ RetainPtr<CPDF_Stream> CPDF_StreamParser::ReadInlineStream(
   uint32_t actual_stream_size;
   if (decoder.IsEmpty()) {
     original_size = std::min<uint32_t>(original_size, stream_span.size());
-    auto src_span = stream_span.first(original_size);
-    data = DataVector<uint8_t>(src_span.begin(), src_span.end());
+    data = ToDataVector(stream_span.first(original_size));
     actual_stream_size = original_size;
     pos_ += original_size;
   } else {
@@ -243,8 +242,7 @@ RetainPtr<CPDF_Stream> CPDF_StreamParser::ReadInlineStream(
         actual_stream_size += pos_ - saved_iteration_position;
       }
     }
-    auto src_span = stream_span.first(actual_stream_size);
-    data = DataVector<uint8_t>(src_span.begin(), src_span.end());
+    data = ToDataVector(stream_span.first(actual_stream_size));
     pos_ += actual_stream_size;
   }
   dict->SetNewFor<CPDF_Number>("Length", static_cast<int>(actual_stream_size));
@@ -432,7 +430,8 @@ RetainPtr<CPDF_Object> CPDF_StreamParser::ReadLeafObject() {
   return nullptr;
 }
 
-// TODO(npm): the following methods are almost identical in cpdf_syntaxparser
+// TODO(crbug.com/567627774): the following methods are almost identical in
+// cpdf_syntaxparser
 bool CPDF_StreamParser::GetNextWord() {
   word_size_ = 0;
   if (!PositionIsInBounds()) {

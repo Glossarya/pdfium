@@ -10,6 +10,7 @@ thread-local | *::g_registry | The registered-font registry.
 thread-local | *::g_stock_colorspaces | Stock colour spaces.
 thread-local | *::g_opcodes | The content parser's opcode table.
 thread-local | *::g_CurrentRecursionDepth | Render recursion depth.
+thread-local | *::g_isolate_per_document | Library start-up and shutdown write it on every worker thread.
 thread-local | CPDF_SyntaxParser::s_CurrentRecursionDepth | Parser recursion depth: the guard against deeply nested PDFs.
 thread-local | *::g_bLibraryInitialized | Whether this thread initialized PDFium.
 thread-local | *::g_last_error | FPDF_GetLastError.

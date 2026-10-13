@@ -127,8 +127,8 @@ RetainPtr<CPDF_TransferFunc> CPDF_DocRenderData::CreateTransferFunc(
     }
 
     for (uint32_t i = 0; i < 3; ++i) {
-      pFuncs[2 - i] = CPDF_Function::Load(pArray->GetDirectObjectAt(i));
-      if (!pFuncs[2 - i]) {
+      pFuncs[i] = CPDF_Function::Load(pArray->GetDirectObjectAt(i));
+      if (!pFuncs[i]) {
         return nullptr;
       }
     }
@@ -161,7 +161,7 @@ RetainPtr<CPDF_TransferFunc> CPDF_DocRenderData::CreateTransferFunc(
           continue;
         }
         pFuncs[i]->Call(pdfium::span_from_ref(input), output);
-        size_t o = FXSYS_roundf(output[0] * 255);
+        uint8_t o = std::clamp(FXSYS_roundf(output[0] * 255.0f), 0, 255);
         if (o != v) {
           bIdentity = false;
         }
@@ -174,7 +174,7 @@ RetainPtr<CPDF_TransferFunc> CPDF_DocRenderData::CreateTransferFunc(
       if (pFuncs[0]->OutputCount() <= kMaxOutputs) {
         pFuncs[0]->Call(pdfium::span_from_ref(input), output);
       }
-      size_t o = FXSYS_roundf(output[0] * 255);
+      uint8_t o = std::clamp(FXSYS_roundf(output[0] * 255.0f), 0, 255);
       if (o != v) {
         bIdentity = false;
       }

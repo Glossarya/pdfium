@@ -15,13 +15,15 @@ use read_fonts::{
         string::Sid,
         type1::Type1Font,
     },
-    types::GlyphId,
+    tables::{head::MacStyle, os2::SelectionFlags},
+    types::{Fixed, GlyphId, Tag},
+    TableProvider,
 };
 use skrifa::{
     charmap::Charmap,
     instance::{LocationRef, Size},
     metrics::Metrics,
-    outline::OutlineGlyphFormat,
+    outline::{DrawSettings, Engine, HintingInstance, HintingOptions, OutlineGlyphFormat},
     string::StringId,
     FontRef, GlyphNameSource, GlyphNames, MetadataProvider, OutlineGlyphCollection,
 };
@@ -124,6 +126,9 @@ mod skrifa_ffi {
         fn is_fixed_pitch(&self) -> bool;
         fn is_tricky(&self) -> bool;
         fn is_scalable(&self) -> bool;
+        fn is_sfnt(&self) -> bool;
+        fn is_italic(&self) -> bool;
+        fn is_bold(&self) -> bool;
         fn is_cid(&self) -> bool;
         fn cid_to_gid(&self, cid: u16) -> u32;
         fn unicode_to_gid(&self, unicode: u32) -> u32;
@@ -133,6 +138,13 @@ mod skrifa_ffi {
         fn glyph_name(&self, gid: u32) -> String;
         fn scaled_outline(&self, gid: u32, ppem: f32, outline: &mut Outline) -> bool;
         fn unscaled_outline(&self, gid: u32, outline: &mut Outline) -> bool;
+        fn hinted_outline(
+            &self,
+            gid: u32,
+            ppem: f32,
+            is_pedantic: bool,
+            outline: &mut Outline,
+        ) -> bool;
         fn has_outline(&self, gid: u32) -> bool;
 
         fn get_os2_code_page_range(&self, range: &mut CodePageRange) -> bool;
@@ -142,9 +154,11 @@ mod skrifa_ffi {
         fn get_char_codes_and_indices(&self, max_char: u32) -> Vec<CharCodeAndIndex>;
         fn name_index(&self, name: &str) -> u32;
         fn glyph_bounds(&self, glyph_index: u32) -> BoundingBox;
+        fn get_font_bbox(&self, bbox: &mut BoundingBox) -> bool;
+        fn get_sfnt_table(&self, table: u32, buffer: &mut [u8]) -> usize;
 
         fn agl_name_to_unicode(name: &str, unicode: &mut u32) -> bool;
-        fn agl_unicode_to_name(unicode: u32, name: &mut [u8]) -> bool;
+        fn agl_unicode_to_name(unicode: u32, name: &mut [u8]) -> &[u8];
         fn get_num_faces(data: &[u8]) -> u32;
     }
 
@@ -168,6 +182,11 @@ pub enum SkrifaFont<'a> {
     Error,
 }
 
+struct HinterCache {
+    size: Size,
+    instance: Option<HintingInstance>,
+}
+
 pub struct Sfnt<'a> {
     font: FontRef<'a>,
     metrics: Metrics,
@@ -178,6 +197,7 @@ pub struct Sfnt<'a> {
     charmap: Charmap<'a>,
     outlines: OutlineGlyphCollection<'a>,
     is_tricky: bool,
+    hinter: core::cell::RefCell<Option<HinterCache>>,
 }
 
 impl<'a> Sfnt<'a> {
@@ -204,6 +224,7 @@ impl<'a> Sfnt<'a> {
             charmap,
             outlines,
             is_tricky,
+            hinter: core::cell::RefCell::new(None),
         })
     }
 }
@@ -446,6 +467,22 @@ impl SkrifaFont<'_> {
         }
     }
 
+    fn hinted_outline(
+        &self,
+        gid: u32,
+        ppem: f32,
+        is_pedantic: bool,
+        outline: &mut Outline,
+    ) -> bool {
+        outline.clear();
+        if let Some(width) = self.hinted_outline_impl(gid, ppem, is_pedantic, outline) {
+            outline.advance_width = width.unwrap_or_default();
+            true
+        } else {
+            false
+        }
+    }
+
     fn has_outline(&self, gid: u32) -> bool {
         match self {
             Self::Sfnt(sfnt) => sfnt.outlines.get(GlyphId::new(gid)).is_some(),
@@ -492,6 +529,42 @@ impl SkrifaFont<'_> {
             }
             Self::Error => None,
         }
+    }
+
+    fn hinted_outline_impl(
+        &self,
+        gid: u32,
+        ppem: f32,
+        is_pedantic: bool,
+        outline: &mut impl OutlinePen,
+    ) -> Option<Option<f32>> {
+        let Self::Sfnt(sfnt) = self else {
+            return None;
+        };
+        if !sfnt.outlines.prefer_interpreter() {
+            return self.outline_impl(gid, Some(ppem), outline);
+        }
+        let gid = GlyphId::new(gid);
+        let size = Size::new(ppem);
+        let glyph = sfnt.outlines.get(gid)?;
+        let mut hinter_borrow = sfnt.hinter.borrow_mut();
+        if hinter_borrow.as_ref().map(|c| c.size) != Some(size) {
+            let instance = HintingInstance::new(
+                &sfnt.outlines,
+                size,
+                LocationRef::default(),
+                HintingOptions { engine: Engine::Interpreter, target: Default::default() },
+            )
+            .ok();
+            *hinter_borrow = Some(HinterCache { size, instance });
+        }
+        let hinter = hinter_borrow.as_ref()?.instance.as_ref()?;
+        let metrics = glyph.draw(DrawSettings::hinted(hinter, is_pedantic), outline).ok()?;
+        Some(
+            metrics.advance_width.or_else(|| {
+                sfnt.font.glyph_metrics(size, LocationRef::default()).advance_width(gid)
+            }),
+        )
     }
 }
 
@@ -610,8 +683,8 @@ fn agl_name_to_unicode(name: &str, unicode: &mut u32) -> bool {
     }
 }
 
-fn agl_unicode_to_name(unicode: u32, name: &mut [u8]) -> bool {
-    read_fonts::ps::agl::char_to_name(unicode, name).is_some()
+fn agl_unicode_to_name(unicode: u32, name: &mut [u8]) -> &[u8] {
+    read_fonts::ps::agl::char_to_name(unicode, name).map(str::as_bytes).unwrap_or_default()
 }
 
 impl SkrifaFont<'_> {
@@ -629,6 +702,54 @@ impl SkrifaFont<'_> {
 
     fn is_scalable(&self) -> bool {
         self.font_type() != FaceFormat::Unknown
+    }
+
+    fn is_sfnt(&self) -> bool {
+        matches!(self, Self::Sfnt(_))
+    }
+
+    fn is_italic(&self) -> bool {
+        match self {
+            Self::Sfnt(sfnt) => {
+                if let Ok(os2) = sfnt.font.os2() {
+                    let flags = os2.fs_selection();
+                    return flags.contains(SelectionFlags::ITALIC)
+                        || flags.contains(SelectionFlags::OBLIQUE);
+                }
+                if let Ok(head) = sfnt.font.head() {
+                    return head.mac_style().contains(MacStyle::ITALIC);
+                }
+                false
+            }
+            Self::Type1(type1) => type1.italic_angle() != 0,
+            Self::Cff(cff) => {
+                cff.meta.as_ref().is_some_and(|meta| meta.italic_angle() != Fixed::ZERO)
+            }
+            Self::Error => false,
+        }
+    }
+
+    fn is_bold(&self) -> bool {
+        match self {
+            Self::Sfnt(sfnt) => {
+                if let Ok(os2) = sfnt.font.os2() {
+                    return os2.fs_selection().contains(SelectionFlags::BOLD);
+                }
+                if let Ok(head) = sfnt.font.head() {
+                    return head.mac_style().contains(MacStyle::BOLD);
+                }
+                false
+            }
+            Self::Type1(type1) => type1
+                .weight()
+                .is_some_and(|w| w.eq_ignore_ascii_case("bold") || w.eq_ignore_ascii_case("black")),
+            Self::Cff(cff) => cff.meta.as_ref().is_some_and(|meta| {
+                meta.weight().is_some_and(|w| {
+                    w.eq_ignore_ascii_case("bold") || w.eq_ignore_ascii_case("black")
+                })
+            }),
+            Self::Error => false,
+        }
     }
 
     fn get_os2_unicode_range(&self, range: &mut UnicodeRange) -> bool {
@@ -675,6 +796,73 @@ impl SkrifaFont<'_> {
 
     fn glyph_bounds(&self, glyph_index: u32) -> BoundingBox {
         self.get_glyph_bounds(glyph_index)
+    }
+
+    fn get_font_bbox(&self, bbox: &mut BoundingBox) -> bool {
+        let opt_box = match self {
+            Self::Sfnt(sfnt) => {
+                if let Some(bounds) = sfnt.metrics.bounds {
+                    Some(BoundingBox {
+                        x_min: bounds.x_min,
+                        y_min: bounds.y_min,
+                        x_max: bounds.x_max,
+                        y_max: bounds.y_max,
+                    })
+                } else if let Ok(head) = sfnt.font.head() {
+                    Some(BoundingBox {
+                        x_min: head.x_min() as f32,
+                        y_min: head.y_min() as f32,
+                        x_max: head.x_max() as f32,
+                        y_max: head.y_max() as f32,
+                    })
+                } else {
+                    None
+                }
+            }
+            Self::Type1(type1) => {
+                let b = type1.bbox();
+                Some(BoundingBox {
+                    x_min: b.x_min.to_f32(),
+                    y_min: b.y_min.to_f32(),
+                    x_max: b.x_max.to_f32(),
+                    y_max: b.y_max.to_f32(),
+                })
+            }
+            Self::Cff(cff) => cff.meta.as_ref().map(|meta| {
+                let b = meta.bbox();
+                BoundingBox {
+                    x_min: b.x_min.to_f32(),
+                    y_min: b.y_min.to_f32(),
+                    x_max: b.x_max.to_f32(),
+                    y_max: b.y_max.to_f32(),
+                }
+            }),
+            Self::Error => None,
+        };
+
+        if let Some(b) = opt_box {
+            *bbox = b;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn get_sfnt_table(&self, table: u32, buffer: &mut [u8]) -> usize {
+        let Some(data) = (match self {
+            Self::Sfnt(sfnt) => sfnt.font.table_data(Tag::from_u32(table)),
+            _ => None,
+        }) else {
+            return 0;
+        };
+        if buffer.is_empty() {
+            return data.len();
+        }
+        if buffer.len() != data.len() {
+            return 0;
+        }
+        buffer.copy_from_slice(data.as_bytes());
+        buffer.len()
     }
 
     fn is_fixed_pitch(&self) -> bool {

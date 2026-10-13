@@ -29,6 +29,7 @@ config("pdfium_common_config") {
   cflags_cc = []
   ldflags = []
   include_dirs = [ "." ]
+  inputs = [ "unsafe_buffers_paths.txt" ]
   defines = []
 
   if (!use_system_libopenjpeg2) {
@@ -39,19 +40,15 @@ config("pdfium_common_config") {
     defines += [ "PDF_ENABLE_CLICK_LOGGING" ]
   }
 
-  if (pdf_use_skia && pdf_enable_fontations) {
+  if (pdf_enable_fontations) {
     defines += [ "PDF_ENABLE_FONTATIONS" ]
-  }
-
-  if (pdf_use_skia && pdf_enable_skia_typeface_checks) {
-    defines += [ "PDF_ENABLE_SKIA_TYPEFACE_CHECKS" ]
   }
 
   if (pdf_enable_rust_bmp) {
     defines += [ "PDF_ENABLE_RUST_BMP" ]
   }
 
-  if (pdf_use_skia && pdf_enable_rust_jpeg) {
+  if (pdf_enable_rust_jpeg) {
     defines += [ "PDF_ENABLE_RUST_JPEG" ]
   }
 

@@ -21,6 +21,7 @@
 #include "fxjs/fxv8.h"
 #include "fxjs/js_define.h"
 #include "fxjs/js_resources.h"
+#include "v8/include/v8-container.h"
 #include "v8/include/v8-isolate.h"
 
 namespace {
@@ -39,8 +40,6 @@ CJS_Global::JSGlobalData::~JSGlobalData() = default;
 
 const JSMethodSpec CJS_Global::MethodSpecs[] = {
     {"setPersistent", setPersistent_static}};
-
-uint32_t CJS_Global::ObjDefnID = 0;
 
 // static
 void CJS_Global::setPersistent_static(
@@ -157,21 +156,16 @@ void CJS_Global::enumprop_static(
 // static
 void CJS_Global::DefineAllProperties(CFXJS_Engine* pEngine) {
   pEngine->DefineObjAllProperties(
-      ObjDefnID, CJS_Global::queryprop_static, CJS_Global::getprop_static,
+      kObjDefnId, CJS_Global::queryprop_static, CJS_Global::getprop_static,
       CJS_Global::putprop_static, CJS_Global::delprop_static,
       CJS_Global::enumprop_static);
 }
 
 // static
-uint32_t CJS_Global::GetObjDefnID() {
-  return ObjDefnID;
-}
-
-// static
 void CJS_Global::DefineJSObjects(CFXJS_Engine* pEngine) {
-  ObjDefnID = pEngine->DefineObj("global", FXJSOBJTYPE_STATIC,
-                                 JSConstructor<CJS_Global>, JSDestructor);
-  DefineMethods(pEngine, ObjDefnID, MethodSpecs);
+  pEngine->DefineObj(kObjDefnId, "global", FXJSOBJTYPE_STATIC,
+                     JSConstructor<CJS_Global>, JSDestructor);
+  DefineMethods(pEngine, kObjDefnId, MethodSpecs);
   DefineAllProperties(pEngine);
 }
 
@@ -265,17 +259,16 @@ CJS_Result CJS_Global::SetProperty(CJS_Runtime* pRuntime,
 void CJS_Global::EnumProperties(
     CJS_Runtime* pRuntime,
     const v8::PropertyCallbackInfo<v8::Array>& info) {
-  v8::Local<v8::Array> result = pRuntime->NewArray();
-  int idx = 0;
+  v8::LocalVector<v8::Value> names(pRuntime->GetIsolate());
+  names.reserve(map_global_.size());
   for (const auto& it : map_global_) {
     if (it.second->bDeleted) {
       continue;
     }
-    v8::Local<v8::Name> name = pRuntime->NewString(it.first.AsStringView());
-    pRuntime->PutArrayElementReentrant(result, idx, name);
-    ++idx;
+    names.push_back(pRuntime->NewString(it.first.AsStringView()));
   }
-  info.GetReturnValue().Set(result);
+  info.GetReturnValue().Set(
+      v8::Array::New(pRuntime->GetIsolate(), names.data(), names.size()));
 }
 
 CJS_Result CJS_Global::setPersistent(

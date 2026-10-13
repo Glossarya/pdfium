@@ -618,9 +618,19 @@ TEST_F(FPDFFormFillEmbedderTest, FirstTest) {
   EXPECT_CALL(mock, DoURIAction(_)).Times(0);
   EXPECT_CALL(mock, DoURIActionWithKeyboardModifier(_, _, _)).Times(0);
   EXPECT_CALL(mock, DoGoToAction(_, _, _, _, _)).Times(0);
+  EXPECT_CALL(mock, ExecuteNamedAction(_)).Times(0);
   ASSERT_TRUE(OpenDocument("hello_world.pdf"));
   ScopedPage page = LoadScopedPage(0);
   EXPECT_TRUE(page);
+}
+
+TEST_F(FPDFFormFillEmbedderTest, OpenActionNamedAction) {
+  auto& mock = SetOwnedDelegate<EmbedderTestMockDelegate>();
+  EXPECT_CALL(mock, ExecuteNamedAction(StrEq("Print")));
+  ASSERT_TRUE(OpenDocument("named_action.pdf"));
+  ScopedPage page = LoadScopedPage(0);
+  EXPECT_TRUE(page);
+  DoOpenActions();
 }
 
 TEST_F(FPDFFormFillEmbedderTest, Bug487928) {
@@ -1425,8 +1435,8 @@ TEST_F(FPDFFormFillEmbedderTest, Bug1281) {
 
   ScopedFPDFBitmap bitmap_reverse_byte_order =
       RenderLoadedPageWithFlags(page.get(), FPDF_REVERSE_BYTE_ORDER);
-  CompareBitmapWithFuzzyExpectationSuffix(bitmap_reverse_byte_order.get(),
-                                          "bug_890322_reverse");
+  CompareBitmapWithExpectationSuffix(bitmap_reverse_byte_order.get(),
+                                     "bug_890322_reverse", kFuzzyDiffOptions);
 }
 
 TEST_F(FPDFFormFillEmbedderTest, Bug1302455RenderOnly) {
@@ -2065,6 +2075,29 @@ TEST_F(FPDFFormFillTextFormEmbedderTest, DeleteTextFieldEntireSelection) {
 
   SelectTextWithKeyboard(12, FWL_VKEY_Left, RegularFormEnd());
   EXPECT_EQ(Selection(), "");
+}
+
+TEST_F(FPDFFormFillTextFormEmbedderTest,
+       ControlCharacterChordsDoNotClearSelection) {
+  // Regression test for https://crbug.com/528342021. A modifier chord may
+  // produce a control character even when the modifier is not the platform
+  // shortcut key, e.g. Ctrl-C on Apple platforms. Such characters must not be
+  // typed into the field, where they would replace (and effectively clear)
+  // the current selection.
+  TypeTextIntoTextField(3, RegularFormBegin());
+  SelectAllTextAtPoint(RegularFormBegin());
+  EXPECT_EQ(FocusedFieldText(), "ABC");
+  EXPECT_EQ(Selection(), "ABC");
+
+  // ETX (0x03), as produced by Ctrl-C. This chord is not the platform
+  // shortcut on Apple platforms.
+  FORM_OnChar(form_handle(), page(), 0x03, FWL_EVENTFLAG_ControlKey);
+  EXPECT_EQ(FocusedFieldText(), "ABC");
+
+  // The same character as produced by Cmd-C, which is not the platform
+  // shortcut on non-Apple platforms.
+  FORM_OnChar(form_handle(), page(), 0x03, FWL_EVENTFLAG_MetaKey);
+  EXPECT_EQ(FocusedFieldText(), "ABC");
 }
 
 TEST_F(FPDFFormFillTextFormEmbedderTest, DeleteTextFieldSelectionMiddle) {

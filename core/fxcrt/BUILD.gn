@@ -54,6 +54,7 @@ source_set("fxcrt") {
     "component_export.h",
     "containers/adapters.h",
     "containers/contains.h",
+    "containers/to_vector.h",
     "containers/unique_ptr_adapters.h",
     "data_vector.h",
     "debug/alias.cc",
@@ -63,6 +64,8 @@ source_set("fxcrt") {
     "fx_2d_size.h",
     "fx_bidi.cpp",
     "fx_bidi.h",
+    "fx_ceil_div.h",
+    "fx_ceil_log2.h",
     "fx_codepage.cpp",
     "fx_codepage.h",
     "fx_codepage_forward.h",
@@ -121,6 +124,8 @@ source_set("fxcrt") {
     "span_io.h",
     "span_util.h",
     "stl_util.h",
+    "stream_write_utils.cpp",
+    "stream_write_utils.h",
     "string_data_template.cpp",
     "string_data_template.h",
     "string_template.cpp",
@@ -155,7 +160,10 @@ source_set("fxcrt") {
     "../../:pdfium_strict_config",
     "../../:pdfium_noshorten_config",
   ]
-  deps = [ "//third_party/fast_float" ]
+  deps = [
+    "//third_party/dragonbox",
+    "//third_party/fast_float",
+  ]
   public_deps = [
     "../../:freetype_common",
     "//third_party/abseil-cpp:absl",
@@ -236,8 +244,11 @@ pdfium_unittest_source_set("unittests") {
     "cfx_seekablestreamproxy_unittest.cpp",
     "cfx_timer_unittest.cpp",
     "code_point_view_unittest.cpp",
+    "containers/to_vector_unittest.cpp",
+    "data_vector_unittest.cpp",
     "fixed_size_data_vector_unittest.cpp",
     "fx_bidi_unittest.cpp",
+    "fx_ceil_div_unittest.cpp",
     "fx_coordinates_unittest.cpp",
     "fx_extension_unittest.cpp",
     "fx_memcpy_wrappers_unittest.cpp",
@@ -260,6 +271,7 @@ pdfium_unittest_source_set("unittests") {
     "span_io_unittest.cpp",
     "span_util_unittest.cpp",
     "stl_util_unittest.cpp",
+    "stream_write_utils_unittest.cpp",
     "to_underlying_unittest.cpp",
     "tree_node_unittest.cpp",
     "unowned_ptr_unittest.cpp",

@@ -42,7 +42,7 @@ ProgressiveDecoderContextDelegate::Format GetCodecFormat(int num_components) {
     case 1:
       return ProgressiveDecoderContextDelegate::Format::k8bppGray;
     case 3:
-      return ProgressiveDecoderContextDelegate::Format::kRgb;
+      return ProgressiveDecoderContextDelegate::Format::kBgr;
     case 4:
       return ProgressiveDecoderContextDelegate::Format::kCmyk;
     default:
@@ -117,11 +117,14 @@ FXCODEC_STATUS LibjpegJpegContext::StartDecode() {
       return error_status;
     }
   }
+  ProgressiveDecoderContextDelegate::Format src_format =
+      GetCodecFormat(common_.cinfo.num_components);
+  if (src_format == ProgressiveDecoderContextDelegate::Format::kInvalid) {
+    return FXCODEC_STATUS::kError;
+  }
   FX_SAFE_SIZE_T line_size = common_.cinfo.image_width;
   line_size *= common_.cinfo.num_components;
   line_buf_.resize(FxAlignToBoundary<4>(line_size).ValueOrDie());
-  ProgressiveDecoderContextDelegate::Format src_format =
-      GetCodecFormat(common_.cinfo.num_components);
   if (!delegate_->PrepareScanlineResampling(
           common_.cinfo.image_width, common_.cinfo.image_height, src_format)) {
     return FXCODEC_STATUS::kError;
@@ -168,6 +171,10 @@ int LibjpegJpegContext::ReadHeader(int* width,
     return kNeedsMoreInput;
   }
   if (ret != JPEG_HEADER_OK) {
+    return kError;
+  }
+  if (GetCodecFormat(common_.cinfo.num_components) ==
+      ProgressiveDecoderContextDelegate::Format::kInvalid) {
     return kError;
   }
   *width = common_.cinfo.image_width;

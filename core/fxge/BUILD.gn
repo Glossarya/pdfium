@@ -291,6 +291,7 @@ pdfium_unittest_source_set("unittests") {
     ":fxge",
     "../fpdfapi/page",
     "../fpdfapi/parser",
+    "../fxcrt:test_support",
   ]
   configs = []
   pdfium_root_dir = "../../"

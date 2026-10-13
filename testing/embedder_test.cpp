@@ -15,6 +15,7 @@
 #include "core/fxcrt/check_op.h"
 #include "core/fxcrt/compiler_specific.h"
 #include "core/fxcrt/containers/contains.h"
+#include "core/fxcrt/containers/to_vector.h"
 #include "core/fxcrt/fx_memcpy_wrappers.h"
 #include "core/fxcrt/fx_safe_types.h"
 #include "core/fxcrt/notreached.h"
@@ -114,6 +115,12 @@ void OnFocusChangeTrampoline(FPDF_FORMFILLINFO* info,
   return delegate->OnFocusChange(info, annot, page_index);
 }
 
+void ExecuteNamedActionTrampoline(FPDF_FORMFILLINFO* info,
+                                  FPDF_BYTESTRING name) {
+  auto* delegate = static_cast<EmbedderTest*>(info)->GetDelegate();
+  return delegate->ExecuteNamedAction(name);
+}
+
 void DoURIActionWithKeyboardModifierTrampoline(FPDF_FORMFILLINFO* info,
                                                FPDF_BYTESTRING uri,
                                                int modifiers) {
@@ -151,8 +158,6 @@ FPDF_PAGE GetCurrentPageStub(FPDF_FORMFILLINFO* pThis, FPDF_DOCUMENT document) {
 int GetRotationStub(FPDF_FORMFILLINFO* pThis, FPDF_PAGE page) {
   return 0;
 }
-
-void ExecuteNamedActionStub(FPDF_FORMFILLINFO* pThis, FPDF_BYTESTRING name) {}
 
 void SetTextFieldFocusStub(FPDF_FORMFILLINFO* pThis,
                            FPDF_WIDESTRING value,
@@ -313,7 +318,7 @@ std::vector<std::string> GetEmbedderTestExpectationsWithSuffixPath(
 
   std::string renderer = "_agg";
 #if defined(PDF_USE_SKIA)
-  if (CFX_GEModule::Get()->UseSkiaRenderer()) {
+  if (CFX_GEModule::IsSkiaRenderer()) {
     renderer = "_skia";
   }
 #endif
@@ -368,49 +373,20 @@ DecodedPng DecodePngData(pdfium::span<const uint8_t> png_data) {
 int CompareBGRxBitmapToPng(pdfium::span<const uint8_t> bitmap_span,
                            size_t bitmap_stride,
                            const DecodedPng& decoded_png,
-                           int max_pixel_per_channel_delta,
-                           double max_mean_squared_error) {
-  const size_t unsigned_width = static_cast<size_t>(decoded_png.width);
+                           const DiffOptions& options) {
   auto decoded_png_span32 = fxcrt::reinterpret_span<const uint32_t>(
       pdfium::span(decoded_png.pixel_data));
-  int pixels_different = 0;
-  uint64_t total_squared_error = 0;
-  for (int h = 0; h < decoded_png.height; ++h) {
-    auto decoded_png_row = decoded_png_span32.first(unsigned_width);
-    decoded_png_span32 = decoded_png_span32.subspan(unsigned_width);
-    auto bitmap_row = fxcrt::reinterpret_span<const uint32_t>(
-        bitmap_span.first(bitmap_stride));
-    bitmap_span = bitmap_span.subspan(bitmap_stride);
-    for (int w = 0; w < decoded_png.width; ++w) {
-      uint32_t png_pixel = decoded_png_row[w];
-      uint32_t bitmap_pixel = bitmap_row[w];
-      if (png_pixel == bitmap_pixel) {
-        continue;
-      }
-
-      if (max_pixel_per_channel_delta == 0 ||
-          MaxPixelPerChannelDelta(png_pixel, bitmap_pixel) >
-              max_pixel_per_channel_delta) {
-        ++pixels_different;
-      }
-      total_squared_error += PixelSquaredError(png_pixel, bitmap_pixel);
-    }
-  }
-  if (max_mean_squared_error > 0.0) {
-    double mse = static_cast<double>(total_squared_error) /
-                 (3.0 * decoded_png.width * decoded_png.height);
-    if (mse > max_mean_squared_error) {
-      ++pixels_different;
-    }
-  }
-  return pixels_different;
+  auto bitmap_span32 = fxcrt::reinterpret_span<const uint32_t>(bitmap_span);
+  return CalculatePixelsDifferent(
+      decoded_png_span32, static_cast<size_t>(decoded_png.width), bitmap_span32,
+      bitmap_stride / sizeof(uint32_t), decoded_png.width, decoded_png.height,
+      options);
 }
 
 int CompareGrayBitmapToPng(pdfium::span<const uint8_t> bitmap_span,
                            size_t bitmap_stride,
                            const DecodedPng& decoded_png,
-                           int max_pixel_per_channel_delta,
-                           double max_mean_squared_error) {
+                           const DiffOptions& options) {
   const int width = decoded_png.width;
   const size_t dest_row_width = static_cast<size_t>(width);
   const int height = decoded_png.height;
@@ -428,18 +404,15 @@ int CompareGrayBitmapToPng(pdfium::span<const uint8_t> bitmap_span,
       dest_pixel.alpha = 255;
     }
   }
-  return CompareBGRxBitmapToPng(bgrx_buffer, bgrx_stride, decoded_png,
-                                max_pixel_per_channel_delta,
-                                max_mean_squared_error);
+  return CompareBGRxBitmapToPng(bgrx_buffer, bgrx_stride, decoded_png, options);
 }
 
 #ifdef PDF_USE_SKIA
 int CompareBGRxPremultBitmapToPng(pdfium::span<const uint8_t> bitmap_span,
                                   size_t bitmap_stride,
                                   const DecodedPng& decoded_png,
-                                  int max_pixel_per_channel_delta,
-                                  double max_mean_squared_error) {
-  std::vector<uint8_t> bitmap_data(bitmap_span.begin(), bitmap_span.end());
+                                  const DiffOptions& options) {
+  std::vector<uint8_t> bitmap_data = pdfium::ToVector(bitmap_span);
   pdfium::span<uint8_t> converted_bitmap_span{bitmap_data};
 
   for (int h = 0; h < decoded_png.height; ++h) {
@@ -451,16 +424,14 @@ int CompareBGRxPremultBitmapToPng(pdfium::span<const uint8_t> bitmap_span,
     }
   }
   return CompareBGRxBitmapToPng(bitmap_data, bitmap_stride, decoded_png,
-                                max_pixel_per_channel_delta,
-                                max_mean_squared_error);
+                                options);
 }
 #endif  // PDF_USE_SKIA
 
 int CompareBGRBitmapToPng(pdfium::span<const uint8_t> bitmap_span,
                           size_t bitmap_stride,
                           const DecodedPng& decoded_png,
-                          int max_pixel_per_channel_delta,
-                          double max_mean_squared_error) {
+                          const DiffOptions& options) {
   const int width = decoded_png.width;
   const size_t dest_row_width = static_cast<size_t>(width);
   const int height = decoded_png.height;
@@ -479,9 +450,47 @@ int CompareBGRBitmapToPng(pdfium::span<const uint8_t> bitmap_span,
       dest_row[w].alpha = 255;
     }
   }
-  return CompareBGRxBitmapToPng(bgrx_buffer, bgrx_stride, decoded_png,
-                                max_pixel_per_channel_delta,
-                                max_mean_squared_error);
+  return CompareBGRxBitmapToPng(bgrx_buffer, bgrx_stride, decoded_png, options);
+}
+
+int CompareBGRABitmapToPng(pdfium::span<const uint8_t> bitmap_span,
+                           size_t bitmap_stride,
+                           const DecodedPng& decoded_png,
+                           const DiffOptions& options) {
+  const int width = decoded_png.width;
+  const size_t dest_row_width = static_cast<size_t>(width);
+  const int height = decoded_png.height;
+  const size_t bgra_stride = width * sizeof(FX_BGRA_STRUCT<uint8_t>);
+
+  // Premultiply both decoded PNG and actual bitmap so unweighted color
+  // channels in transparent or near-transparent pixels do not trigger
+  // false-positive differences.
+  std::vector<uint8_t> actual_premult(bgra_stride * height);
+  auto actual_span = fxcrt::reinterpret_span<FX_BGRA_STRUCT<uint8_t>>(
+      pdfium::span<uint8_t>(actual_premult));
+  for (int h = 0; h < height; ++h) {
+    auto src_row = fxcrt::reinterpret_span<const FX_BGRA_STRUCT<uint8_t>>(
+        bitmap_span.subspan(h * bitmap_stride, bitmap_stride));
+    auto dest_row = actual_span.take_first(dest_row_width);
+    for (size_t w = 0; w < dest_row_width; ++w) {
+      dest_row[w] = PreMultiplyColor(src_row[w]);
+    }
+  }
+
+  std::vector<uint8_t> expected_premult(decoded_png.pixel_data);
+  auto expected_span = fxcrt::reinterpret_span<FX_BGRA_STRUCT<uint8_t>>(
+      pdfium::span<uint8_t>(expected_premult));
+  for (auto& pixel : expected_span) {
+    pixel = PreMultiplyColor(pixel);
+  }
+
+  DecodedPng premult_png;
+  premult_png.width = width;
+  premult_png.height = height;
+  premult_png.pixel_data = std::move(expected_premult);
+
+  return CompareBGRxBitmapToPng(actual_premult, bgra_stride, premult_png,
+                                options);
 }
 
 std::string EncodeBase64(pdfium::span<const uint8_t> png) {
@@ -503,8 +512,7 @@ void ReportMissingExpectation(FPDF_BITMAP bitmap) {
 
 void CompareBitmapToPngFile(FPDF_BITMAP bitmap,
                             const std::string& png_path,
-                            int max_pixel_per_channel_delta,
-                            double max_mean_squared_error) {
+                            const DiffOptions& options) {
   std::vector<uint8_t> png_data = GetFileContents(png_path.c_str());
   if (png_data.empty()) {
     ReportMissingExpectation(bitmap);
@@ -531,27 +539,27 @@ void CompareBitmapToPngFile(FPDF_BITMAP bitmap,
   int pixels_different;
   switch (FPDFBitmap_GetFormat(bitmap)) {
     case FPDFBitmap_Gray:
-      pixels_different = CompareGrayBitmapToPng(
-          bitmap_span, stride, decoded_png, max_pixel_per_channel_delta,
-          max_mean_squared_error);
+      pixels_different =
+          CompareGrayBitmapToPng(bitmap_span, stride, decoded_png, options);
       break;
     case FPDFBitmap_BGR:
-      pixels_different = CompareBGRBitmapToPng(bitmap_span, stride, decoded_png,
-                                               max_pixel_per_channel_delta,
-                                               max_mean_squared_error);
+      pixels_different =
+          CompareBGRBitmapToPng(bitmap_span, stride, decoded_png, options);
       break;
-    case FPDFBitmap_BGRx:
+    case FPDFBitmap_BGRx: {
+      pixels_different =
+          CompareBGRxBitmapToPng(bitmap_span, stride, decoded_png, options);
+      break;
+    }
     case FPDFBitmap_BGRA: {
-      pixels_different = CompareBGRxBitmapToPng(
-          bitmap_span, stride, decoded_png, max_pixel_per_channel_delta,
-          max_mean_squared_error);
+      pixels_different =
+          CompareBGRABitmapToPng(bitmap_span, stride, decoded_png, options);
       break;
     }
 #ifdef PDF_USE_SKIA
     case FPDFBitmap_BGRA_Premul:
-      pixels_different = CompareBGRxPremultBitmapToPng(
-          bitmap_span, stride, decoded_png, max_pixel_per_channel_delta,
-          max_mean_squared_error);
+      pixels_different = CompareBGRxPremultBitmapToPng(bitmap_span, stride,
+                                                       decoded_png, options);
       break;
 #endif  // PDF_USE_SKIA
     default:
@@ -775,7 +783,7 @@ FPDF_FORMHANDLE EmbedderTest::SetupFormFillEnvironment(
   formfillinfo->FFI_GetPage = GetPageTrampoline;
   formfillinfo->FFI_GetCurrentPage = GetCurrentPageStub;
   formfillinfo->FFI_GetRotation = GetRotationStub;
-  formfillinfo->FFI_ExecuteNamedAction = ExecuteNamedActionStub;
+  formfillinfo->FFI_ExecuteNamedAction = ExecuteNamedActionTrampoline;
   formfillinfo->FFI_SetTextFieldFocus = SetTextFieldFocusStub;
   formfillinfo->FFI_DoURIAction = DoURIActionTrampoline;
   formfillinfo->FFI_DoGoToAction = DoGoToActionTrampoline;
@@ -1104,16 +1112,11 @@ void EmbedderTest::VerifySavedRendering(FPDF_PAGE page,
 
 void EmbedderTest::VerifySavedRenderingWithExpectationSuffix(
     FPDF_PAGE page,
-    std::string_view expectation_png_name) {
+    std::string_view expectation_png_name,
+    const DiffOptions& options) {
   ScopedFPDFBitmap bitmap = VerifySavedRenderingCommon(page);
-  CompareBitmapWithExpectationSuffix(bitmap.get(), expectation_png_name);
-}
-
-void EmbedderTest::VerifySavedRenderingWithFuzzyExpectationSuffix(
-    FPDF_PAGE page,
-    std::string_view expectation_png_name) {
-  ScopedFPDFBitmap bitmap = VerifySavedRenderingCommon(page);
-  CompareBitmapWithFuzzyExpectationSuffix(bitmap.get(), expectation_png_name);
+  CompareBitmapWithExpectationSuffix(bitmap.get(), expectation_png_name,
+                                     options);
 }
 
 ScopedFPDFBitmap EmbedderTest::VerifySavedRenderingCommon(FPDF_PAGE page) {
@@ -1128,15 +1131,11 @@ void EmbedderTest::VerifySavedDocument(std::string_view expectation_png_name) {
 }
 
 void EmbedderTest::VerifySavedDocumentWithExpectationSuffix(
-    std::string_view expectation_png_name) {
+    std::string_view expectation_png_name,
+    const DiffOptions& options) {
   ScopedFPDFBitmap bitmap = VerifySavedDocumentCommon();
-  CompareBitmapWithExpectationSuffix(bitmap.get(), expectation_png_name);
-}
-
-void EmbedderTest::VerifySavedDocumentWithFuzzyExpectationSuffix(
-    std::string_view expectation_png_name) {
-  ScopedFPDFBitmap bitmap = VerifySavedDocumentCommon();
-  CompareBitmapWithFuzzyExpectationSuffix(bitmap.get(), expectation_png_name);
+  CompareBitmapWithExpectationSuffix(bitmap.get(), expectation_png_name,
+                                     options);
 }
 
 ScopedFPDFBitmap EmbedderTest::VerifySavedDocumentCommon() {
@@ -1203,8 +1202,11 @@ void EmbedderTest::CompareBitmap(FPDF_BITMAP bitmap,
                                  std::string_view expectation_png_name) {
   std::string png_path = GetEmbedderTestExpectationPath(expectation_png_name);
   SCOPED_TRACE(testing::Message() << "CompareBitmap() with " << png_path);
-  CompareBitmapToPngFile(bitmap, png_path, /*max_pixel_per_channel_delta=*/0,
-                         /*max_mean_squared_error=*/0.0);
+  DiffOptions options = kExactDiffOptions;
+  if (EmbedderTestEnvironment::GetInstance()->fontations()) {
+    options = kFontationsDiffOptions;
+  }
+  CompareBitmapToPngFile(bitmap, png_path, options);
   if (EmbedderTestEnvironment::GetInstance()->write_pngs()) {
     WriteBitmapToPng(bitmap, png_path);
   }
@@ -1214,8 +1216,23 @@ void EmbedderTest::CompareBitmap(FPDF_BITMAP bitmap,
 void EmbedderTest::CompareBitmapWithExpectationSuffix(
     FPDF_BITMAP bitmap,
     std::string_view expectation_png_name,
-    int max_pixel_per_channel_delta,
-    double max_mean_squared_error) {
+    const DiffOptions& options) {
+  DiffOptions effective_options = options;
+  if (EmbedderTestEnvironment::GetInstance()->fontations()) {
+    effective_options.max_pixel_per_channel_delta =
+        std::max(options.max_pixel_per_channel_delta,
+                 kFontationsDiffOptions.max_pixel_per_channel_delta);
+    effective_options.max_mean_squared_error =
+        std::max(options.max_mean_squared_error,
+                 kFontationsDiffOptions.max_mean_squared_error);
+    if (options.window_size > 0) {
+      effective_options.window_size =
+          std::max(options.window_size, kFontationsDiffOptions.window_size);
+      effective_options.max_window_mean_squared_error =
+          std::max(options.max_window_mean_squared_error,
+                   kFontationsDiffOptions.max_window_mean_squared_error);
+    }
+  }
   std::vector<std::string> candidate_png_path =
       GetEmbedderTestExpectationsWithSuffixPath(expectation_png_name);
   for (const std::string& png_path : candidate_png_path) {
@@ -1225,8 +1242,7 @@ void EmbedderTest::CompareBitmapWithExpectationSuffix(
 
     SCOPED_TRACE(testing::Message()
                  << "CompareBitmapWithExpectationSuffix() with " << png_path);
-    CompareBitmapToPngFile(bitmap, png_path, max_pixel_per_channel_delta,
-                           max_mean_squared_error);
+    CompareBitmapToPngFile(bitmap, png_path, effective_options);
     if (EmbedderTestEnvironment::GetInstance()->write_pngs()) {
       WriteBitmapToPng(bitmap, png_path);
     }
@@ -1234,15 +1250,6 @@ void EmbedderTest::CompareBitmapWithExpectationSuffix(
   }
 
   ReportMissingExpectation(bitmap);
-}
-
-// static
-void EmbedderTest::CompareBitmapWithFuzzyExpectationSuffix(
-    FPDF_BITMAP bitmap,
-    std::string_view expectation_png_name) {
-  CompareBitmapWithExpectationSuffix(bitmap, expectation_png_name,
-                                     kMaxFuzzyPixelDelta,
-                                     kMaxFuzzyMeanSquaredError);
 }
 
 // static

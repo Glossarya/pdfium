@@ -39,8 +39,6 @@ class CJBig2_Context {
 
   ~CJBig2_Context();
 
-  static bool HuffmanAssignCode(pdfium::span<JBig2HuffmanCode> symcodes);
-
   bool GetFirstPage(pdfium::span<uint8_t> pBuf,
                     int32_t width,
                     int32_t height,
@@ -83,7 +81,7 @@ class CJBig2_Context {
   JBig2_Result ParseTable(CJBig2_Segment* pSegment);
   JBig2_Result ParseRegionInfo(JBig2RegionInfo* pRI);
 
-  std::vector<JBig2HuffmanCode> DecodeSymbolIDHuffmanTable(uint32_t SBNUMSYMS);
+  CJBig2_HuffmanTable DecodeSymbolIDHuffmanTable(uint32_t SBNUMSYMS);
   const CJBig2_HuffmanTable* GetHuffmanTable(size_t idx);
 
   std::unique_ptr<CJBig2_Context> global_context_;

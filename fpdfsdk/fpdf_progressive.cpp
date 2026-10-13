@@ -91,7 +91,7 @@ FPDF_RenderPageBitmapWithColorScheme_Start(FPDF_BITMAP bitmap,
   context->return_premultiplied_ = pBitmap->IsPremultiplied();
 
 #if defined(PDF_USE_SKIA)
-  if (CFX_GEModule::Get()->UseSkiaRenderer()) {
+  if (CFX_GEModule::IsSkiaRenderer()) {
     pBitmap->PreMultiply();
   }
 #endif
@@ -100,8 +100,7 @@ FPDF_RenderPageBitmapWithColorScheme_Start(FPDF_BITMAP bitmap,
       pBitmap, !!(flags & FPDF_REVERSE_BYTE_ORDER));
   if (!device) {
 #if defined(PDF_USE_SKIA)
-    if (CFX_GEModule::Get()->UseSkiaRenderer() &&
-        !context->return_premultiplied_) {
+    if (CFX_GEModule::IsSkiaRenderer() && !context->return_premultiplied_) {
       pBitmap->UnPreMultiply();
     }
 #endif  // defined(PDF_USE_SKIA)
@@ -116,8 +115,7 @@ FPDF_RenderPageBitmapWithColorScheme_Start(FPDF_BITMAP bitmap,
 
   if (!context->renderer_) {
 #if defined(PDF_USE_SKIA)
-    if (CFX_GEModule::Get()->UseSkiaRenderer() &&
-        !context->return_premultiplied_) {
+    if (CFX_GEModule::IsSkiaRenderer() && !context->return_premultiplied_) {
       pBitmap->UnPreMultiply();
     }
 #endif  // defined(PDF_USE_SKIA)
@@ -136,8 +134,7 @@ FPDF_RenderPageBitmapWithColorScheme_Start(FPDF_BITMAP bitmap,
   }
 
 #if defined(PDF_USE_SKIA)
-  if (CFX_GEModule::Get()->UseSkiaRenderer() &&
-      !context->return_premultiplied_) {
+  if (CFX_GEModule::IsSkiaRenderer() && !context->return_premultiplied_) {
     pBitmap->UnPreMultiply();
   }
 #endif  // defined(PDF_USE_SKIA)
@@ -186,8 +183,7 @@ FPDF_EXPORT int FPDF_CALLCONV FPDF_RenderPage_Continue(FPDF_PAGE page,
   }
 
 #if defined(PDF_USE_SKIA)
-  if (CFX_GEModule::Get()->UseSkiaRenderer() &&
-      !context->return_premultiplied_) {
+  if (CFX_GEModule::IsSkiaRenderer() && !context->return_premultiplied_) {
     context->device_->GetBitmap()->UnPreMultiply();
   }
 #endif  // defined(PDF_USE_SKIA)

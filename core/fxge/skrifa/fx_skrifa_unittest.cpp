@@ -3,12 +3,20 @@
 // found in the LICENSE file.
 
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "core/fxcrt/cfx_read_only_span_stream.h"
 #include "core/fxcrt/compiler_specific.h"
-#include "core/fxge/cfx_font.h"
+#include "core/fxge/cfx_face.h"
+#include "core/fxge/cfx_gemodule.h"
+#include "core/fxge/cfx_glyphbitmap.h"
+#include "core/fxge/cfx_path.h"
+#include "core/fxge/dib/cfx_dibitmap.h"
+#include "core/fxge/fontdata/chromefontdata/chromefontdata.h"
 #include "core/fxge/fx_font.h"
+#include "core/fxge/fx_fontencoding.h"
 #include "core/fxge/skrifa/src/main.rs.h"
 #include "core/fxge/skrifa/src/outlines.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -105,29 +113,25 @@ TEST(FxSkrifaTest, TestRobotoGlyph167Bounds) {
   std::vector<uint8_t> bytes = GetFileContents(font_path.c_str());
   ASSERT_FALSE(bytes.empty());
 
-  CFX_Font font;
-  ASSERT_TRUE(font.LoadFaceZeroFromSpan(bytes, /*force_vertical=*/false,
-                                        /*object_tag=*/0));
-  auto face = font.GetFace();
-  ASSERT_TRUE(face);
-
-  ASSERT_EQ(FT_Load_Glyph(face->GetFTFaceForTesting(), 167, FT_LOAD_NO_SCALE),
-            0);
-  FX_RECT ft_bbox = face->GetGlyphBBox(167);
-
   auto skrifa_font = skrifa::new_font(rust::Slice<const uint8_t>(bytes), 0);
   ASSERT_TRUE(skrifa_font->is_ok());
+  EXPECT_EQ(skrifa_font->units_per_em(), 2048);
+
   skrifa::BoundingBox skrifa_bbox = skrifa_font->glyph_bounds(167);
+  EXPECT_EQ(skrifa_bbox.x_min, 85.0f);
+  EXPECT_EQ(skrifa_bbox.y_min, -21.0f);
+  EXPECT_EQ(skrifa_bbox.x_max, 1135.0f);
+  EXPECT_EQ(skrifa_bbox.y_max, 1477.0f);
 
-  uint16_t upem = face->GetUnitsPerEm();
-  EXPECT_EQ(upem, 2048);
-
-  FX_RECT skrifa_rect(NormalizeFontMetric(skrifa_bbox.x_min, upem),
-                      NormalizeFontMetric(skrifa_bbox.y_max, upem),
-                      NormalizeFontMetric(skrifa_bbox.x_max, upem),
-                      NormalizeFontMetric(skrifa_bbox.y_min, upem));
-
-  EXPECT_TRUE(ft_bbox.Near(skrifa_rect, 1));
+  EXPECT_TRUE(skrifa_font->is_sfnt());
+  EXPECT_FALSE(skrifa_font->is_italic());
+  EXPECT_FALSE(skrifa_font->is_bold());
+  skrifa::BoundingBox font_bbox;
+  EXPECT_TRUE(skrifa_font->get_font_bbox(font_bbox));
+  EXPECT_EQ(font_bbox.x_min, -1825.0f);
+  EXPECT_EQ(font_bbox.y_min, -555.0f);
+  EXPECT_EQ(font_bbox.x_max, 4188.0f);
+  EXPECT_EQ(font_bbox.y_max, 2163.0f);
 }
 
 TEST(FxSkrifaTest, TestMinionCff) {
@@ -135,37 +139,24 @@ TEST(FxSkrifaTest, TestMinionCff) {
   std::vector<uint8_t> bytes = GetFileContents(font_path.c_str());
   ASSERT_FALSE(bytes.empty());
 
-  CFX_Font font;
-  ASSERT_TRUE(font.LoadFaceZeroFromSpan(bytes, /*force_vertical=*/false,
-                                        /*object_tag=*/0));
-  auto face = font.GetFace();
-  ASSERT_TRUE(face);
-
   auto skrifa_font = skrifa::new_font(rust::Slice<const uint8_t>(bytes), 0);
   ASSERT_TRUE(skrifa_font->is_ok());
 
-  EXPECT_EQ(face->GetFTFaceForTesting()->num_glyphs,
-            static_cast<long>(skrifa_font->num_glyphs()));
+  EXPECT_EQ(skrifa_font->num_glyphs(), 1250u);
 
   auto family_name = skrifa_font->family_name();
   auto ps_name = skrifa_font->postscript_name();
 
-  ByteString ft_family = face->GetFamilyName();
   ByteString sk_family =
       UNSAFE_BUFFERS(ByteString(family_name.data(), family_name.size()));
-  MaybeRemoveSubsettedFontPrefix(ft_family);
   MaybeRemoveSubsettedFontPrefix(sk_family);
-  EXPECT_EQ(ft_family, sk_family);
+  EXPECT_EQ(sk_family, "MinionPro-Regular");
 
-  ByteString ft_ps = face->GetPostscriptName();
   ByteString sk_ps = UNSAFE_BUFFERS(ByteString(ps_name.data(), ps_name.size()));
-  MaybeRemoveSubsettedFontPrefix(ft_ps);
   MaybeRemoveSubsettedFontPrefix(sk_ps);
-  EXPECT_EQ(ft_ps, sk_ps);
+  EXPECT_EQ(sk_ps, "MinionPro-Regular");
 
   EXPECT_TRUE(skrifa_font->has_outline(55));
-  EXPECT_EQ(FT_Load_Glyph(face->GetFTFaceForTesting(), 55, FT_LOAD_NO_SCALE),
-            0);
 }
 
 TEST(FxSkrifaTest, TestTimesBoldGlyph104Bounds) {
@@ -173,29 +164,24 @@ TEST(FxSkrifaTest, TestTimesBoldGlyph104Bounds) {
   std::vector<uint8_t> bytes = GetFileContents(font_path.c_str());
   ASSERT_FALSE(bytes.empty());
 
-  CFX_Font font;
-  ASSERT_TRUE(font.LoadFaceZeroFromSpan(bytes, /*force_vertical=*/false,
-                                        /*object_tag=*/0));
-  auto face = font.GetFace();
-  ASSERT_TRUE(face);
-
-  FT_Face ft_face = face->GetFTFaceForTesting();
-  ASSERT_EQ(FT_Load_Glyph(ft_face, 104, FT_LOAD_NO_SCALE), 0);
-  FT_Glyph_Metrics ft_metrics = ft_face->glyph->metrics;
-
-  int ft_x_min = ft_metrics.horiBearingX;
-  int ft_y_max = ft_metrics.horiBearingY;
-  int ft_x_max = ft_metrics.horiBearingX + ft_metrics.width;
-  int ft_y_min = ft_metrics.horiBearingY - ft_metrics.height;
-
   auto skrifa_font = skrifa::new_font(rust::Slice<const uint8_t>(bytes), 0);
   ASSERT_TRUE(skrifa_font->is_ok());
 
   skrifa::BoundingBox skrifa_bbox = skrifa_font->glyph_bounds(104);
-  EXPECT_EQ(ft_x_min, skrifa_bbox.x_min);
-  EXPECT_EQ(ft_y_min, skrifa_bbox.y_min);
-  EXPECT_EQ(ft_x_max, skrifa_bbox.x_max);
-  EXPECT_EQ(ft_y_max, skrifa_bbox.y_max);
+  EXPECT_EQ(skrifa_bbox.x_min, 48.0f);
+  EXPECT_EQ(skrifa_bbox.y_min, -32.0f);
+  EXPECT_EQ(skrifa_bbox.x_max, 1444.0f);
+  EXPECT_EQ(skrifa_bbox.y_max, 1756.0f);
+
+  EXPECT_TRUE(skrifa_font->is_sfnt());
+  EXPECT_FALSE(skrifa_font->is_italic());
+  EXPECT_TRUE(skrifa_font->is_bold());
+  skrifa::BoundingBox font_bbox;
+  EXPECT_TRUE(skrifa_font->get_font_bbox(font_bbox));
+  EXPECT_EQ(font_bbox.x_min, -1143.0f);
+  EXPECT_EQ(font_bbox.y_min, -628.0f);
+  EXPECT_EQ(font_bbox.x_max, 4096.0f);
+  EXPECT_EQ(font_bbox.y_max, 2101.0f);
 }
 
 TEST(FxSkrifaTest, TestRobotoGlyph2344Bounds) {
@@ -203,27 +189,99 @@ TEST(FxSkrifaTest, TestRobotoGlyph2344Bounds) {
   std::vector<uint8_t> bytes = GetFileContents(font_path.c_str());
   ASSERT_FALSE(bytes.empty());
 
-  CFX_Font font;
-  ASSERT_TRUE(font.LoadFaceZeroFromSpan(bytes, /*force_vertical=*/false,
-                                        /*object_tag=*/0));
-  auto face = font.GetFace();
-  ASSERT_TRUE(face);
-
-  FT_Face ft_face = face->GetFTFaceForTesting();
-  ASSERT_EQ(FT_Load_Glyph(ft_face, 2344, FT_LOAD_NO_SCALE), 0);
-  FT_Glyph_Metrics ft_metrics = ft_face->glyph->metrics;
-
-  int ft_x_min = ft_metrics.horiBearingX;
-  int ft_y_max = ft_metrics.horiBearingY;
-  int ft_x_max = ft_metrics.horiBearingX + ft_metrics.width;
-  int ft_y_min = ft_metrics.horiBearingY - ft_metrics.height;
-
   auto skrifa_font = skrifa::new_font(rust::Slice<const uint8_t>(bytes), 0);
   ASSERT_TRUE(skrifa_font->is_ok());
 
   skrifa::BoundingBox skrifa_bbox = skrifa_font->glyph_bounds(2344);
-  EXPECT_EQ(ft_x_min, skrifa_bbox.x_min);
-  EXPECT_EQ(ft_y_min, skrifa_bbox.y_min);
-  EXPECT_EQ(ft_x_max, skrifa_bbox.x_max);
-  EXPECT_EQ(ft_y_max, skrifa_bbox.y_max);
+  EXPECT_EQ(skrifa_bbox.x_min, -74.0f);
+  EXPECT_EQ(skrifa_bbox.y_min, 0.0f);
+  EXPECT_EQ(skrifa_bbox.x_max, 634.0f);
+  EXPECT_EQ(skrifa_bbox.y_max, 1838.0f);
+}
+
+TEST(FxSkrifaTest, TestType1Face) {
+  EXPECT_EQ(UnicodeFromAdobeName("period"), L'.');
+  EXPECT_EQ(UnicodeFromAdobeName("A"), L'A');
+  EXPECT_EQ(AdobeNameFromUnicode(L'.'), "period");
+  EXPECT_EQ(AdobeNameFromUnicode(L'A'), "A");
+
+  if (!CFX_GEModule::IsFontations()) {
+    return;
+  }
+
+  auto stream =
+      pdfium::MakeRetain<CFX_ReadOnlySpanStream>(kFoxitSansMMFontData);
+  auto face = CFX_Face::New(nullptr, stream, 0);
+  ASSERT_TRUE(face);
+
+  EXPECT_EQ(face->GetFontFormat(), "Type 1");
+  EXPECT_EQ(face->GetFamilyName(), "Chrome Sans MM");
+  EXPECT_EQ(face->GetPostscriptName(), "ChromeSansMM");
+  EXPECT_EQ(face->GetGlyphCount(), 230);
+  EXPECT_EQ(face->GetUnitsPerEm(), 1000);
+  EXPECT_FALSE(face->IsTtOt());
+  EXPECT_FALSE(face->IsItalic());
+  EXPECT_FALSE(face->IsBold());
+  EXPECT_NE(face->GetBBox(), FX_RECT(-1000, -1000, 1000, 1000));
+
+  EXPECT_TRUE(face->SelectCharMap(fxge::FontEncoding::kAdobeCustom));
+  int gid_x = face->GetCharIndex(120);
+  EXPECT_EQ(gid_x, 103);
+
+  EXPECT_TRUE(face->SelectCharMap(fxge::FontEncoding::kUnicode));
+  EXPECT_EQ(face->GetCharIndex(L'x'), gid_x);
+
+  std::unique_ptr<CFX_Path> path =
+      face->LoadGlyphPath(gid_x, 0, false, nullptr);
+  ASSERT_TRUE(path);
+  EXPECT_EQ(path->GetPoints().size(), 12u);
+
+  auto glyph_bitmap =
+      face->RenderGlyph(gid_x, /*is_cid_font=*/false, /*is_vertical=*/false,
+                        CFX_Matrix(12.0f, 0, 0, 12.0f, 0, 0), /*dest_width=*/0,
+                        FontAntiAliasingMode::kNormal, /*subst_font=*/nullptr);
+  ASSERT_TRUE(glyph_bitmap);
+  EXPECT_TRUE(glyph_bitmap->GetBitmap());
+  EXPECT_EQ(glyph_bitmap->GetBitmap()->GetWidth(), 6);
+  EXPECT_EQ(glyph_bitmap->GetBitmap()->GetHeight(), 7);
+
+  auto glyph_lcd =
+      face->RenderGlyph(gid_x, /*is_cid_font=*/false, /*is_vertical=*/false,
+                        CFX_Matrix(12.0f, 0, 0, 12.0f, 0, 0), /*dest_width=*/0,
+                        FontAntiAliasingMode::kLcd, /*subst_font=*/nullptr);
+  ASSERT_TRUE(glyph_lcd);
+  EXPECT_TRUE(glyph_lcd->GetBitmap());
+  EXPECT_EQ(glyph_lcd->GetBitmap()->GetWidth(), 24);
+  EXPECT_EQ(glyph_lcd->GetBitmap()->GetHeight(), 7);
+
+  auto glyph_mono =
+      face->RenderGlyph(gid_x, /*is_cid_font=*/false, /*is_vertical=*/false,
+                        CFX_Matrix(12.0f, 0, 0, 12.0f, 0, 0), /*dest_width=*/0,
+                        FontAntiAliasingMode::kMono, /*subst_font=*/nullptr);
+  ASSERT_TRUE(glyph_mono);
+  EXPECT_TRUE(glyph_mono->GetBitmap());
+  EXPECT_EQ(glyph_mono->GetBitmap()->GetWidth(), 6);
+  EXPECT_EQ(glyph_mono->GetBitmap()->GetHeight(), 7);
+}
+
+TEST(FxSkrifaTest, TestGetSfntTable) {
+  std::string font_path = PathService::GetTestFilePath("fonts/ahem/Ahem.ttf");
+  std::vector<uint8_t> bytes = GetFileContents(font_path.c_str());
+
+  auto font = skrifa::new_font(rust::Slice<const uint8_t>(bytes), 0);
+  ASSERT_TRUE(font->is_ok());
+
+  // 'head' table (0x68656164) is 54 bytes in TrueType fonts.
+  constexpr uint32_t kHeadTag = 0x68656164;
+  size_t length = font->get_sfnt_table(kHeadTag, rust::Slice<uint8_t>());
+  ASSERT_EQ(54u, length);
+
+  std::vector<uint8_t> head_data(length);
+  size_t read_bytes =
+      font->get_sfnt_table(kHeadTag, rust::Slice<uint8_t>(head_data));
+  EXPECT_EQ(54u, read_bytes);
+
+  // Missing table tag returns 0.
+  constexpr uint32_t kMissingTag = 0x78797a77;
+  EXPECT_EQ(0u, font->get_sfnt_table(kMissingTag, rust::Slice<uint8_t>()));
 }
